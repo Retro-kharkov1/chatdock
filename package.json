@@ -26,17 +26,21 @@
     },
     "files": [
       "src/**/*",
+      "assets/icons/**/*",
+      "assets/tray/**/*",
       "package.json"
     ],
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "assets/icons/icon.ico"
     },
     "linux": {
       "target": [
         "AppImage"
-      ]
+      ],
+      "icon": "assets/icons/icon.png"
     }
   }
 }
