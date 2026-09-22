@@ -201,8 +201,24 @@ function bootstrap() {
         sandbox: true,
         // FR-05 / space rule `hidden-window-must-stay-live`: a hidden window must keep running
         // its page script so notifications keep firing. See ADR-0002 for the Windows hide()
-        // caveat this alone does not fully resolve, and the fallback wired below.
-        backgroundThrottling: false,
+        // caveat.
+        //
+        // IMPORTANT: do NOT set `backgroundThrottling: false` here. It was tried and reverted
+        // (2026-09-22 incident: colleague sent a real message to a hidden window, no Windows
+        // toast appeared). Per Electron's own BrowserWindow docs ("Page visibility" section,
+        // https://www.electronjs.org/docs/latest/api/browser-window): "If backgroundThrottling
+        // is disabled, visibility state stays visible even when the window is minimized,
+        // occluded, or hidden." Google Chat's own page reads document.visibilityState to decide
+        // whether to suppress a native Notification for the conversation currently loaded
+        // (treating "visible" as "the user is already looking at this, don't alert them again").
+        // With backgroundThrottling:false, Chat never saw the page go hidden, so it never fired
+        // a Notification at all — this is not a rendering/permission/wrapper failure, the
+        // notification pipeline itself is fine (verified with a self-triggered Notification()
+        // call reaching the OS). Electron's default (backgroundThrottling left unset, i.e. true)
+        // was empirically confirmed on this Electron version (44.4.3) to still run page JS/timers
+        // at ~1x real time while hidden (a 1s setInterval fired every ~1s over 6s while
+        // document.hidden was true) — the pre-Electron-27 full-freeze bug ADR-0002 was guarding
+        // against is in fact fixed upstream, so this override is unnecessary AND actively harmful.
         preload: path.join(__dirname, '../preload/preload.js'),
       },
     });
@@ -214,7 +230,20 @@ function bootstrap() {
     mainWindow.once('ready-to-show', () => {
       if (!launchedHidden) {
         mainWindow.show();
+        return;
       }
+      // FR-10's autostart-hidden case, plus the same Page-visibility gap the comment above
+      // documents from the other direction: per Electron's BrowserWindow docs ("Page
+      // visibility"), "When a BrowserWindow is created with show: false, the initial visibility
+      // state remains visible despite the window being hidden." A window that is created hidden
+      // and never explicitly shown/hidden would therefore report document.visibilityState as
+      // "visible" to Chat's page for its entire life, reproducing the exact same notification
+      // suppression bug — just via the launch path instead of the backgroundThrottling path.
+      // showInactive() (no focus stolen, no flicker for the user) followed immediately by
+      // hide() forces a real shown->hidden transition so Chromium reports the correct "hidden"
+      // state from the first load, the same as the close-to-tray path already gets for free.
+      mainWindow.showInactive();
+      mainWindow.hide();
     });
 
     mainWindow.on('resize', scheduleWindowStateSave);
