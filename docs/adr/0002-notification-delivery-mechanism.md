@@ -1,7 +1,7 @@
 # ADR-0002: Notification delivery mechanism
 
 **Date**: 2026-09-22
-**Status**: accepted
+**Status**: accepted (superseded on the `backgroundThrottling` point — see "Revision 3" below)
 **Deciders**: tech-lead
 
 ## Context
@@ -60,13 +60,86 @@ Electron `BrowserWindow`, which is a main-process-only operation (`win.show()`/`
 Electron does not publicly expose a main-process event for a renderer-created Web Notification
 being clicked, so this half of FR-05 needs its own, narrowly-scoped bridge.
 
+## Revision 3 (2026-09-22, later same day) — the mitigation below broke the feature it protected
+
+**What was decided above, restated plainly:** to guard against Electron issue `#31016` (a feared
+freeze of a hidden window's JS on Windows), this ADR set `webPreferences.backgroundThrottling:
+false` on the single `BrowserWindow`. That decision is **reverted**. It was implemented, and in
+the owner's real test — a colleague sent a message to a hidden window — **no notification
+appeared.** `electron-developer` traced the cause.
+
+**Root cause: the mitigation caused the exact class of failure it was defending against, by a
+different mechanism than the one it guarded against.** Per Electron's own `BrowserWindow` docs,
+"Page visibility" section (`https://www.electronjs.org/docs/latest/api/browser-window`):
+
+> "If `backgroundThrottling` is disabled, visibility state stays `visible` even when the window is
+> minimized, occluded, or hidden."
+
+Google Chat's own page reads `document.visibilityState` to decide whether to raise a native
+`Notification` for the conversation currently loaded — if it believes the tab is visible, it
+suppresses the alert, exactly as it would in a real foregrounded browser tab where alerting the
+user is redundant. That is correct behavior on Chat's part; it was never told the window was
+actually hidden. With `backgroundThrottling: false`, `visibilityState` never left `"visible"`, so
+Chat never called `Notification()` for the hidden case at all. This is not a wrapper, permission,
+or delivery-pipeline failure — a self-triggered `Notification()` call was confirmed to still reach
+the OS correctly. **The notification pipeline was fine the entire time; the guard was lying to the
+page about its own visibility, and the page correctly declined to notify a "visible" tab.**
+
+**The freeze bug this ADR feared is empirically not present at this project's pinned Electron
+version (44.4.3), and the original "Open Question" framing above — treating this as read-from-docs,
+not yet tested — is now closed.** Direct measurement: with `backgroundThrottling` left at its
+default (`true`, i.e. the flag removed entirely), a 1-second `setInterval` was observed firing
+every ~1 second over a 6-second window while `document.hidden` was `true`. The page is not frozen
+or meaningfully throttled while hidden on this Electron version. Electron `#31016`/`#38924`'s
+`no-backport` history (Context, above) is accurate as a historical record of *when* the freeze was
+fixed upstream, but this ADR's original conclusion — that the fix's applicability to *this* pinned
+version still needed verification before relying on it — has now been answered: it applies. The
+freeze this ADR spent most of its Context section reasoning about from documentation was never
+actually observed against this app; the thing that broke was the mitigation, which nobody had
+checked for side effects before shipping.
+
+**Decision, corrected:** `backgroundThrottling` is **not** set (left at Electron's default,
+`true`). `src/main/index.js` carries a comment at the `webPreferences` block pointing back to this
+ADR section, recording that the flag was tried, reverted, and must not be reintroduced without
+re-reading this reasoning first — re-adding it silently reproduces the exact failure described
+above.
+
+**A second, related defect was found by applying the same reasoning in the other direction, before
+it could bite the same way.** The same "Page visibility" docs section also states: "When a
+`BrowserWindow` is created with `show: false`, the initial visibility state remains `visible`
+despite the window being hidden." This app creates its window with `show: false` at construction
+(see [overview.md](../architecture/overview.md)) and, on FR-10's hidden-autostart path
+(`--hidden` launch flag), never calls a real `show()`/`hide()` transition — so a window launched
+hidden at OS login would have reported `visibilityState: "visible"` for its entire life, silently
+reproducing this same notification-suppression bug via the launch path instead of the
+`backgroundThrottling` path. This was not observed in the field (it did not trigger the failure
+that prompted this ADR revision — that came from the `backgroundThrottling` path instead) but was
+caught by asking "where else does this same premise hold" once the underlying mechanism was
+understood. Fixed by forcing a real `showInactive()` → `hide()` transition on the hidden-autostart
+path so Chromium reports a genuine `visible → hidden` change from the first load, matching what the
+close-to-tray path already gets for free. See
+[tray-lifecycle.md](../architecture/tray-lifecycle.md) for the concrete code.
+
+**Why this belongs in this ADR and not just a code comment:** the code comment says "don't
+re-enable this flag." This ADR is what that comment points at, and it is the record of *why*: not
+"we tried a setting and it didn't work," but a design that shipped a mitigation for an unverified
+risk without checking whether the mitigation itself had a side effect on the very feature it was
+protecting. That reasoning failure, not the specific flag, is the thing a future change to this
+window's `webPreferences` needs to re-derive before touching this area again — see the "Judgement"
+note at the end of this ADR's Consequences section.
+
 ## Decision
 
 Two independent mechanisms, kept separate because they solve different halves of FR-05:
 
-1. **Notification content + timing** — unmodified native bridging. `webPreferences.backgroundThrottling: false`
-   on the single `BrowserWindow` keeps the hidden page's own JS (including its own Web Notification
-   calls) running normally. `session.setPermissionRequestHandler` grants the `notifications`
+1. **Notification content + timing** — unmodified native bridging, `backgroundThrottling` left at
+   Electron's default (`true`). **Superseded per "Revision 3" above: this piece originally set
+   `webPreferences.backgroundThrottling: false` to keep the hidden page's JS running; that flag is
+   reverted because it made Google Chat's own `document.visibilityState` check believe the window
+   was always visible, so Chat never fired a `Notification` while hidden — see Revision 3 for the
+   full trace.** At this project's pinned Electron version (44.4.3), the default already keeps the
+   hidden page's timers/JS — including its own Web Notification calls — running at normal speed, so
+   no override is needed. `session.setPermissionRequestHandler` grants the `notifications`
    permission for the app's own persistent partition up front (deny-by-default for every other
    permission) so no in-app permission prompt is needed for a single-purpose app whose whole value
    is notifications. Nothing about content, sender, or preview text is touched — Google Chat's own
@@ -135,28 +208,40 @@ Two independent mechanisms, kept separate because they solve different halves of
   silently.
 
 ### Risks
-- **Fallback, pre-designed — the stated primary contingency for a known, named bug, not a
-  speculative "maybe" for edge cases.** Electron issue #31016 (see Context, above) is a documented,
-  reproducible failure of exactly this mechanism (`hide()` + `backgroundThrottling: false`) on
-  Windows — the one platform this repo can currently verify on. This is not the same as the
-  original, softer framing ("if empirical testing shows...for long hidden periods"): the bug is
-  known to exist independent of how long the window has been hidden, and the concrete trigger for
-  adopting the fallback is **"Task 5's real-desktop verification on Windows or Linux (the two
-  in-scope platforms) shows a notification missing or delayed while the window was hidden via
-  close-to-tray (`win.hide()`, not merely occluded/minimized)."** When that trigger fires, do not
-  spend further time debugging piece 1 first — go straight to the fallback below, because the root cause is
-  already identified and is not fixable from this app's code (it is Electron/Chromium's own
-  compositor behavior).
-  Design: observe `page-title-updated` for an unread-count transition (`0 → N`) and fire a
+- **Superseded by Revision 3, above — kept here only as history, not as the current fallback
+  trigger.** This ADR originally treated Electron issue #31016 (a Windows-specific freeze of a
+  hidden window's JS under `hide()` + `backgroundThrottling: false`) as the primary risk to design a
+  fallback for. Real-desktop verification (Revision 3) found something different: `#31016`'s freeze
+  was never actually observed on this project's pinned Electron version (44.4.3) — a 1s interval was
+  confirmed still firing every ~1s over 6s while the window was hidden. What actually broke
+  notifications was the `backgroundThrottling: false` mitigation itself, by a different mechanism
+  (Page Visibility API, not JS execution throttling) than the one `#31016` describes. **The `#31016`
+  freeze bug remains a real thing that happened to Electron historically, but it is not this app's
+  live risk given the pinned version and the corrected `webPreferences` — do not re-derive a need
+  for the fallback below from `#31016` alone.**
+  Design, kept as a documented, currently-inactive contingency for a possible future regression (an
+  Electron upgrade that reintroduces hidden-window JS throttling — not a currently-observed
+  condition): observe `page-title-updated` for an unread-count transition (`0 → N`) and fire a
   **main-process** `Notification` with generic content (`"You have N new message(s) in Google
   Chat"` — sender/preview are not recoverable this way without DOM scraping, an accepted
   degradation), whose `click` handler is the native, fully-supported
   `notification.on('click', () => { win.show(); win.focus(); })` — no injection needed for this
   fallback path. This stays event-driven (triggered by the title-change event, not a timer), so it
   does not violate NFR-02.
-- Confirming which path (primary or fallback) is actually needed requires the real-desktop
-  verification the space's `hidden-window-must-stay-live` rule already mandates: "verified by
-  actually hiding the window and observing a real incoming message produce a real OS notification
-  — never by reading the code and reasoning that it should work." Given issue #31016, "reasoning
-  that `backgroundThrottling: false` should handle it" is specifically the reasoning already known
-  to fail on Windows — this is not a generic disclaimer, it's the actual failure mode to check for.
+- **The concrete trigger for actually adopting this fallback, restated post-Revision-3**: a future
+  real-desktop verification (e.g. after an Electron version bump) shows a notification missing or
+  delayed while the window is hidden via close-to-tray, **with `backgroundThrottling` left at its
+  default** (i.e. not the already-diagnosed-and-reverted case above). Until that is observed, do not
+  build the fallback speculatively — it is a documented option, not a task.
+- **Judgement carried forward for future design work in this repo**: the failure this revision
+  records was not "we picked the wrong flag" — it was shipping a mitigation for a *documented but
+  unverified-against-this-app* risk (`#31016`) without checking whether the mitigation itself had a
+  side effect on the exact feature it was protecting. The empirical check (task 5's real-desktop
+  verification) was always the thing that would have caught this, and it did, just after the flag
+  had already shipped rather than before. A future ADR in this repo that proposes a preventive
+  `webPreferences`/Electron-behavior override for a risk found only in documentation or an upstream
+  issue tracker, not in this app's own measured behavior, should run that empirical check **before**
+  the override ships, not after — see also the `hidden-window-must-stay-live` rule this ADR already
+  cites: "verified by actually hiding the window and observing a real incoming message produce a
+  real OS notification — never by reading the code and reasoning that it should work." That rule was
+  right; this ADR just didn't fully follow it before the fact.

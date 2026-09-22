@@ -199,18 +199,26 @@ Feature: System notifications
     And it is delivered without sound
 ```
 
-**Resolved (was an open question):** the web version of Google Chat already requests browser
-Notification permission and calls the standard Web Notifications API when the tab is backgrounded;
-Electron bridges `Notification()` calls from a background/hidden `BrowserWindow` to the OS
-notification center, provided the renderer stays alive (`backgroundThrottling: false`). This is the
-mechanism FR-05 uses. A concrete gap in this mechanism on Windows specifically — not a general
-"might be slow" risk — is documented and given a pre-designed fallback in
-[ADR-0002](../adr/0002-notification-delivery-mechanism.md) (Electron issue `#31016`); see that ADR
-and [notifications.md](../architecture/notifications.md) for the details, including the
-click-to-conversation mechanism and its own named fallback if Google Chat's page turns out not to
-wire click-to-navigate on its own `Notification` objects. `tech-lead` confirmed the throttling
-behavior against Electron's own documentation (see ADR-0002); the real-machine empirical
-confirmation happens at the plan's task 5/5b, per the space's `hidden-window-must-stay-live` rule.
+**Resolved (was an open question), and corrected after real-machine testing:** the web version of
+Google Chat already requests browser Notification permission and calls the standard Web
+Notifications API when the tab is backgrounded; Electron bridges `Notification()` calls from a
+background/hidden `BrowserWindow` to the OS notification center, provided the renderer stays alive
+**and Google Chat's own `document.visibilityState` check reports the window as actually hidden**.
+That second condition was missed in the original design: an earlier revision of this mechanism set
+`backgroundThrottling: false` believing it was required to keep the hidden page's JS running, but
+that flag has the side effect of pinning `visibilityState` at `"visible"` — which made Google Chat
+believe the window was always visible and suppress every notification while hidden. This was caught
+in the owner's real test (a colleague's message produced no notification) and traced by
+`electron-developer`; see [ADR-0002](../adr/0002-notification-delivery-mechanism.md) Revision 3 for
+the full incident and root cause. **Corrected mechanism**: `backgroundThrottling` is left at
+Electron's default — this project's pinned Electron version (44.4.3) was empirically confirmed to
+keep a hidden page's JS/timers running at normal speed without that flag, so no override is needed,
+and the page reports its visibility honestly. See [notifications.md](../architecture/notifications.md)
+for the full mechanism and its Page Visibility dependency, and [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
+for the historical Electron issue `#31016` this design originally (and, it turned out,
+unnecessarily) guarded against, now kept only as a documented, currently-inactive fallback. Also see
+that doc for the click-to-conversation mechanism and its own named fallback if Google Chat's page
+turns out not to wire click-to-navigate on its own `Notification` objects.
 
 ### FR-06 — Close-to-tray
 Clicking the window's close (X) button hides the window (does not destroy the application
@@ -401,6 +409,42 @@ practical need the owner described ("a tray menu entry to temporarily silence no
 far less surface. If the owner later wants a scheduled version, that is a distinguishable follow-up
 requirement, not assumed here.
 
+### FR-13 — Build/version diagnostic line in the tray menu
+The tray context menu shows a disabled (non-clickable), visually de-emphasized line identifying the
+exact build that is currently running: the app version, whether it is a packaged install or a dev
+run from source, and a build timestamp. Placed last in the menu, after a separator, so it never
+competes with the actual controls above it.
+
+**Origin:** owner request, made mid-investigation of the FR-05 notification failure recorded in
+[ADR-0002](../adr/0002-notification-delivery-mechanism.md). Diagnosing that failure lost a full
+round to manually working out whether a colleague's installed build and a dev run from source were
+even running the same code — a bare `app.getVersion()` does not answer that, since it is identical
+across every dev run and every packaged release sharing the same `package.json`.
+
+```gherkin
+Feature: Build/version diagnostic line
+  Scenario: Packaged install shows a build identifier
+    Given the application is running from an installed (packaged) build
+    When the user opens the tray context menu
+    Then the last entry shows the app version, the word "packaged", and a build timestamp
+    And that entry is disabled (not clickable)
+
+  Scenario: Dev run shows a distinguishable build identifier
+    Given the application is running from source (not packaged)
+    When the user opens the tray context menu
+    Then the last entry shows the app version, the word "source", and a build timestamp
+
+  Scenario: Version line changes after a rebuild
+    Given the application was rebuilt or re-packaged after the last run
+    When the application is relaunched and the user opens the tray context menu
+    Then the build timestamp shown is different from the previous run's, without any manual update
+```
+
+**Scope note:** the build timestamp is derived at runtime from the entry file's filesystem mtime
+(see [tray-lifecycle.md](../architecture/tray-lifecycle.md)), not from a git commit hash or a
+build-time string injection — this repo has neither wired up, and the mtime already satisfies the
+owner's actual need ("can I tell this is the current build") without adding new build tooling.
+
 ## Non-Functional Requirements
 
 ### NFR-01 — Cross-platform parity, with explicit exceptions
@@ -522,6 +566,11 @@ owner has since explicitly asked for both an independent sound toggle and a manu
 and FR-12, including the design decision that "quiet hours" and "mute" are treated as one feature
 (a manual toggle, not a scheduled time window) and the stated rationale for that choice.
 
+### Resolved — build/version diagnostic line (FR-13)
+Not part of the original scope; added when the owner ran into a real diagnostic need mid-incident
+(distinguishing a colleague's installed build from a dev run from source while investigating the
+FR-05 notification failure) — see FR-13 and [ADR-0002](../adr/0002-notification-delivery-mechanism.md).
+
 ## Traceability
 
 | ID | Requirement |
@@ -538,6 +587,7 @@ and FR-12, including the design decision that "quiet hours" and "mute" are treat
 | FR-10 | Start automatically at OS login |
 | FR-11 | Notification sound control |
 | FR-12 | Mute notifications ("quiet hours") |
+| FR-13 | Build/version diagnostic line in the tray menu |
 | NFR-01 | Cross-platform parity, with explicit exceptions |
 | NFR-02 | Resource usage for an always-running tray app |
 | NFR-03 | Startup time |

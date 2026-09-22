@@ -27,11 +27,35 @@ would otherwise quit the app when the last window closes — this must be overri
 process is never destroyed by hide — this is the same live-window requirement notifications depend
 on (space's `hidden-window-must-stay-live` rule; see [Notifications](notifications.md)).
 
-**This exact `win.hide()` call is the mechanism named in `electron/electron#31016`** (Windows-only
-bug where `backgroundThrottling: false` does not reliably keep a hidden window's JS running) — see
-[Notifications](notifications.md)'s "Fallback" section and [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
-for the verification trigger and contingency. Not an issue for close-to-tray itself (hiding still
-works correctly); it only affects whether notifications keep firing while hidden.
+**This exact `win.hide()` call is the mechanism `electron/electron#31016` names** (a historical
+Windows-only freeze bug where `backgroundThrottling: false` did not reliably keep a hidden window's
+JS running). That bug is not this app's live risk — it was not observed on this project's pinned
+Electron version, and the flag it required is not set here anyway (see
+[ADR-0002](../adr/0002-notification-delivery-mechanism.md) Revision 3). What close-to-tray's
+`win.hide()` **does** need to get right is a genuine `document.visibilityState` transition to
+`"hidden"` — Google Chat's own page uses that value, not window-focus, to decide whether to raise a
+notification (see [Notifications](notifications.md)'s "Page Visibility dependency"). `win.hide()`
+already produces a correct, real `visible → hidden` transition on its own; no special handling is
+needed here. The launch-time equivalent below does need special handling, because a window that is
+never shown at all does not get a transition for free.
+
+### Hidden-autostart must force a real visibility transition (FR-10 + FR-05 interaction)
+
+A window created with `show: false` (this app's default, see
+[overview.md](overview.md)) reports `document.visibilityState` as `"visible"` from construction
+until a real `show()`/`hide()` transition happens, per Electron's own `BrowserWindow` docs ("Page
+visibility" section). On the `--hidden` autostart launch path (`src/main/autostart.js`), the window
+is never shown at all — so without correction, it would report `"visible"` for its entire life and
+Google Chat would never raise a notification while the app was quietly running in the tray after a
+login-time autostart. This is the same suppression bug [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
+documents from the `backgroundThrottling` direction, reached instead via the launch path — caught
+by applying that ADR's reasoning in the other direction before it shipped as a field bug, not by
+a real incident.
+
+Fix, in `src/main/index.js`'s `ready-to-show` handler: when `launchedHidden` is true, call
+`mainWindow.showInactive()` immediately followed by `mainWindow.hide()` — a real,
+no-focus-stolen, no-visible-flicker `visible → hidden` transition, so Chromium reports the correct
+`"hidden"` state from the first load, matching what the close-to-tray path already gets for free.
 
 ## Tray icon and context menu (FR-07, FR-10, FR-11, FR-12)
 
@@ -45,9 +69,31 @@ Context menu, in order:
 | Notification sound | checkbox | see "Sound & mute (FR-11/FR-12)" below | Owner-requested (FR-11). |
 | Mute notifications | checkbox | see "Sound & mute (FR-11/FR-12)" below | Owner-requested (FR-12). |
 | Exit | action | `isQuitting = true; app.quit();` | The **only** path that terminates the process — no in-page Exit control exists (space's `quit-only-from-tray` rule, FR-07). |
+| *(separator)* — build/version label | disabled, non-clickable | none | Owner-requested mid-incident (2026-09-22), see "Build/version diagnostic line" below (FR-13). |
 
 Left-click/double-click on the tray icon mirrors the Show/Hide entry (Windows/Linux convention —
 macOS's different menu-bar convention is moot, out of scope per ADR-0003).
+
+### Build/version diagnostic line (FR-13)
+
+A disabled (non-clickable), visually de-emphasized menu entry, placed last and after a separator so
+it never competes with the actual controls above it. Requested by the owner mid-investigation of
+the notification bug this ADR-0002 revision records: a colleague testing an installed build and the
+owner testing a dev run from source were, for a time, unknowingly looking at different code, and
+resolving that ambiguity by hand (process-start-time/source-mtime archaeology) cost a full
+diagnostic round. A bare `app.getVersion()` does not answer "is this the current build?" — every dev
+run and every packaged build shares the same `package.json` version between releases.
+
+`src/main/version.js`'s `buildVersionLabel(version, isPackaged, mtimeMs)` combines three
+independently-read, never-hardcoded facts:
+- `app.getVersion()` — tracks `package.json` automatically.
+- `app.isPackaged` — distinguishes an installed build from a dev run from source.
+- the entry file's mtime (`fs.statSync(__filename).mtimeMs`), formatted `YYYY-MM-DD HH:mm` — a
+  per-build marker that changes on every `electron-builder` packaging run or source edit, with no
+  git-hash or build-time string injection this repo doesn't already have wired up.
+
+Example rendered label: `0.1.0 (packaged, built 2026-09-22 13:58)`. See FR-13 in
+[requirements.md](../business/requirements.md) for the acceptance criteria.
 
 ### Start at login (FR-10)
 Windows: `app.setLoginItemSettings({ openAtLogin: checked })` (Electron native API, confirmed

@@ -30,12 +30,20 @@ doc for the *why*; this doc covers the concrete configuration).
 ```js
 {
   width: 1200, height: 800,       // FR-01 default size; overridden by persisted state below
+  show: false,                    // see "Window-state persistence" below, and the FR-10 note in
+                                   // tray-lifecycle.md about what this implies for page visibility
   webPreferences: {
     partition: 'persist:google-chat',   // FR-03/FR-04 — see "Session persistence" below
     contextIsolation: true,
     nodeIntegration: false,
     sandbox: true,
-    backgroundThrottling: false,        // FR-05 / space rule `hidden-window-must-stay-live`
+    // `backgroundThrottling` is deliberately left UNSET (Electron's default, `true`). It was
+    // tried as `false` to satisfy FR-05 / `hidden-window-must-stay-live`, then reverted: it broke
+    // notifications instead of protecting them, by pinning `document.visibilityState` at
+    // `"visible"` while the window was actually hidden — Google Chat reads that value and
+    // suppresses notifications for a "visible" tab. Do not re-add this flag without reading
+    // ADR-0002 Revision 3 first; see notifications.md's "Page Visibility dependency" for the full
+    // mechanism this depends on.
     preload: path.join(__dirname, '../preload/preload.js'),
   },
 }

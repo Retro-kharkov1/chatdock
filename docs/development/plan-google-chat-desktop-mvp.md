@@ -23,14 +23,16 @@ out of scope (owner decision, see [ADR-0003](../adr/0003-packaging-and-code-sign
   packages the raw `src/` tree as-is.
 - **Packaging**: `electron-builder` (see [packaging-release.md](../architecture/packaging-release.md)
   and [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md)) — Windows + Linux only.
-- **Electron version**: latest stable at implementation start, **and explicitly verified to be
-  Electron 27 or later** — pin the exact version in `package.json` (`electron` as a devDependency)
-  rather than a floating range, so a future Chromium update doesn't silently change
-  notification/throttling behavior underneath the app without a deliberate bump. The ≥27
-  requirement is not incidental: it is the first version to include the fix for
-  `electron/electron#31016` (Windows `hide()` + `backgroundThrottling` bug — see
-  [ADR-0002](../adr/0002-notification-delivery-mechanism.md)); record the exact pinned version in
-  the task 5 write-up so the spike's conclusion is traceable.
+- **Electron version**: pinned in `package.json` (`electron` as a devDependency, not a floating
+  range) — currently 44.4.3. The freeze-vs-`#31016` question task 5 was originally written to spike
+  on is closed for this version: empirically confirmed to keep a hidden window's page JS/timers
+  running at normal speed with `backgroundThrottling` left at its default, and to *not* reproduce
+  the historical `electron/electron#31016` freeze (task 5's own real-message check is separately
+  still open — see task 5). Pinning (rather than floating) matters precisely because that
+  confirmation is version-specific: a future Chromium/Electron bump could in principle change
+  hidden-window behavior again, so a version bump is a deliberate act, not an automatic one — see
+  [ADR-0002](../adr/0002-notification-delivery-mechanism.md) Revision 3 for the full history of what
+  was verified and when.
 - **Test runner**: Node's built-in `node:test` + `node:assert` (no extra dependency — sufficient for
   the small set of pure-function unit tests task 0 requires; revisit only if the test surface grows
   well past what's listed there).
@@ -76,9 +78,15 @@ and `preload.js` accordingly from the start, not retrofit it later.
 
 Task 0 is a coverage-first gate and must be GREEN before tasks 3, 4b, 6, and 7 (which depend on the
 logic it covers) are considered done. Tasks 1–4 are sequential (each depends on the previous); 4b,
-5, 5b, 6, 7 can proceed in parallel once task 1 lands, but **5b depends on 5** (click-to-conversation
-needs the click-to-focus bridge already wired) and **4b depends on 4** (sound/mute menu items need
-the base tray menu); 8 depends on 2–7 being functionally complete; 9 is packaging; 10 is last.
+4c, 5, 5b, 6, 7 can proceed in parallel once task 1 lands, but **5b depends on 5** (click-to-conversation
+needs the click-to-focus bridge already wired), **4b depends on 4** (sound/mute menu items need
+the base tray menu), and **4c depends on 4** (the version line is a tray-menu entry). **4c is a
+later, owner-requested addition, already implemented and unit-tested — see its own entry below for
+what "done" means for it.** Task 5's done-criterion was re-scoped after a real incident surfaced a
+defect in its original mitigation (see task 5's own entry) — the fix is implemented, but the
+confirming real-desktop check (a real inbound message producing a real notification, post-fix) has
+not yet been run and is still this task's open item, same as **5b**, which has not been run at all.
+8 depends on 2–7 being functionally complete; 9 is packaging; 10 is last.
 
 ### 0. Testable-surface unit-test net (coverage-first, before dependent tasks)
 **Satisfies**: supports FR-02, FR-05, FR-07/10/11/12, NFR-04 — routed to `qa-automation`.
@@ -168,24 +176,67 @@ paths, not a shared implementation; FR-11/FR-12's gherkin scenarios pass by hand
 silent notification; mute on → no notification but tray unread count still updates); all three
 settings persist across a full quit-and-relaunch.
 
-### 5. Notifications — native bridge (content/timing) + Windows `hide()` bug spike
-**Satisfies**: FR-05 (content/timing), NFR-02.
-**Done when**: per the space's `hidden-window-must-stay-live` rule — window hidden to tray, a real
-message sent from another account, a real OS notification appears with sender + preview. This task
-is also the named spike for [ADR-0002](../adr/0002-notification-delivery-mechanism.md)'s
-`electron/electron#31016` risk: explicitly verify on Windows (and Linux, if available) that a
-notification arriving after the window has been hidden via close-to-tray (`win.hide()`, not just
-occluded/minimized) still appears — not merely that one arriving shortly after hiding does. If a
-notification is missing or delayed under this specific condition, implement ADR-0002's fallback
-(generic-content, main-process `Notification` triggered off `page-title-updated`) before marking
-this task done; do not mark it done on the strength of "the docs say `backgroundThrottling: false`
-should handle it" — that reasoning is exactly what issue #31016 already contradicts on Windows.
-Record which Electron version was pinned and confirm it is ≥27 as part of this task's write-up.
+### 4c. Build/version diagnostic line in the tray menu (FR-13) — STATUS: DONE
+**Satisfies**: FR-13.
+**Depends on**: task 4 (base tray menu exists).
+**Origin**: owner request, made mid-investigation of the FR-05 notification failure task 5 records
+below — not part of the plan's original scope, added once the diagnostic need was real (see
+[ADR-0002](../adr/0002-notification-delivery-mechanism.md) Revision 3 and
+[requirements.md](../business/requirements.md) FR-13).
+**Implemented as**: `src/main/version.js`'s `buildVersionLabel(version, isPackaged, mtimeMs)` (pure,
+unit-testable — `formatBuildTimestamp`/`buildVersionLabel` covered under `test/`), wired into the
+tray menu as a disabled, last-position entry after a separator (`src/main/tray.js`,
+[tray-lifecycle.md](../architecture/tray-lifecycle.md)).
+**Done when**: the tray menu shows a disabled build/version line combining `app.getVersion()`,
+packaged-vs-source, and a build timestamp; the three FR-13 gherkin scenarios in requirements.md
+pass; `buildVersionLabel`/`formatBuildTimestamp` have green unit coverage. **All of the above is
+already true** — recorded here as done, not as pending work, so this plan's picture of the project
+matches its actual state.
 
-### 5b. Click → land on the specific conversation (FR-05's sharpened requirement)
+### 5. Notifications — native bridge (content/timing) — STATUS: re-scoped after a real incident, verification still open
+**Satisfies**: FR-05 (content/timing), NFR-02.
+
+**This task's original framing is superseded — read this before acting on it.** It originally
+named the Windows `hide()` bug (`electron/electron#31016`) as the thing to spike on, and treated
+`backgroundThrottling: false` as the mechanism under test. That framing is closed, not open:
+
+- The `#31016` freeze was **not** reproduced on this project's pinned Electron version (44.4.3): a
+  1s `setInterval` was measured still firing every ~1s over 6s while the window was hidden. The
+  hidden-page-freeze risk this task was written to spike on does not apply here.
+- `backgroundThrottling: false` was tried as the mitigation for that risk, and **caused a real
+  production-path failure**: a colleague's message to a hidden window produced no notification at
+  all, because the flag pins `document.visibilityState` at `"visible"`, and Google Chat correctly
+  declines to notify a page it believes is visible. This was root-caused by `electron-developer` and
+  is recorded in full in [ADR-0002](../adr/0002-notification-delivery-mechanism.md) Revision 3. The
+  flag is reverted; `backgroundThrottling` is left at Electron's default.
+- Do **not** re-open this task to re-litigate `backgroundThrottling` — that question is closed. Do
+  not, either, treat "the docs say the default should work" as sufficient on its own: it wasn't
+  sufficient for the reverted flag, and it isn't the standard here either — see the next paragraph.
+
+**What genuinely remains unverified, and is the actual done-criterion for this task**: a real
+inbound message from another person, arriving while the window is hidden to tray, producing a real
+OS notification with sender + preview — the owner's own check, per the space's
+`hidden-window-must-stay-live` rule ("verified by actually hiding the window and observing a real
+incoming message produce a real OS notification — never by reading the code and reasoning that it
+should work"). This is not a code-reasoning question and nobody but the owner (or someone with a
+second Google account to message the owner's test account) can run it. **Done when**: window hidden
+to tray, a real message sent from another account, a real OS notification appears with sender +
+preview, on at least the platform(s) actually available to test. State plainly which platform(s)
+this ran on. If a notification is still missing or delayed under this condition (a genuinely new
+finding, not the already-diagnosed `backgroundThrottling` case), implement
+[ADR-0002](../adr/0002-notification-delivery-mechanism.md)'s documented fallback (generic-content,
+main-process `Notification` triggered off `page-title-updated`) before marking this task done.
+
+### 5b. Click → land on the specific conversation (FR-05's sharpened requirement) — STILL OPEN
 **Satisfies**: FR-05 (click behavior — deep-link to the specific conversation, not just window
 focus).
-**Depends on**: task 5 (the click-to-focus bridge and IPC channel must exist first).
+**Status**: unverified, and does not inherit task 5's now-closed `backgroundThrottling`/`#31016`
+question — this task was never about that mechanism, it is about whether Google Chat's own page
+navigates on notification click, which is an independent, still-open question.
+**Depends on**: task 5 (the click-to-focus bridge and IPC channel must exist first) — specifically,
+the *bridge/IPC wiring*, not the now-closed spike framing task 5 originally carried; and, like task
+5, on a real inbound message from another person while the window is hidden, since there is no way
+to trigger a real notification-click flow without one.
 **Why this is its own task, not folded into task 5**: this is the design's most fragile point (an
 injection into a page Google controls and can change at any time) and the owner's requirement here
 is materially sharper than "the window comes back" — it must land on **that** conversation, with

@@ -10,11 +10,36 @@ concrete implementation surface an implementer builds against.
 ## Three independent pieces
 
 ### 1. Notification content + timing — native bridge, unmodified
-No code beyond configuration: `webPreferences.backgroundThrottling: false` on the single
-`BrowserWindow`, plus `session.setPermissionRequestHandler` on the `persist:google-chat` session
-granting `notifications` (deny everything else by default). Google Chat's own page JS calls
-`new Notification(...)` exactly as it would in a background browser tab; Electron/Chromium bridges
-that straight to the OS notification center. Nothing in this piece touches sender/preview content.
+No code beyond configuration: `webPreferences.backgroundThrottling` is left at Electron's default
+(`true` — **do not set it `false`**, see "Page Visibility dependency" below), plus
+`session.setPermissionRequestHandler` on the `persist:google-chat` session granting `notifications`
+(deny everything else by default). Google Chat's own page JS calls `new Notification(...)` exactly
+as it would in a background browser tab; Electron/Chromium bridges that straight to the OS
+notification center. Nothing in this piece touches sender/preview content.
+
+#### Page Visibility dependency — load-bearing, not incidental
+**Google Chat decides whether to raise a `Notification` at all by reading
+`document.visibilityState`.** If the page believes the tab/window is `"visible"`, it treats the
+user as already looking at the conversation and deliberately does not alert them — correct
+behavior for a foregrounded tab, and exactly the behavior that silently breaks notifications if
+`visibilityState` is ever wrong. This app's entire notification pipeline depends on Chromium
+reporting an honest `visible ↔ hidden` transition when the window is actually hidden/shown.
+
+This is why `backgroundThrottling` must stay at its default: per Electron's own docs (`BrowserWindow`,
+"Page visibility" section, `https://www.electronjs.org/docs/latest/api/browser-window`), disabling
+it pins `visibilityState` at `"visible"` regardless of the window's real state — which is exactly
+what broke notifications in the incident [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
+records (Revision 3). The same docs section names a second, independent way to get the same wrong
+`"visible"` reading: a `BrowserWindow` created with `show: false` also reports `"visible"` from
+construction until a real `show()`/`hide()` transition happens — which is why the hidden-autostart
+path forces a real `showInactive()` → `hide()` transition (see
+[tray-lifecycle.md](tray-lifecycle.md)).
+
+**Any future change to this window's configuration, injected script, or main-process code that
+could distort `document.visibilityState` — a different throttling-related flag, a devtools/overlay
+window, anything that changes how Chromium computes page visibility — is a direct risk to FR-05 and
+must be checked against this dependency before shipping**, not reasoned about from documentation
+alone (see ADR-0002's closing judgement note on this exact failure mode).
 
 ### 2. Click → window focus, AND landing on the specific conversation — minimal main-world injection
 
@@ -92,8 +117,9 @@ per the space's `wrapper-not-a-rewrite` rule.
 
 **Ordering, made explicit** (this is where a race could otherwise hide): both listeners — Chat's own
 and this wrapper's — are attached to the *same* click event and fire synchronously, in the
-renderer's own event-loop turn, **independently of window visibility**. Because piece 1 already
-keeps the page's JS running while hidden (`backgroundThrottling: false`), Chat's in-page SPA
+renderer's own event-loop turn, **independently of window visibility**. Because piece 1's page JS
+keeps running while hidden (confirmed empirically at this project's pinned Electron version, at the
+default `backgroundThrottling` setting — see "Page Visibility dependency" above), Chat's in-page SPA
 navigation is not gated on the window being shown — it runs (and, in the normal case, completes,
 since client-side route changes are synchronous DOM/state updates, not network-bound) whether or
 not `win.show()` has happened yet. This wrapper's own listener independently sends a fire-and-forget
@@ -158,18 +184,24 @@ platform difference, not a defect). macOS is out of scope per [ADR-0003](../adr/
 no Dock-badge code path exists. Cleared when `n === 0` or when the window regains focus while
 showing the relevant conversation.
 
-## Fallback — the primary contingency for a known Windows bug, not a speculative edge case
-`electron/electron#31016` documents that on Windows, `backgroundThrottling: false` does **not**
-reliably keep a window's script execution live when it is hidden via `win.hide()` (the exact
-mechanism [tray-lifecycle.md](tray-lifecycle.md) uses for close-to-tray) — as opposed to merely
-occluded or minimized, where it works fine. The fix (`electron/electron#38924`) only ships starting
-with Electron 27+ and was explicitly marked `no-backport`. See [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
-for the full citation and the pinned-Electron-version check this implies.
+## Fallback — documented, currently-inactive contingency; not the active risk
 
-**Concrete trigger for adopting this fallback**: task 5's real-desktop verification (window hidden
-via close-to-tray, a real message sent) shows a notification missing or delayed. When that happens,
-do not keep debugging piece 1 — the root cause is already identified as Electron/Chromium's own
-compositor behavior, not something fixable in this app's code. Go straight to the fallback.
+**Superseded understanding (see [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
+Revision 3):** this section originally treated `electron/electron#31016` (a Windows-specific freeze
+of a hidden window's script execution under `hide()` + `backgroundThrottling: false`) as the active
+risk this fallback exists for. Real-desktop verification found the opposite of what was feared:
+`#31016`'s freeze was **not** observed on this project's pinned Electron version (44.4.3) — a 1s
+interval was confirmed still firing every ~1s over 6s while the window was hidden. What actually
+broke notifications was the `backgroundThrottling: false` mitigation itself (see "Page Visibility
+dependency" above), not the freeze `#31016` describes. That mitigation is reverted (piece 1, above).
+
+This fallback therefore has **no active trigger right now**. It is kept, undeleted, as a documented
+option for a possible future regression — e.g. an Electron version bump that reintroduces
+hidden-window JS throttling at the *default* `backgroundThrottling` setting (a different condition
+than the one originally feared). **Concrete trigger, restated**: a future real-desktop verification,
+with `backgroundThrottling` left at its default, shows a notification missing or delayed while the
+window is hidden via close-to-tray. Until that is actually observed, do not build this fallback
+speculatively.
 
 Design (full detail in ADR-0002's "Risks" section): a `page-title-updated` unread-count-transition
 (`0 → N`) fires a **main-process** `Notification` with generic content (sender/preview not
