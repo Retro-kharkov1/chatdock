@@ -17,6 +17,9 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test",
+    "generate-build-info": "node scripts/generate-build-info.js",
+    "prepack": "npm run generate-build-info",
+    "predist": "npm run generate-build-info",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
@@ -34,7 +37,8 @@
       "src/**/*",
       "assets/icons/**/*",
       "assets/tray/**/*",
-      "package.json"
+      "package.json",
+      "build-info.json"
     ],
     "publish": {
       "provider": "github"
