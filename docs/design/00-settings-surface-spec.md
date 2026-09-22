@@ -129,7 +129,7 @@ in (login behavior once, notification behavior grouped together).
 ### Footer (read-only, not a control)
 | # | Element | Content |
 |---|---|---|
-| — | **About line** | Same string as the tray menu's FR-13 diagnostic line, e.g. `Google Chat Desktop 0.1.0 (packaged, built 2026-09-22 13:58)`. Read-only, not clickable, small/muted type. Included here in addition to the tray menu (not instead of) because it is exactly where a user goes when something needs troubleshooting — see Rationale §5. |
+| — | **About line** | Same string as the tray menu's FR-13 diagnostic line, generated from `build-info.json` (produced by GitVersion at build time) in the form `<version> (<shortSha>, <ci\|local>)`, e.g. `0.0.1-19 (0ce64f7, local)`. Read-only, not clickable, small/muted type. Included here in addition to the tray menu (not instead of) because it is exactly where a user goes when something needs troubleshooting — see Rationale §5. |
 
 Every switch label is a short, literal description of what the control does (per Windows guidance:
 *"label it with one or two words... that describe the functionality it controls"*) — no jargon, no

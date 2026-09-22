@@ -38,8 +38,8 @@ helper/error text. Window is fixed 380×460 CSS px in every state below.
 │      the moment you open the window.          │
 │                                                │
 ├──────────────────────────────────────────────┤
-│  Google Chat Desktop 0.1.0                    │
-│  (packaged, built 2026-09-22 13:58)           │
+│  Google Chat Desktop                          │
+│  0.0.1-19 (0ce64f7, local)                    │
 └──────────────────────────────────────────────┘
 ```
 
@@ -78,8 +78,8 @@ contrast must be verified independently, not assumed from the light spec:
 │      the moment you open the window.          │
 │                                                │
 ├──────────────────────────────────────────────┤
-│  Google Chat Desktop 0.1.0                    │
-│  (packaged, built 2026-09-22 13:58)           │
+│  Google Chat Desktop                          │
+│  0.0.1-19 (0ce64f7, local)                    │
 └──────────────────────────────────────────────┘
 ```
 
@@ -156,8 +156,7 @@ with yet, and no risk of toggling a value before its real state is known.
 ├───────────────────────────────────┤
 │ Exit                               │  ← only action that terminates the process
 ├───────────────────────────────────┤
-│ 0.1.0 (packaged, built 2026-09-22  │  ← disabled, de-emphasized, FR-13
-│ 13:58)                             │
+│ 0.0.1-19 (0ce64f7, local)          │  ← disabled, de-emphasized, FR-13
 └───────────────────────────────────┘
 ```
 Removed from the tray vs. today's menu: **Start at login** and **Notification sound** checkboxes —
