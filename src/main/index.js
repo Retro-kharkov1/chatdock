@@ -64,7 +64,6 @@ if (process.versions.electron) {
 }
 
 function bootstrap() {
-  const fs = require('fs');
   const { app, BrowserWindow, ipcMain, shell } = require('electron');
   const {
     resolveWindowState,
@@ -81,19 +80,13 @@ function bootstrap() {
   const { createAppTray, setUnreadOverlay } = require('./tray');
   const { getSettingsPath, loadSettings, saveSettings } = require('./settings');
   const { getStartAtLogin, setStartAtLogin } = require('./autostart');
-  const { buildVersionLabel } = require('./version');
+  const { readBuildInfo, buildVersionLabel } = require('./version');
 
-  // Owner request (2026-09-22): tray version line. mtime of this very file — works both under
-  // `electron .` (source, changes on every edit) and packaged (electron-builder writes a fresh
-  // asar per build, so this changes on every release) — so it distinguishes one build from
-  // another without needing a git commit hash wired into the build. Read once at startup, not on
-  // every menu open: the running process's own build doesn't change while it's running.
-  let versionLabel;
-  try {
-    versionLabel = buildVersionLabel(app.getVersion(), app.isPackaged, fs.statSync(__filename).mtimeMs);
-  } catch (err) {
-    versionLabel = buildVersionLabel(app.getVersion(), app.isPackaged, NaN);
-  }
+  // Owner request (2026-09-22): tray version line, now sourced from `build-info.json`
+  // (GitVersion-derived, wired by ci-cd-engineer) rather than this file's own mtime — see
+  // version.js's header comment for why. Read once at startup, not on every menu open: the
+  // running process's own build doesn't change while it's running.
+  const versionLabel = buildVersionLabel(readBuildInfo(() => app.getAppPath()));
 
   const START_URL = 'https://chat.google.com/app/chat/SPACE_ID';
   const DEFAULT_SIZE = { width: 1200, height: 800 };

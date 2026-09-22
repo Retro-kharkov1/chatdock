@@ -1,48 +1,130 @@
 'use strict';
 
-// Coverage for src/main/version.js — the tray menu's disabled version/build line (owner request,
-// 2026-09-22, born from losing a diagnostic round to "is the owner testing a stale process?").
+// Coverage for src/main/version.js — the tray menu's disabled version/build line, sourced from
+// `build-info.json` (see scripts/generate-build-info.js for the generator and field contract).
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { formatBuildTimestamp, buildVersionLabel } = require('../src/main/version.js');
+const { readBuildInfo, buildVersionLabel } = require('../src/main/version.js');
 
-test('formatBuildTimestamp formats a known mtime as YYYY-MM-DD HH:mm', () => {
-  const mtimeMs = new Date(2026, 8, 22, 12, 49, 34).getTime(); // 2026-09-22 12:49:34 local
-  assert.equal(formatBuildTimestamp(mtimeMs), '2026-09-22 12:49');
+test('buildVersionLabel formats a well-formed CI build-info object', () => {
+  const buildInfo = {
+    version: '0.0.1-14',
+    shortSha: '00b6e49',
+    branch: 'main',
+    buildSource: 'ci',
+    builtAt: '2026-09-22T12:10:30.155Z',
+  };
+  assert.equal(buildVersionLabel(buildInfo), '0.0.1-14 (00b6e49, ci)');
 });
 
-test('formatBuildTimestamp pads single-digit month/day/hour/minute', () => {
-  const mtimeMs = new Date(2026, 0, 5, 3, 7, 0).getTime(); // 2026-01-05 03:07
-  assert.equal(formatBuildTimestamp(mtimeMs), '2026-01-05 03:07');
+test('buildVersionLabel formats a well-formed local build-info object', () => {
+  const buildInfo = {
+    version: '0.0.0-local+00b6e49',
+    shortSha: '00b6e49',
+    branch: 'main',
+    buildSource: 'local',
+    builtAt: '2026-09-22T12:10:30.155Z',
+  };
+  assert.equal(buildVersionLabel(buildInfo), '0.0.0-local+00b6e49 (00b6e49, local)');
 });
 
-test('formatBuildTimestamp returns "unknown" for a missing/non-finite mtime, never throws', () => {
-  assert.equal(formatBuildTimestamp(NaN), 'unknown');
-  assert.equal(formatBuildTimestamp(undefined), 'unknown');
-  assert.equal(formatBuildTimestamp('not-a-number'), 'unknown');
+test('buildVersionLabel returns an honest unknown-build marker for null (missing file)', () => {
+  assert.equal(buildVersionLabel(null), 'build info unavailable');
 });
 
-test('buildVersionLabel marks a dev run as "source"', () => {
-  const mtimeMs = new Date(2026, 8, 22, 12, 49).getTime();
+test('buildVersionLabel returns an honest unknown-build marker for undefined', () => {
+  assert.equal(buildVersionLabel(undefined), 'build info unavailable');
+});
+
+test('buildVersionLabel returns an honest unknown-build marker for non-object input', () => {
+  assert.equal(buildVersionLabel('not an object'), 'build info unavailable');
+  assert.equal(buildVersionLabel(42), 'build info unavailable');
+});
+
+test('buildVersionLabel returns an honest unknown-build marker when version is missing', () => {
   assert.equal(
-    buildVersionLabel('0.1.0', false, mtimeMs),
-    '0.1.0 (source, built 2026-09-22 12:49)'
+    buildVersionLabel({ shortSha: '00b6e49', buildSource: 'local' }),
+    'build info unavailable'
   );
 });
 
-test('buildVersionLabel marks app.isPackaged=true as "packaged"', () => {
-  const mtimeMs = new Date(2026, 8, 22, 13, 12).getTime();
+test('buildVersionLabel returns an honest unknown-build marker when version is not a string', () => {
   assert.equal(
-    buildVersionLabel('0.1.0', true, mtimeMs),
-    '0.1.0 (packaged, built 2026-09-22 13:12)'
+    buildVersionLabel({ version: 123, shortSha: '00b6e49', buildSource: 'local' }),
+    'build info unavailable'
   );
 });
 
-test('buildVersionLabel degrades to "unknown" rather than throwing when mtime is missing', () => {
-  assert.equal(buildVersionLabel('0.1.0', false, NaN), '0.1.0 (source, built unknown)');
+test('buildVersionLabel degrades shortSha to "unknown sha" rather than throwing when missing', () => {
+  assert.equal(
+    buildVersionLabel({ version: '0.1.0-1', buildSource: 'ci' }),
+    '0.1.0-1 (unknown sha, ci)'
+  );
 });
 
-test('buildVersionLabel always reflects the version string passed in (tracks package.json, never hardcoded)', () => {
-  assert.equal(buildVersionLabel('2.4.1', true, 0).startsWith('2.4.1 '), true);
+test('buildVersionLabel degrades buildSource to "unknown source" for an unexpected value', () => {
+  assert.equal(
+    buildVersionLabel({ version: '0.1.0-1', shortSha: 'abc1234', buildSource: 'not-a-real-source' }),
+    '0.1.0-1 (abc1234, unknown source)'
+  );
+});
+
+test('buildVersionLabel never throws on a malformed/partial build-info object', () => {
+  assert.doesNotThrow(() => buildVersionLabel({}));
+  assert.equal(buildVersionLabel({}), 'build info unavailable');
+});
+
+test('readBuildInfo returns null when the file does not exist', () => {
+  const result = readBuildInfo(() => require('node:os').tmpdir() + '/definitely-not-a-real-dir-xyz');
+  assert.equal(result, null);
+});
+
+test('readBuildInfo returns null when the file contains malformed JSON', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'version-test-'));
+  fs.writeFileSync(path.join(dir, 'build-info.json'), '{ not valid json', 'utf8');
+  try {
+    const result = readBuildInfo(() => dir);
+    assert.equal(result, null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readBuildInfo parses a well-formed build-info.json', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'version-test-'));
+  const buildInfo = {
+    version: '0.0.1-14',
+    shortSha: '00b6e49',
+    branch: 'main',
+    buildSource: 'local',
+    builtAt: '2026-09-22T12:10:30.155Z',
+  };
+  fs.writeFileSync(path.join(dir, 'build-info.json'), JSON.stringify(buildInfo), 'utf8');
+  try {
+    const result = readBuildInfo(() => dir);
+    assert.deepEqual(result, buildInfo);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readBuildInfo never throws when appGetAppPath itself throws', () => {
+  assert.doesNotThrow(() =>
+    readBuildInfo(() => {
+      throw new Error('boom');
+    })
+  );
+  assert.equal(
+    readBuildInfo(() => {
+      throw new Error('boom');
+    }),
+    null
+  );
 });
