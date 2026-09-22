@@ -5,3 +5,7 @@ dist/
 npm-debug.log*
 .DS_Store
 Thumbs.db
+
+# Generated at build time by scripts/generate-build-info.js — see that file's header comment
+# for the field contract. Never hand-edited, never committed: it is per-build, not per-commit.
+build-info.json
