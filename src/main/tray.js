@@ -47,34 +47,32 @@ function resolveIconState(unreadCount, muted) {
 /**
  * createAppTray(options)
  *
- * Builds the Tray icon + FR-07's context menu (Show/Hide, Start at login, Notification sound,
- * Mute notifications, Exit — in that order) and wires left-click/double-click to mirror Show/Hide
- * per NFR-01's Windows/Linux convention. Returns a small controller the caller drives as state
- * changes; this module holds no app/window state of its own beyond the Tray instance and the
- * currently-shown icon state.
+ * Builds the Tray icon + FR-07's context menu (Show/Hide, Mute notifications, Settings…, Exit —
+ * in that order) and wires left-click/double-click to mirror Show/Hide per NFR-01's Windows/Linux
+ * convention. Returns a small controller the caller drives as state changes; this module holds no
+ * app/window state of its own beyond the Tray instance and the currently-shown icon state.
+ *
+ * **Amended per FR-15/Wireframe F** (tray-lifecycle.md): Start at login and Notification sound are
+ * no longer tray-menu checkboxes — they moved to the Settings window (FR-15). Mute notifications
+ * is the only preference checkbox that stays on the tray, and a new "Settings…" entry opens the
+ * Settings window.
  *
  * @param {object} options
- * @param {() => boolean} options.getSoundEnabled
  * @param {() => boolean} options.getNotificationsMuted
- * @param {() => boolean} options.getStartAtLogin
  * @param {() => string} options.getVersionLabel Owner request (2026-09-22): a disabled
  *   diagnostic line showing which build is actually running — see version.js's own doc comment
  *   for why a bare package.json version isn't enough.
  * @param {() => void} options.onToggleShowHide
- * @param {() => void} options.onToggleStartAtLogin
- * @param {() => void} options.onToggleSound
  * @param {() => void} options.onToggleMute
+ * @param {() => void} options.onOpenSettings Opens/focuses the Settings window (FR-15).
  * @param {() => void} options.onExit
  */
 function createAppTray({
-  getSoundEnabled,
   getNotificationsMuted,
-  getStartAtLogin,
   getVersionLabel,
   onToggleShowHide,
-  onToggleStartAtLogin,
-  onToggleSound,
   onToggleMute,
+  onOpenSettings,
   onExit,
 }) {
   let currentIconState = 'normal';
@@ -86,23 +84,13 @@ function createAppTray({
       { label: 'Show/Hide Google Chat', click: () => onToggleShowHide() },
       { type: 'separator' },
       {
-        label: 'Start at login',
-        type: 'checkbox',
-        checked: getStartAtLogin(),
-        click: () => onToggleStartAtLogin(),
-      },
-      {
-        label: 'Notification sound',
-        type: 'checkbox',
-        checked: getSoundEnabled(),
-        click: () => onToggleSound(),
-      },
-      {
         label: 'Mute notifications',
         type: 'checkbox',
         checked: getNotificationsMuted(),
         click: () => onToggleMute(),
       },
+      { type: 'separator' },
+      { label: 'Settings…', click: () => onOpenSettings() },
       { type: 'separator' },
       // The only path that terminates the process — see the space's `quit-only-from-tray` rule.
       { label: 'Exit', click: () => onExit() },

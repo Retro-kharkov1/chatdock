@@ -64,7 +64,7 @@ if (process.versions.electron) {
 }
 
 function bootstrap() {
-  const { app, BrowserWindow, ipcMain, shell } = require('electron');
+  const { app, BrowserWindow, ipcMain, shell, Menu } = require('electron');
   const {
     resolveWindowState,
     getWindowStatePath,
@@ -77,10 +77,21 @@ function bootstrap() {
     buildNotificationBridgeScript,
     attachUnreadTitleListener,
   } = require('./notifications');
-  const { createAppTray, setUnreadOverlay } = require('./tray');
-  const { getSettingsPath, loadSettings, saveSettings } = require('./settings');
-  const { getStartAtLogin, setStartAtLogin } = require('./autostart');
+  const { createAppTray, setUnreadOverlay, createUnreadBlinkGate } = require('./tray');
+  const { createSettingsStore, getSettingsPath } = require('./settingsStore');
+  const { openSettingsWindow, getSettingsWindow } = require('./settingsWindow');
+  const trayBlink = require('./trayBlink');
   const { readBuildInfo, buildVersionLabel } = require('./version');
+
+  // Application-menu suppression (docs/architecture/tray-lifecycle.md "Application menu
+  // suppression is part of quit-only-from-tray, not a separate concern") — the single
+  // highest-consequence line in this pass. Electron installs a default application menu unless
+  // this is called, and that default menu carries its own Quit/Exit item wired straight to
+  // `app.quit()` — a second, unguarded quit path that bypasses the `isQuitting`-gated `close`
+  // handler entirely. Called at the very top of startup, before the single-instance lock and
+  // definitely before any window is created (electronjs.org/docs/latest/api/menu:
+  // "Passing null will suppress the default menu.").
+  Menu.setApplicationMenu(null);
 
   // Owner request (2026-09-22): tray version line, now sourced from `build-info.json`
   // (GitVersion-derived, wired by ci-cd-engineer) rather than this file's own mtime — see
@@ -121,7 +132,16 @@ function bootstrap() {
 
   const windowStatePath = getWindowStatePath();
   const settingsPath = getSettingsPath();
-  let settings = loadSettings(settingsPath);
+  // Single-writer settings authority (docs/architecture/tray-lifecycle.md "Single source of
+  // truth") — owns all four persisted booleans plus the OS-level start-at-login read/write. The
+  // getter callbacks below are resolved lazily (trayController/settingsWindow don't exist yet at
+  // this point in bootstrap) so applySetting's side effects always see the current instances.
+  const settingsStore = createSettingsStore({
+    settingsPath,
+    getTrayController: () => trayController,
+    getTrayBlink: () => trayBlink,
+    getSettingsWindow: () => getSettingsWindow(),
+  });
 
   let saveStateTimer = null;
   function flushWindowState() {
@@ -161,9 +181,23 @@ function bootstrap() {
   function refreshTrayIconState() {
     if (!trayController) return;
     trayController.setIconState(
-      trayController.resolveIconState(currentUnreadCount, settings.notificationsMuted)
+      trayController.resolveIconState(currentUnreadCount, settingsStore.get('notificationsMuted'))
     );
   }
+
+  // FR-14 start/resume + trigger-2-stop wiring (docs/architecture/tray-lifecycle.md "Start/resume
+  // trigger" / "Stop triggers") — the pure gate lives in tray.js (`createUnreadBlinkGate`,
+  // unit-tested in test/trayBlink.test.js); this closure only supplies the live Electron-backed
+  // dependencies. Trigger 1 (window becomes visible) is wired separately, directly to
+  // `trayBlink.stopBlinking`, on the window's 'show'/'restore' events below — it does not go
+  // through this gate.
+  const updateBlinkOnUnreadChange = createUnreadBlinkGate({
+    isWindowVisible: () => Boolean(mainWindow && mainWindow.isVisible()),
+    getBlinkOnUnread: () => settingsStore.get('blinkOnUnread'),
+    getNotificationsMuted: () => settingsStore.get('notificationsMuted'),
+    startBlinking: () => trayBlink.startBlinking(),
+    stopBlinking: () => trayBlink.stopBlinking(),
+  });
 
   /**
    * Re-injects the notification bridge with the current sound/mute values. Called on dom-ready,
@@ -174,7 +208,10 @@ function bootstrap() {
    */
   function injectNotificationBridge() {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    const script = buildNotificationBridgeScript(settings.soundEnabled, settings.notificationsMuted);
+    const script = buildNotificationBridgeScript(
+      settingsStore.get('soundEnabled'),
+      settingsStore.get('notificationsMuted')
+    );
     mainWindow.webContents.executeJavaScript(script, false).catch((err) => {
       console.error(
         '[gcd] DEGRADED: notification bridge injection failed — click-to-focus and sound/mute' +
@@ -183,10 +220,6 @@ function bootstrap() {
         err
       );
     });
-  }
-
-  function persistSettings() {
-    saveSettings(settingsPath, settings);
   }
 
   function createWindow() {
@@ -256,6 +289,37 @@ function bootstrap() {
     mainWindow.on('resize', scheduleWindowStateSave);
     mainWindow.on('move', scheduleWindowStateSave);
 
+    // FR-14 trigger 1 (docs/architecture/tray-lifecycle.md "Stop triggers"): the window becoming
+    // visible stops blinking immediately, independent of which conversation is shown or how much
+    // unread remains elsewhere. `stopBlinking()` is itself a no-op when nothing is blinking, so
+    // this firing on paths that were never blinking (e.g. the hidden-autostart showInactive() ->
+    // hide() pair above) is harmless by construction.
+    mainWindow.on('show', () => trayBlink.stopBlinking());
+    mainWindow.on('restore', () => trayBlink.stopBlinking());
+
+    // Clipboard accelerator restoration (docs/architecture/tray-lifecycle.md "Application menu
+    // suppression" — "What this costs, and how it's paid for"): suppressing the application menu
+    // above also disables the standard Ctrl+C/X/V/A/Z(+Shift) keyboard accelerators on
+    // Windows/Linux, since Electron normally routes them through the menu's Edit role. Restored
+    // here by dispatching straight to the focused webContents' own edit commands, without
+    // reintroducing any Menu (and therefore no second quit-capable surface).
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || !(input.control || input.meta)) return;
+      const key = input.key.toLowerCase();
+      const wc = mainWindow.webContents;
+      const actions = {
+        c: () => wc.copy(),
+        x: () => wc.cut(),
+        v: () => wc.paste(),
+        a: () => wc.selectAll(),
+        z: () => (input.shift ? wc.redo() : wc.undo()),
+      };
+      if (actions[key]) {
+        event.preventDefault();
+        actions[key]();
+      }
+    });
+
     // FR-06 / space rule `quit-only-from-tray`: the close (X) button hides, it never quits.
     mainWindow.on('close', (event) => {
       if (!isQuitting) {
@@ -300,6 +364,7 @@ function bootstrap() {
       currentUnreadCount = unreadCount;
       setUnreadOverlay(mainWindow, unreadCount);
       refreshTrayIconState();
+      updateBlinkOnUnreadChange(unreadCount);
     });
 
     mainWindow.loadURL(START_URL);
@@ -307,34 +372,40 @@ function bootstrap() {
 
   function createTray() {
     trayController = createAppTray({
-      getSoundEnabled: () => settings.soundEnabled,
-      getNotificationsMuted: () => settings.notificationsMuted,
-      getStartAtLogin: () => getStartAtLogin(),
+      getNotificationsMuted: () => settingsStore.get('notificationsMuted'),
       getVersionLabel: () => versionLabel,
       onToggleShowHide: toggleShowHide,
-      onToggleStartAtLogin: () => {
-        const next = !getStartAtLogin();
-        setStartAtLogin(next);
-        trayController.refreshMenu();
-      },
-      onToggleSound: () => {
-        settings.soundEnabled = !settings.soundEnabled;
-        persistSettings();
-        injectNotificationBridge();
-        trayController.refreshMenu();
-      },
-      onToggleMute: () => {
-        settings.notificationsMuted = !settings.notificationsMuted;
-        persistSettings();
+      onToggleMute: async () => {
+        // Direct in-process call (tray-lifecycle.md "applySetting is called from exactly two
+        // places... the tray menu's Mute checkbox click handler (direct in-process function
+        // call...)") — settingsStore.applySetting itself refreshes the tray menu (its
+        // notificationsMuted side effect) and broadcasts to an open Settings window.
+        const next = !settingsStore.get('notificationsMuted');
+        await settingsStore.applySetting('notificationsMuted', next);
         injectNotificationBridge();
         refreshTrayIconState();
-        trayController.refreshMenu();
+      },
+      onOpenSettings: () => {
+        openSettingsWindow({ appIconPath: path.join(__dirname, '../../assets/icons/icon.png') });
       },
       onExit: () => {
         app.quit();
       },
     });
     refreshTrayIconState();
+
+    // FR-14 icon-swap wiring (docs/architecture/tray-lifecycle.md "Blink tray icon on unread" —
+    // "Icon-image swap only... no menu rebuild, no settings read, no other work"): trayBlink.js
+    // owns only the timer; this module supplies which glyph to show on each tick and which glyph
+    // to restore once blinking stops.
+    trayBlink.configure({
+      onTick: (showBadge) => {
+        trayController.setIconState(showBadge ? 'unread' : 'normal');
+      },
+      onStop: () => {
+        refreshTrayIconState();
+      },
+    });
   }
 
   // FR-08: focus the existing window instead of a second instance.
@@ -365,6 +436,26 @@ function bootstrap() {
       return;
     }
     focusMainWindow();
+  });
+
+  // Settings window channels (docs/architecture/ipc-contract.md "Settings window"). No sender-
+  // origin check here — unlike 'notification:clicked' above, the Settings window only ever loads
+  // this app's own bundled local HTML, never a third-party origin (see settingsWindow.js).
+  ipcMain.handle('settings:get', async () => {
+    const all = settingsStore.getAll();
+    return { ...all, version: versionLabel };
+  });
+
+  ipcMain.handle('settings:set', async (event, payload) => {
+    const { key, value } = payload || {};
+    const result = await settingsStore.applySetting(key, value, {
+      originSenderId: event.sender.id,
+    });
+    if (result.ok) {
+      if (key === 'soundEnabled' || key === 'notificationsMuted') injectNotificationBridge();
+      if (key === 'notificationsMuted') refreshTrayIconState();
+    }
+    return result;
   });
 
   app.whenReady().then(() => {
