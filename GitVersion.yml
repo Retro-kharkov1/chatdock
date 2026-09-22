@@ -1,0 +1,16 @@
+# GitVersion configuration for google-chat-desktop.
+#
+# This is a single-branch personal repo (only `main` exists; see `git branch -a`) with no
+# GitFlow develop/release/hotfix ceremony and, as of writing, no tags at all. Base workflow:
+# `GitHubFlow/v1` — a first-party GitVersion 6.x preset built for exactly this shape (one
+# long-lived `main`, optional short-lived `feature/*`/`release/*` branches if they ever show
+# up, version computed from commit distance rather than a hand-maintained number). The
+# GitVersion default (`GitFlow/v1`) assumes `develop`/`release`/`hotfix` branches this repo
+# will never have; pulling that preset in would add ceremony with nothing behind it.
+#
+# `main` under this preset: label '' (no alpha/beta prefix), increment Patch. Until the first
+# tag exists, every commit computes as a pre-release of `0.0.1` — e.g. `0.0.1-13` on the 13th
+# commit since repo start — because GitVersion (correctly) will not call an untagged commit a
+# clean release. See the ci-cd-engineer report for the exact number this produced when it was
+# verified against this repo's actual history, and what tagging `v0.1.0` does to it.
+workflow: GitHubFlow/v1
