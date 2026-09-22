@@ -57,6 +57,9 @@ function resolveIconState(unreadCount, muted) {
  * @param {() => boolean} options.getSoundEnabled
  * @param {() => boolean} options.getNotificationsMuted
  * @param {() => boolean} options.getStartAtLogin
+ * @param {() => string} options.getVersionLabel Owner request (2026-09-22): a disabled
+ *   diagnostic line showing which build is actually running — see version.js's own doc comment
+ *   for why a bare package.json version isn't enough.
  * @param {() => void} options.onToggleShowHide
  * @param {() => void} options.onToggleStartAtLogin
  * @param {() => void} options.onToggleSound
@@ -67,6 +70,7 @@ function createAppTray({
   getSoundEnabled,
   getNotificationsMuted,
   getStartAtLogin,
+  getVersionLabel,
   onToggleShowHide,
   onToggleStartAtLogin,
   onToggleSound,
@@ -102,6 +106,11 @@ function createAppTray({
       { type: 'separator' },
       // The only path that terminates the process — see the space's `quit-only-from-tray` rule.
       { label: 'Exit', click: () => onExit() },
+      { type: 'separator' },
+      // Owner request (2026-09-22): disabled/non-clickable diagnostic line, deliberately last and
+      // visually de-emphasized — this is a diagnostic aid, not a feature, and must not compete
+      // with the actual controls above it.
+      { label: getVersionLabel(), enabled: false },
     ]);
   }
 
