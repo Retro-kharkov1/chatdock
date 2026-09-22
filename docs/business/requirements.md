@@ -310,7 +310,8 @@ Feature: Distribution installers
 
   Scenario: Linux installer
     Given a release build has been produced
-    Then at least one Linux package artifact (e.g. AppImage) exists for that release
+    Then a Linux AppImage artifact exists for that release
+    And a Linux .deb package artifact exists for that release
 ```
 
 ### FR-10 — Start automatically at OS login
@@ -410,7 +411,8 @@ than treated as defects:
   `app.setLoginItemSettings()`; Linux has no such Electron API and uses a hand-written XDG
   autostart `.desktop` file instead. Both achieve the same user-visible outcome.
 - Distribution/signing parity is explicitly NOT claimed — see NFR-05 (Windows ships unsigned,
-  triggering a SmartScreen warning; Linux has no equivalent concept for its AppImage target).
+  triggering a SmartScreen warning; Linux has no equivalent concept for either of its AppImage/deb
+  targets).
 
 ### NFR-02 — Resource usage for an always-running tray app
 Since the application is expected to run continuously in the background:
@@ -448,7 +450,9 @@ is actually achievable for the two in-scope platforms:
   code-signing; unsigned, it will show a SmartScreen "unknown publisher" warning on first run.
   Signing requires a code-signing certificate, which is a separate, explicit decision — not
   assumed to be in scope unless the owner acquires one.
-- **Linux**: an AppImage (or equivalent) can be built without any signing requirement.
+- **Linux**: both an AppImage and a `.deb` package are built, neither requiring any code signing.
+  The `.deb` targets Debian/Ubuntu, the distro family the owner actually runs; AppImage runs
+  anywhere without installation.
 - **macOS is out of scope** — an explicit owner decision, recorded in
   [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md). Confirmed directly against
   Electron's own docs (`https://www.electronjs.org/docs/latest/api/notification`): macOS requires

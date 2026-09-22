@@ -229,10 +229,13 @@ checked, per the space's `verify-on-a-real-desktop` rule).
 
 ### 9. Packaging + CI release matrix
 **Satisfies**: FR-09, NFR-05.
-**Done when**: `.github/workflows/release.yml` produces an NSIS `.exe` and an `.AppImage` from one
-tagged run (Windows + Linux only, per ADR-0003), each artifact matches the signing status documented
-in [packaging-release.md](../architecture/packaging-release.md), and the release notes explicitly
-state the Windows SmartScreen warning per the space's `installers-are-part-of-done` rule.
+**Done when**: `.github/workflows/release.yml` produces an NSIS `.exe`, an `.AppImage`, and a `.deb`
+from one tagged run (Windows + Linux only, per ADR-0003), each artifact matches the signing status
+documented in [packaging-release.md](../architecture/packaging-release.md), and the release notes
+explicitly state the Windows SmartScreen warning per the space's `installers-are-part-of-done` rule.
+Note: the Linux leg cannot be built locally on a Windows dev machine (AppImage packaging needs
+Linux-native `mksquashfs`) — it is produced and verified only by the `ubuntu-latest` matrix job, and
+is untested until that workflow has actually run once end-to-end.
 
 ### 10. End-to-end real-desktop verification
 **Satisfies**: all FR/NFR IDs, as a final gate.

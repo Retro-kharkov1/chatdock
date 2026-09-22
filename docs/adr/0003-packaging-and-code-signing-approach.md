@@ -48,8 +48,18 @@ git history.
   platform), but triggers a Microsoft SmartScreen "unknown publisher" warning on first run. Signing
   later requires purchasing a code-signing certificate — an explicit, separate decision for the
   owner, not assumed in scope.
-- **Linux**: AppImage target — no signing requirement exists for this format, nothing to defer;
-  notifications have no signing dependency on this platform either.
+- **Linux**: two targets — **AppImage** (runs anywhere, no installation) and **deb** (installs
+  properly via `apt`/`dpkg` on the Debian/Ubuntu family, the Linux the owner is actually likely to
+  run). Building the deb requires `linux.category` and `linux.maintainer` in the electron-builder
+  config, which AppImage does not need — see
+  [packaging-release.md](../architecture/packaging-release.md) for what those fields do. Neither
+  format has a signing requirement, so there is nothing to defer for either one; notifications have
+  no signing dependency on this platform.
+  <sub>Correction, same date: the implementation brief specified "AppImage/deb" without this ADR
+  having been checked against it first — a tech-lead briefing gap, not an implementer deviation.
+  Both targets are already built and working, and a `.deb` is strictly more useful for the owner's
+  actual Debian/Ubuntu usage than AppImage alone, so this ADR is updated to match reality rather
+  than reverting working packaging to satisfy the original wording.</sub>
 - **macOS: out of scope**, per the owner decision above. `mac` is not a target in the
   electron-builder config or the CI matrix (see [packaging-release.md](../architecture/packaging-release.md)).
   The matrix stays structured as one-job-per-OS (rather than, say, a single combined job), so adding

@@ -17,9 +17,21 @@ the recurring Apple Developer Program cost).
   "appId": "dev.retro-kharkov1.google-chat-desktop",
   "productName": "Google Chat Desktop",
   "directories": { "output": "release" },
-  "files": ["src/**/*", "package.json"],
-  "win": { "target": ["nsis"] },
-  "linux": { "target": ["AppImage"] }
+  "files": ["src/**/*", "assets/icons/**/*", "assets/tray/**/*", "package.json"],
+  "publish": { "provider": "github" },
+  "win": { "target": ["nsis"], "icon": "assets/icons/icon.ico" },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
+  },
+  "linux": {
+    "target": ["AppImage", "deb"],
+    "icon": "assets/icons/icon.png",
+    "category": "Network",
+    "maintainer": "95210642+Retro-kharkov1@users.noreply.github.com"
+  }
 }
 ```
 No `mac` key — macOS is not a build target (ADR-0003). No `win.certificateFile` entry yet — per
@@ -27,6 +39,20 @@ ADR-0003, Windows ships unsigned for the initial release. Adding a certificate l
 (see ADR-0003's "Revisit trigger"). If macOS is ever reconsidered, re-read ADR-0003's Revision 1
 history first — the code-signing-for-notifications requirement doesn't go away with time; adding it
 back is a `mac: { target: ["dmg"] }` entry plus the signing secrets, not a redesign.
+
+**Linux ships two targets, not one:**
+- **AppImage** — a single self-contained executable that runs on any modern distro without
+  installation; the "works everywhere, no package manager involved" option.
+- **deb** — a proper `apt`/`dpkg`-installable package for Debian/Ubuntu-family systems, which is
+  the Linux the owner is actually likely to run. It integrates with the system's application menu
+  and package database the way AppImage deliberately does not.
+
+Building a `.deb` requires two `linux` keys that AppImage does not need — they are **load-bearing,
+not decoration**, and omitting them breaks the deb build:
+- `category` — the freedesktop.org menu category (`"Network"` here) the installed app is filed
+  under in the desktop environment's application menu.
+- `maintainer` — required by Debian packaging metadata (the `Maintainer:` control-file field);
+  electron-builder refuses to produce a `.deb` without it.
 
 ## GitHub Actions release matrix
 
@@ -39,12 +65,25 @@ just a new matrix entry plus ADR-0003's signing secrets. For this repo's initial
 Windows signing-related env var (`CSC_LINK`, etc.) is **omitted**, which is what makes that build
 unsigned.
 
+There is no dedicated third-party "electron-builder" GitHub Action pinned in this workflow. The
+first-party guidance at `electron.build/docs/features/github-actions/` (checked 2026-09-22) is to
+run electron-builder directly — `npx electron-builder <platform-flag> --publish always` on a tag
+push, `--publish never` otherwise — rather than depend on a third-party Action whose name/ownership
+could move. `.github/workflows/release.yml` follows that pattern for both matrix legs.
+
+**The Linux leg cannot be built on this repo's Windows development machine.** AppImage packaging
+needs Linux-native tooling (`mksquashfs`); a real local build attempt on Windows fails with
+`mksquashfs process failed ENOENT`. In practice this means the Linux artifacts are produced only by
+the `ubuntu-latest` job in the GitHub Actions matrix, and **that leg is untested until the release
+workflow has actually run once** — this is a real, current gap, not a theoretical one, and should
+not be assumed verified before the first tagged release completes.
+
 ## What "installer" means per platform right now (NFR-05)
 
 | Platform | Artifact | Signing status | What the user sees on first run | Does FR-05 (notifications) work? |
 |---|---|---|---|---|
 | Windows | NSIS `.exe` | Unsigned | SmartScreen "Windows protected your PC" — user clicks "More info" → "Run anyway". | Yes — no signing dependency on this platform. |
-| Linux | `.AppImage` | N/A — no signing concept for this format | Runs directly once marked executable (`chmod +x`); some distros show a first-run "untrusted executable" dialog depending on the desktop environment, not an electron-builder concern. | Yes — no signing dependency on this platform. |
+| Linux | `.AppImage` and `.deb` | N/A — no signing concept for either format | AppImage runs directly once marked executable (`chmod +x`); some distros show a first-run "untrusted executable" dialog depending on the desktop environment. `.deb` installs via the distro's normal package manager (`apt install ./*.deb` or a GUI installer) with no first-run warning at all. Neither is an electron-builder concern. | Yes — no signing dependency on this platform, for either artifact. |
 
 macOS is not built — see [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md) for why
 (code signing is required for macOS notifications to function at all; the owner doesn't use macOS,
