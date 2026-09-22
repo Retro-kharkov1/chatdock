@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <title>Google Chat Desktop — hybrid chat-bubble / electron-orbit mark</title>
+  <defs>
+    <clipPath id="bubble-clip">
+      <rect x="20" y="16" width="84" height="72" rx="20" ry="20" />
+    </clipPath>
+  </defs>
+
+  <!-- Silhouette: rounded-square chat body fused with an orbit-trail tail.
+       Same fill, deliberately overlapping — reads as one solid shape at any size. -->
+  <g fill="#149960">
+    <rect x="20" y="16" width="84" height="72" rx="20" ry="20" />
+    <path d="
+      M 50 70
+      C 41 83 27 91 13 104
+      C 22 92 32 83 40 75
+      C 44 71 48 67 50 70
+      Z" />
+  </g>
+
+  <!-- Electron orbit ring: a tilted ellipse band, clipped to the bubble body,
+       doing double duty as the bubble's only interior mark. It visibly bows
+       (true elliptical curvature, not a straight slash) and its lower-left
+       exit lines up with the tail's root so the two motifs read as one
+       continuous gesture. -->
+  <g clip-path="url(#bubble-clip)">
+    <ellipse
+      cx="60" cy="50" rx="32" ry="24"
+      transform="rotate(-18 60 50)"
+      fill="none" stroke="#FFFFFF" stroke-width="11" />
+  </g>
+
+  <!-- Nucleus: the orbit's fixed point, Electron's own visual anchor -->
+  <circle cx="60" cy="50" r="7.5" fill="#FFFFFF" />
+</svg>

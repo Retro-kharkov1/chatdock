@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <title>Muted / quiet-hours badge — crescent moon, halo + neutral fill (shape-coded, not color-only)</title>
+  <circle cx="50" cy="50" r="46" fill="#FFFFFF" />
+  <path fill="#5B616E" d="
+    M 68 14
+    A 40 40 0 1 0 68 86
+    A 27 27 0 1 1 68 14
+    Z" />
+</svg>
