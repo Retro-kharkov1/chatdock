@@ -2,6 +2,12 @@
   "name": "google-chat-desktop",
   "version": "0.1.0",
   "description": "Electron desktop client for Google Chat - persistent Google login, native system notifications, tray-minimize.",
+  "author": "Retro-kharkov1",
+  "homepage": "https://github.com/Retro-kharkov1/google-chat-desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Retro-kharkov1/google-chat-desktop.git"
+  },
   "private": true,
   "license": "UNLICENSED",
   "main": "src/main/index.js",
@@ -10,7 +16,7 @@
   },
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/*.test.js",
+    "test": "node --test",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
@@ -30,17 +36,29 @@
       "assets/tray/**/*",
       "package.json"
     ],
+    "publish": {
+      "provider": "github"
+    },
     "win": {
       "target": [
         "nsis"
       ],
       "icon": "assets/icons/icon.ico"
     },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb"
       ],
-      "icon": "assets/icons/icon.png"
+      "icon": "assets/icons/icon.png",
+      "category": "Network",
+      "maintainer": "95210642+Retro-kharkov1@users.noreply.github.com"
     }
   }
 }

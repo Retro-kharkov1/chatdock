@@ -1,0 +1,69 @@
+name: Release
+
+# Builds Windows (NSIS) and Linux (AppImage + deb) installers and attaches them to a
+# GitHub Release. macOS is intentionally not built — see ADR-0003
+# (docs/adr/0003-packaging-and-code-signing-approach.md): macOS notifications require a
+# code-signed build, and the owner does not use macOS, so there is no signing certificate
+# and no macOS runner in this matrix.
+#
+# There is no dedicated "electron-builder" GitHub Action to pin — the current first-party
+# guidance (https://www.electron.build/docs/features/github-actions/, checked 2026-09-22)
+# runs electron-builder directly via `npx electron-builder`. That avoids depending on a
+# third-party Action whose name/ownership has moved before.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            build-flag: --win
+          - os: ubuntu-latest
+            build-flag: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build and publish (tagged release)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npx electron-builder ${{ matrix.build-flag }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build only (manual run, no publish)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: npx electron-builder ${{ matrix.build-flag }} --publish never
+
+      - name: Upload build artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: google-chat-desktop-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: ignore
