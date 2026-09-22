@@ -1,0 +1,173 @@
+/* docs/design/00-settings-surface-spec.md §7 (tokens), §8 (WCAG 2.2 AA). Theme mirrors the OS via
+   `prefers-color-scheme` — Electron's nativeTheme drives this media feature directly for a
+   renderer's own stylesheet, so no IPC round trip is needed to track OS theme changes live (the
+   spec's own nativeTheme.on('updated', ...) wiring is a main-process-side mechanism for driving a
+   data-theme attribute; this achieves the same "always matches current OS theme" outcome with less
+   surface, since this window has no other main<->renderer theme channel and does not need one). */
+
+:root {
+  --bg: #FFFFFF;
+  --text-primary: #1B1B1B;
+  --text-secondary: #5C5C5C;
+  --border: #E1E1E1;
+  --accent: #0F6CBD;
+  --track-off: #C7C7C7;
+  --error: #A80000;
+  --focus-ring: #0F6CBD;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1F1F1F;
+    --text-primary: #F5F5F5;
+    --text-secondary: #B3B3B3;
+    --border: #3B3B3B;
+    --accent: #479EF5;
+    --track-off: #5A5A5A;
+    --error: #F1707B;
+    --focus-ring: #479EF5;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+}
+
+main {
+  padding: 12px 16px 8px;
+}
+
+.group + .group {
+  margin-top: 4px;
+}
+
+h2 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin: 12px 0 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.row {
+  min-height: 44px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.row:last-child { border-bottom: none; }
+
+.row-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+}
+
+.row-main label {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.helper {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--error);
+}
+
+.error::before {
+  content: "\26A0  "; /* warning glyph, per spec §5/§6 — text + icon, never color-only */
+}
+
+.try-again {
+  margin-top: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.try-again[hidden] { display: none; }
+
+/* Switch: a native checkbox restyled as a toggle track+thumb, per spec §8's "framework-provided
+   controls preferred" — keyboard operability and AT semantics come from the real checkbox, only
+   its paint is replaced. */
+input[type="checkbox"][role="switch"] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  border-radius: 10px;
+  background: var(--track-off);
+  cursor: pointer;
+  flex: none;
+  transition: background-color 120ms ease;
+}
+
+input[type="checkbox"][role="switch"]::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  transition: transform 120ms ease;
+}
+
+input[type="checkbox"][role="switch"]:checked {
+  background: var(--accent);
+}
+
+input[type="checkbox"][role="switch"]:checked::before {
+  transform: translateX(16px);
+}
+
+input[type="checkbox"][role="switch"]:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+input[type="checkbox"][role="switch"]:focus-visible,
+.try-again:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.about {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.about[hidden] { display: none; }

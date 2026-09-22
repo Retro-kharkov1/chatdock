@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!-- Local, bundled content only (docs/architecture/tray-lifecycle.md "Process model") — a
+       restrictive CSP is still applied per electron-desktop.md §3's defense-in-depth guidance,
+       even though nothing remote ever loads here. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self';" />
+  <title>Google Chat Desktop — Settings</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <main id="app" aria-busy="true">
+    <section class="group" aria-labelledby="general-heading">
+      <h2 id="general-heading">General</h2>
+      <div class="row" id="row-startAtLogin">
+        <div class="row-main">
+          <label for="startAtLogin">Start at login</label>
+          <input type="checkbox" role="switch" id="startAtLogin" disabled tabindex="-1" />
+        </div>
+        <p class="helper">Launches minimized to the tray when you log in.</p>
+        <p class="error" id="error-startAtLogin" role="alert" hidden></p>
+        <button type="button" class="try-again" id="retry-startAtLogin" hidden>Try again</button>
+      </div>
+    </section>
+
+    <section class="group" aria-labelledby="notifications-heading">
+      <h2 id="notifications-heading">Notifications</h2>
+
+      <div class="row" id="row-soundEnabled">
+        <div class="row-main">
+          <label for="soundEnabled">Notification sound</label>
+          <input type="checkbox" role="switch" id="soundEnabled" disabled tabindex="-1" />
+        </div>
+        <p class="helper">Plays a sound with new-message notifications.</p>
+      </div>
+
+      <div class="row" id="row-notificationsMuted">
+        <div class="row-main">
+          <label for="notificationsMuted">Mute notifications</label>
+          <input type="checkbox" role="switch" id="notificationsMuted" disabled tabindex="-1" />
+        </div>
+        <p class="helper">Silences notifications. The tray icon still shows unread messages. Also on the tray menu.</p>
+      </div>
+
+      <div class="row" id="row-blinkOnUnread">
+        <div class="row-main">
+          <label for="blinkOnUnread">Blink tray icon on unread</label>
+          <input type="checkbox" role="switch" id="blinkOnUnread" disabled tabindex="-1" />
+        </div>
+        <p class="helper">Blinks on a new message; stops the moment you open the window.</p>
+        <p class="note" id="note-blinkOnUnread" hidden>Paused — notifications are muted.</p>
+      </div>
+    </section>
+
+    <footer id="about" class="about" hidden></footer>
+  </main>
+  <script src="settings.js"></script>
+</body>
+</html>
