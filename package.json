@@ -1,0 +1,42 @@
+{
+  "name": "google-chat-desktop",
+  "version": "0.1.0",
+  "description": "Electron desktop client for Google Chat - persistent Google login, native system notifications, tray-minimize.",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "src/main/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "44.4.3",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "dev.retro-kharkov1.google-chat-desktop",
+    "productName": "Google Chat Desktop",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    }
+  }
+}
