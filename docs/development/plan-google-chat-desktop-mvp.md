@@ -2,7 +2,7 @@
 
 <overview>
 The implementation plan for the first shippable version of `google-chat-desktop`, covering all of
-FR-01…FR-12 and NFR-01…NFR-05. Read [Architecture](../architecture/README.md) and
+FR-01…FR-15 and NFR-01…NFR-06. Read [Architecture](../architecture/README.md) and
 [ADRs](../adr/README.md) before starting — this plan sequences the work; the design docs define it.
 Written for the `electron-developer` agent. **Target platforms: Windows and Linux only** — macOS is
 out of scope (owner decision, see [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md)).
@@ -54,10 +54,16 @@ google-chat-desktop/
 │   │   ├── auth-fallback.js       — ADR-0001's cookie-import fallback (built only if/when triggered)
 │   │   ├── notifications.js       — FR-05 (notifications.md, ADR-0002), FR-11/FR-12 sound/mute
 │   │   ├── tray.js                — FR-06/FR-07/FR-08 (tray-lifecycle.md)
+│   │   ├── trayBlink.js           — FR-14 single-timer blink module (tray-lifecycle.md)
 │   │   ├── autostart.js           — FR-10 (Windows: setLoginItemSettings; Linux: XDG .desktop file)
-│   │   └── settings.js            — FR-11/FR-12 persisted flags (settings.json under userData)
+│   │   ├── settingsStore.js       — FR-10/FR-11/FR-12/FR-14 single-writer settings authority
+│   │   │                             (tray-lifecycle.md "Settings window (FR-15)")
+│   │   └── settingsWindow.js      — FR-15 Settings BrowserWindow (tray-lifecycle.md)
 │   ├── preload/
-│   │   └── preload.js             — IPC contract (ipc-contract.md)
+│   │   ├── preload.js             — IPC contract (ipc-contract.md), main window only
+│   │   └── settingsPreload.js     — FR-15's separate preload for the Settings window
+│   │                                 (tray-lifecycle.md "Process model" — security boundary, not
+│   │                                 shared with preload.js)
 │   └── assets/
 │       ├── icon.{ico,png}         — app icon per platform (no .icns — macOS out of scope)
 │       └── tray/
@@ -79,14 +85,27 @@ and `preload.js` accordingly from the start, not retrofit it later.
 Task 0 is a coverage-first gate and must be GREEN before tasks 3, 4b, 6, and 7 (which depend on the
 logic it covers) are considered done. Tasks 1–4 are sequential (each depends on the previous); 4b,
 4c, 5, 5b, 6, 7 can proceed in parallel once task 1 lands, but **5b depends on 5** (click-to-conversation
-needs the click-to-focus bridge already wired), **4b depends on 4** (sound/mute menu items need
+needs the click-to-focus bridge already wired), **4b depends on 4** (the Mute checkbox needs
 the base tray menu), and **4c depends on 4** (the version line is a tray-menu entry). **4c is a
 later, owner-requested addition, already implemented and unit-tested — see its own entry below for
 what "done" means for it.** Task 5's done-criterion was re-scoped after a real incident surfaced a
 defect in its original mitigation (see task 5's own entry) — the fix is implemented, but the
 confirming real-desktop check (a real inbound message producing a real notification, post-fix) has
 not yet been run and is still this task's open item, same as **5b**, which has not been run at all.
-8 depends on 2–7 being functionally complete; 9 is packaging; 10 is last.
+
+**FR-15 and FR-14 (owner-added after the original FR-01…FR-12 scope, see
+[requirements.md](../business/requirements.md)) are new tasks 4d and 4e, not folded into 4b.**
+4b now covers only FR-12's tray-side Mute checkbox plus the `settingsStore` foundation all of
+FR-10/FR-11/FR-12/FR-14 share — it does **not** cover FR-10 (start-at-login) or FR-11 (notification
+sound) hand-verification, because as of FR-15 those two have no tray UI left to trigger them with;
+that verification moved to 4d, where their only remaining UI (the Settings window) is actually built.
+**4d (Settings window, FR-15) depends on 4b** (needs `settingsStore` and its `applySetting`
+single-writer entry point) and on **6** (needs a real unread count to show a meaningful
+About-line/Mute-sync scenario, and the design spec's live two-way sync is exercised against the same
+tray Mute checkbox 4b builds). **4e (Blink, FR-14) depends on 4d** (blink is Settings-only per
+FR-14/FR-15 — `blinkOnUnread` has no toggle to test against until the Settings window exists) and on
+**6** (blink hooks into `setTrayUnread`, task 6's own deliverable).
+8 depends on 2–7 (now also 4d/4e) being functionally complete; 9 is packaging; 10 is last.
 
 ### 0. Testable-surface unit-test net (coverage-first, before dependent tasks)
 **Satisfies**: supports FR-02, FR-05, FR-07/10/11/12, NFR-04 — routed to `qa-automation`.
@@ -164,17 +183,33 @@ wiring calls, not a re-implementation of the same logic inline.
 the process-still-running-after-X-click check via OS process list, and Exit being the only path
 that actually terminates the process.
 
-### 4b. Start-at-login, sound control, mute (FR-10, FR-11, FR-12)
-**Satisfies**: FR-10, FR-11, FR-12.
+### 4b. Mute tray checkbox + settingsStore foundation (FR-12, plus the shared persistence layer FR-10/FR-11/FR-14 build on)
+**Satisfies**: FR-12 in full; lays the persistence foundation FR-10/FR-11 (task 4d) and FR-14 (task
+4e) depend on, without implementing their own UI here.
 **Depends on**: task 4 (base tray menu exists) and task 0's `shouldMuteOrSilence` net being green.
-**Done when**: the "Start at login" / "Notification sound" / "Mute notifications" checkboxes are
-added to the tray menu per [tray-lifecycle.md](../architecture/tray-lifecycle.md); FR-10's three
-gherkin scenarios pass by hand on **both** Windows (native `setLoginItemSettings`) and Linux (XDG
-autostart `.desktop` file) separately — state plainly which platform(s) were actually checked, per
-the space's `verify-on-a-real-desktop` rule, since the two mechanisms are genuinely different code
-paths, not a shared implementation; FR-11/FR-12's gherkin scenarios pass by hand (sound off →
-silent notification; mute on → no notification but tray unread count still updates); all three
-settings persist across a full quit-and-relaunch.
+**Amended per FR-15/Wireframe F**: this task's original scope (Start at login and Notification sound
+also on the tray menu) is superseded — see [tray-lifecycle.md](../architecture/tray-lifecycle.md)'s
+"Amended per FR-15/Wireframe F" note and [requirements.md](../business/requirements.md) FR-07/FR-15.
+Those two checkboxes are removed from the tray menu entirely; **Mute notifications is the only
+preference checkbox that stays**. Do not add Start-at-login/Notification-sound checkboxes to the
+tray menu under this task — that would build the exact stale layout the owner overruled.
+**Done when**:
+- `src/main/settingsStore.js` exists with the single `applySetting(key, value)` mutation entry
+  point described in [tray-lifecycle.md](../architecture/tray-lifecycle.md)'s "Single source of
+  truth" section, persisting all four booleans (`startAtLogin`, `soundEnabled`,
+  `notificationsMuted`, `blinkOnUnread`) to `settings.json` under `userData` — even though only
+  `notificationsMuted` has a caller yet at this point in the sequence, all four keys/defaults exist
+  now so 4d/4e call into an already-stable module rather than extending its shape later.
+- "Mute notifications" is the **only** new checkbox added to the tray menu, calling
+  `settingsStore.applySetting('notificationsMuted', ...)` directly (in-process, no IPC — it's already
+  main-process code, per tray-lifecycle.md).
+- FR-12's gherkin scenarios pass by hand: mute on → no OS notification but tray unread count still
+  updates; the checkbox state persists across a full quit-and-relaunch.
+- FR-10 (start-at-login mechanism functions in `autostart.js`, both Windows `setLoginItemSettings`
+  and Linux XDG `.desktop` file, read-back-verified per the design spec) and FR-11 (sound-suppression
+  branch in the notification wrapper) may be implemented here as plain functions, but their
+  hand-verification is **not** part of this task's done-criteria — there is no tray UI left to
+  trigger them with; that happens in task 4d where their actual UI exists.
 
 ### 4c. Build/version diagnostic line in the tray menu (FR-13) — STATUS: DONE
 **Satisfies**: FR-13.
@@ -192,6 +227,83 @@ packaged-vs-source, and a build timestamp; the three FR-13 gherkin scenarios in 
 pass; `buildVersionLabel`/`formatBuildTimestamp` have green unit coverage. **All of the above is
 already true** — recorded here as done, not as pending work, so this plan's picture of the project
 matches its actual state.
+
+### 4d. Settings window (FR-15) — new task, not in the plan's original scope
+**Satisfies**: FR-15 in full; also carries FR-10 and FR-11's hand-verification (their only UI, per
+4b's amended scope above).
+**Origin**: owner request, made after the original FR-01…FR-12 scope — "so that all this can be
+managed... instead of an ever-growing tray menu" (`requirements.md` FR-15). Full surface/layout
+lives in `docs/design/00-settings-surface-spec.md` (owned by `ux-ui-designer`); this task implements
+the wiring `docs/architecture/tray-lifecycle.md`'s "Settings window (FR-15)" section defines.
+**Depends on**: task 4b (`settingsStore.applySetting` and all four persisted keys must already
+exist) and task 6 (Tray unread indicator — exercises the tray Mute checkbox this task's two-way sync
+targets against a live tray state, and the About line needs `app.getVersion()`/task 4c's version
+plumbing already in place).
+**Done when**:
+- `src/main/settingsWindow.js` opens a second `BrowserWindow` from the tray's "Settings…" entry
+  only — **no native application-menu entry point exists** (see
+  [tray-lifecycle.md](../architecture/tray-lifecycle.md)'s "Application menu suppression" and
+  `requirements.md`'s "No native OS application menu — decided"); a second click while one is
+  already open focuses the existing window rather than opening a duplicate.
+- It loads a local bundled HTML document only, with its own `src/preload/settingsPreload.js`,
+  separate from the main window's `preload.js` (the security-boundary requirement in
+  tray-lifecycle.md's "Process model" — verify by inspection that no code path shares one preload
+  between the two windows).
+- `settings:get`/`settings:set`/`settings:changed` are implemented per
+  [ipc-contract.md](../architecture/ipc-contract.md) and the echo-loop-prevention wiring in
+  tray-lifecycle.md (`event.sender.id` check) — verify by hand: toggling Mute from the **tray**
+  while Settings is open updates the Settings window's Mute switch live (no page reload, no
+  flicker/double-render from the echo guard); toggling Mute **from Settings** updates the tray
+  checkbox live in the other direction.
+- Start at login, Notification sound, and Blink tray icon on unread (the `blinkOnUnread` persisted
+  flag only — the timer/blink behavior itself is task 4e) are each a switch in the Settings window,
+  applying immediately with no Save/Cancel step (`requirements.md` "When changes take effect —
+  decided"), reconciling (reverting the optimistic UI change) on an `{ ok: false }` result per the
+  design spec §4.
+- FR-10's three gherkin scenarios pass by hand on **both** Windows and Linux separately, triggered
+  from the Settings window now (state plainly which platform(s) were actually checked, per the
+  space's `verify-on-a-real-desktop` rule).
+- FR-11's gherkin scenario passes by hand (sound off, toggled from Settings → next notification is
+  silent).
+- The read-only About line (version/build info, per the design spec) renders correctly for both a
+  dev run and a packaged build.
+- All four settings persist across a full quit-and-relaunch.
+
+### 4e. Blink tray icon on unread (FR-14) — new task, not in the plan's original scope
+**Satisfies**: FR-14 in full.
+**Origin**: owner request, added alongside FR-15 — "draw my eye when messages arrive, like the old
+days" (`requirements.md` FR-14). Implements
+[tray-lifecycle.md](../architecture/tray-lifecycle.md)'s "Blink tray icon on unread (FR-14)"
+section, which is itself the authoritative source for the start/resume and stop conditions below —
+this task does not restate or re-derive them, only builds against them.
+**Depends on**: task 4d (`blinkOnUnread` has no toggle to test against before the Settings window
+exists) and task 6 (Tray unread indicator — blink hooks into the same `setTrayUnread(n)` task 6
+builds, extending it rather than adding a second handler).
+**Done when**:
+- `src/main/trayBlink.js` exists with exactly the module-level, single-timer-handle shape in
+  tray-lifecycle.md (`startBlinking`/`stopBlinking`/`isBlinking`, no other exported mutable state).
+- `setTrayUnread(n)` is extended per tray-lifecycle.md's "Stop triggers"/"Start/resume trigger"
+  sections: `n > 0` while hidden and `blinkOnUnread`/not muted starts or resumes blinking; `n === 0`
+  stops it (FR-14's second stop trigger — unread cleared elsewhere while still hidden); the window's
+  `'show'`/`'restore'` events also stop it (FR-14's first stop trigger).
+- The `qa-automation`-owned fake-timer unit test described in tray-lifecycle.md's "NFR-06 as a
+  checkable property" section is green **before** this task is marked done (coverage-first, same
+  discipline as task 0, even though this test lives alongside this task rather than in task 0 itself
+  because `trayBlink.js`'s behavior isn't meaningfully testable until the module exists) — asserting
+  no duplicate `setInterval` on repeated starts, no duplicate `clearInterval` on repeated stops, and
+  the `setTrayUnread(0)`-while-hidden stop path specifically.
+- Hand-verified by real inbound messages (reuses task 5's real-message channel, no separate
+  incident needed): first unread message while hidden starts blinking; a second message while
+  already blinking does not restart the visible cycle or create a second timer; opening the window
+  stops blinking regardless of remaining unread elsewhere; with the window still hidden, the unread
+  count returning to 0 (simulate by reading the conversation from another device/account, or by
+  whatever mechanism actually drives Google Chat's unread state to 0 remotely) stops blinking without
+  the window ever becoming visible; toggling Mute on mid-blink (from either tray or Settings) stops
+  blinking immediately but leaves the static unread badge showing; toggling "Blink tray icon on
+  unread" off in Settings mid-blink stops it immediately too. State plainly which platform(s) this
+  ran on, per the space's `verify-on-a-real-desktop` rule — NFR-06's "20 rapid open/hide cycles while
+  unread stays above 0" manual pass (tray-lifecycle.md) is part of this task's own hand-verification,
+  not deferred to task 8.
 
 ### 5. Notifications — native bridge (content/timing) — STATUS: re-scoped after a real incident, verification still open
 **Satisfies**: FR-05 (content/timing), NFR-02.
@@ -270,13 +382,18 @@ viewed; the wiring calls `parseUnreadCount` (task 0), not a re-implementation of
 check.
 
 ### 8. NFR verification pass
-**Satisfies**: NFR-01, NFR-02, NFR-03.
+**Satisfies**: NFR-01, NFR-02, NFR-03. (NFR-06 — the blink timer's single-handle discipline — is
+verified in task 4e itself, not here, since it needs `trayBlink.js` to already exist; this task's
+grep sweep below should find and pass over that one interval, not flag it.)
 **Done when**: idle CPU with the window hidden and no new messages is negligible (no busy-polling
 anywhere in the codebase — grep for `setInterval`/`setTimeout` polling loops and justify any that
-remain); memory footprint is in line with one Chromium tab of Google Chat; time from launch to
-signed-in view is comparable to opening an already-authenticated site in a new browser tab, on each
-of Windows/Linux the implementer has access to (state plainly which platforms were actually
-checked, per the space's `verify-on-a-real-desktop` rule).
+remain; the one expected survivor is `src/main/trayBlink.js`'s single `setInterval`, which is not a
+polling loop but the FR-14 blink mechanism itself, already covered by task 4e's own NFR-06 net —
+any *other* `setInterval`/`setTimeout` found here is a real finding, not this one); memory footprint
+is in line with one Chromium tab of Google Chat; time from launch to signed-in view is comparable to
+opening an already-authenticated site in a new browser tab, on each of Windows/Linux the implementer
+has access to (state plainly which platforms were actually checked, per the space's
+`verify-on-a-real-desktop` rule).
 
 ### 9. Packaging + CI release matrix
 **Satisfies**: FR-09, NFR-05.
@@ -291,13 +408,20 @@ is untested until that workflow has actually run once end-to-end.
 ### 10. End-to-end real-desktop verification
 **Satisfies**: all FR/NFR IDs, as a final gate.
 **Done when**: a packaged (not `npm start`-launched) build is installed from the produced installer
-on at least one real machine per in-scope platform, and every FR-01…FR-12 gherkin scenario in
+on at least one real machine per in-scope platform, and every FR-01…FR-15 gherkin scenario in
 requirements.md is driven by hand against that packaged build — login survives a full
 quit-and-relaunch, a notification appears with the window hidden and clicking it lands on the
 specific conversation (not just any window focus), the tray menu quits, single-instance works,
-start-at-login/sound/mute all behave as specified. State plainly which platform(s) this actually ran
-on; do not claim cross-platform coverage from a single-platform check (space's
-`verify-on-a-real-desktop` rule).
+start-at-login/sound/mute all behave as specified, the tray icon blinks on arrival and stops both on
+window-show and on unread-returning-to-zero-while-hidden (FR-14), the Settings window opens only
+from the tray (never from a native application menu — confirm none exists) and its Mute switch
+stays in live two-way sync with the tray checkbox (FR-15). Also confirm, on the packaged build, that
+standard copy/paste keyboard shortcuts (Ctrl+C/Ctrl+V at minimum) still work inside the Google Chat
+page despite the suppressed application menu (see
+[tray-lifecycle.md](../architecture/tray-lifecycle.md)'s "Application menu suppression" `before-input-event`
+wiring) — this is exactly the kind of regression that looks fine in a dev run and only shows up in a
+packaged build. State plainly which platform(s) this actually ran on; do not claim cross-platform
+coverage from a single-platform check (space's `verify-on-a-real-desktop` rule).
 
 ## Open questions this plan resolved as design decisions of its own
 
