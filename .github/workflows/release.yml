@@ -10,6 +10,15 @@ name: Release
 # guidance (https://www.electron.build/docs/features/github-actions/, checked 2026-09-22)
 # runs electron-builder directly via `npx electron-builder`. That avoids depending on a
 # third-party Action whose name/ownership has moved before.
+#
+# Version is computed by GitVersion from git history (GitVersion.yml, repo root), not hand-
+# maintained in package.json — see docs/architecture/packaging-release.md for the full
+# rationale and docs/adr (GitVersion decision) for why `GitHubFlow/v1` was chosen. The
+# `gittools/actions/gitversion/*` actions (org GitTools, the maintainers of GitVersion itself)
+# are pinned to the real, verified tag `v4.7.0`
+# (https://github.com/GitTools/actions/releases/tag/v4.7.0, checked 2026-09-22) — same
+# "verify the pin actually exists" discipline as the electron-builder decision above, after
+# this project already got burned once by a moved/forked Action.
 
 on:
   push:
@@ -34,6 +43,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # GitVersion needs full history (all commits + all tags) to walk back to the last
+          # version source. actions/checkout defaults to a shallow clone (fetch-depth: 1),
+          # which makes GitVersion fail outright or compute a nonsense/zero version — this is
+          # the single most common GitVersion-in-CI mistake, so it is called out here rather
+          # than left implicit.
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -47,15 +63,44 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4.7.0
+        with:
+          versionSpec: "6.8.x"
+
+      - name: Determine version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4.7.0
+        # Exports both `${{ steps.gitversion.outputs.<name> }}` and `GitVersion_<Name>` env
+        # vars (e.g. GitVersion_FullSemVer, GitVersion_ShortSha, GitVersion_BranchName) — the
+        # latter is what scripts/generate-build-info.js's CI fast path reads, so build-info.json
+        # doesn't need to re-invoke GitVersion a second time in the same job.
+
+      - name: Generate build-info.json
+        # Explicit step, not relying on the npm `predist`/`prepack` lifecycle hooks — this
+        # workflow invokes `npx electron-builder` directly (see below), which does not go
+        # through `npm run dist`/`npm run pack` and therefore does not trigger those hooks.
+        # A local developer running `npm run dist`/`npm run pack` still gets this via the hook;
+        # see package.json.
+        run: npm run generate-build-info
+
       - name: Build and publish (tagged release)
         if: startsWith(github.ref, 'refs/tags/v')
-        run: npx electron-builder ${{ matrix.build-flag }} --publish always
+        # -c.extraMetadata.version overrides package.json's `version` at pack time only (verified
+        # against this repo's own installed electron-builder CLI source, which documents this
+        # exact flag as `electron-builder -c.extraMetadata.foo=bar`) — this is what makes the
+        # installer filename and `app.getVersion()` both carry the GitVersion-computed version,
+        # without hand-editing package.json in git. SemVer (not FullSemVer) is used here
+        # deliberately: it is the plain, npm/semver-valid string electron-builder needs for the
+        # package version; the branch/sha/build-source detail that SemVer alone can't carry lives
+        # in build-info.json instead (see scripts/generate-build-info.js's field contract).
+        run: npx electron-builder ${{ matrix.build-flag }} --publish always -c.extraMetadata.version=${{ steps.gitversion.outputs.semVer }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build only (manual run, no publish)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: npx electron-builder ${{ matrix.build-flag }} --publish never
+        run: npx electron-builder ${{ matrix.build-flag }} --publish never -c.extraMetadata.version=${{ steps.gitversion.outputs.semVer }}
 
       - name: Upload build artifacts
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
