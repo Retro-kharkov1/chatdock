@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 /**
  * resolveWindowState(saved, displays, defaultSize)
  *
@@ -101,4 +104,63 @@ function resolveWindowState(saved, displays, defaultSize) {
   };
 }
 
-module.exports = { resolveWindowState };
+// --- Disk load/save wiring (task 3) ---------------------------------------------------------
+// The functions above are the pure decision logic (task 0's covered net). Everything below is
+// the actual persistence side: reading/writing `window-state.json` under Electron's `userData`
+// directory, and calling `screen.getAllDisplays()` to build the `displays` array
+// `resolveWindowState` expects (primary display first — see that function's own JSDoc on the
+// convention). `electron` is required lazily inside these functions, not at module load, so this
+// file stays requirable under plain `node:test` (see window-state.test.js, which only imports
+// `resolveWindowState`) without an Electron runtime.
+
+/** getWindowStatePath() — resolves `window-state.json`'s location under `userData`. */
+function getWindowStatePath() {
+  const { app } = require('electron');
+  return path.join(app.getPath('userData'), 'window-state.json');
+}
+
+/**
+ * loadSavedWindowState(filePath) — reads the persisted JSON, or returns `null` on any failure
+ * (missing file on first launch, corrupt JSON, etc.) so the caller falls into
+ * `resolveWindowState`'s own "no usable saved state" branch rather than throwing.
+ */
+function loadSavedWindowState(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * saveWindowState(filePath, state) — best-effort persistence; a write failure is logged, not
+ * thrown, since losing window geometry is not worth crashing an always-running tray app over.
+ */
+function saveWindowState(filePath, state) {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(state), 'utf8');
+  } catch (err) {
+    console.error('[gcd] failed to persist window-state.json', err);
+  }
+}
+
+/**
+ * getOrderedDisplays() — `screen.getAllDisplays()` with the primary display moved to index 0, per
+ * `resolveWindowState`'s documented convention (that function takes only one `displays` array and
+ * treats `displays[0]` as primary; ordering it is this caller's job).
+ */
+function getOrderedDisplays() {
+  const { screen } = require('electron');
+  const primary = screen.getPrimaryDisplay();
+  const all = screen.getAllDisplays();
+  return [primary, ...all.filter((d) => d.id !== primary.id)];
+}
+
+module.exports = {
+  resolveWindowState,
+  getWindowStatePath,
+  loadSavedWindowState,
+  saveWindowState,
+  getOrderedDisplays,
+};

@@ -1,21 +1,20 @@
 'use strict';
 
-// Scaffold note (Task 1 of docs/development/plan-google-chat-desktop-mvp.md): this file
-// currently exports only the two pure decision functions covered by Task 0's test net,
-// `isAllowedSender` and `decideSingleInstanceAction`. The actual app bootstrap — single-instance
-// lock acquisition, `app.whenReady()`, BrowserWindow/Tray creation, session/notification/IPC
-// wiring described in the sibling architecture docs — is implemented in a later pass (tasks 2-7)
-// and deliberately does not exist yet. Requiring this file does not start an Electron app or
-// touch any Electron API, which is what keeps these two functions unit-testable under plain
-// `node:test` (no Electron runtime needed).
+const path = require('path');
+
+// --- Pure decision functions (task 0's covered net — test/index.test.js) -------------------
+// These two stay dependency-free so they remain unit-testable under plain `node:test` with no
+// Electron runtime. Everything else in this file (the actual app bootstrap, below) is guarded to
+// run only when loaded by the real Electron binary, so `require('../src/main/index.js')` from
+// `node --test` still works exactly as it did in the scaffold pass.
 
 /**
  * isAllowedSender(frameOrigin, allowlist)
  *
  * Pure check behind docs/architecture/ipc-contract.md's "Sender validation" section: before
- * acting on the `notification:clicked` IPC message, the main-process handler (wired in a later
- * pass) must confirm the message actually came from a frame whose origin is one this app
- * legitimately loads (`chat.google.com`, plus `accounts.google.com` during sign-in — see
+ * acting on the `notification:clicked` IPC message, the main-process handler (wired below) must
+ * confirm the message actually came from a frame whose origin is one this app legitimately loads
+ * (`chat.google.com`, plus `accounts.google.com` during sign-in — see
  * docs/architecture/overview.md's `will-navigate` allowlist), not from some other origin that
  * ended up execution context via a bug or a compromised page.
  *
@@ -54,3 +53,300 @@ function decideSingleInstanceAction(gotLock) {
 }
 
 module.exports = { isAllowedSender, decideSingleInstanceAction };
+
+// --- App bootstrap (tasks 1, 3, 4, 4b, 5, 5b, 6, 7) -----------------------------------------
+// Guarded so this only runs under the real Electron binary (`process.versions.electron` is only
+// set there) — `node --test` loading this module for the two functions above never reaches this
+// branch. See docs/architecture/overview.md, notifications.md, tray-lifecycle.md,
+// ipc-contract.md, and ADR-0001/0002/0003 for the design this implements.
+if (process.versions.electron) {
+  bootstrap();
+}
+
+function bootstrap() {
+  const { app, BrowserWindow, ipcMain, shell } = require('electron');
+  const {
+    resolveWindowState,
+    getWindowStatePath,
+    loadSavedWindowState,
+    saveWindowState,
+    getOrderedDisplays,
+  } = require('./window-state');
+  const { PARTITION, configurePersistentSession } = require('./session');
+  const {
+    buildNotificationBridgeScript,
+    attachUnreadTitleListener,
+  } = require('./notifications');
+  const { createAppTray, setUnreadOverlay } = require('./tray');
+  const { getSettingsPath, loadSettings, saveSettings } = require('./settings');
+  const { getStartAtLogin, setStartAtLogin } = require('./autostart');
+
+  const START_URL = 'https://chat.google.com/app/chat/SPACE_ID';
+  const DEFAULT_SIZE = { width: 1200, height: 800 };
+
+  // Provisional per overview.md — task 2 (real sign-in, out of scope this pass) is what actually
+  // settles this list. If a real sign-in with 2FA hits a blocked navigation, add the origin it
+  // needed here rather than treating this as final. Do not present this as a completed list.
+  const ALLOWED_ORIGINS = ['https://chat.google.com', 'https://accounts.google.com'];
+
+  // FR-10's third scenario: launched by the OS's autostart mechanism, the app must come up with
+  // the window hidden, not forced open. Both autostart.js branches arrange to pass this flag.
+  const launchedHidden = process.argv.includes('--hidden');
+
+  // --- Single-instance lock (FR-08) — must happen before any window is created. ---------------
+  const gotLock = app.requestSingleInstanceLock();
+  if (decideSingleInstanceAction(gotLock) === 'quit') {
+    app.quit();
+    return;
+  }
+
+  // Windows notification/AppUserModelID — needed for Start Menu/Action Center toast identity in
+  // dev, before the installer sets this up for a packaged build (electron-desktop.md §5).
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('dev.retro-kharkov1.google-chat-desktop');
+  }
+
+  /** @type {Electron.BrowserWindow | null} */
+  let mainWindow = null;
+  let trayController = null;
+  let isQuitting = false;
+  let currentUnreadCount = 0;
+
+  const windowStatePath = getWindowStatePath();
+  const settingsPath = getSettingsPath();
+  let settings = loadSettings(settingsPath);
+
+  let saveStateTimer = null;
+  function flushWindowState() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    clearTimeout(saveStateTimer);
+    saveStateTimer = null;
+    const bounds = mainWindow.getBounds();
+    saveWindowState(windowStatePath, {
+      width: bounds.width,
+      height: bounds.height,
+      x: bounds.x,
+      y: bounds.y,
+      isMaximized: mainWindow.isMaximized(),
+    });
+  }
+  function scheduleWindowStateSave() {
+    clearTimeout(saveStateTimer);
+    saveStateTimer = setTimeout(flushWindowState, 500);
+  }
+
+  function focusMainWindow() {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+  }
+
+  function toggleShowHide() {
+    if (!mainWindow) return;
+    if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+      mainWindow.hide();
+    } else {
+      focusMainWindow();
+    }
+  }
+
+  function refreshTrayIconState() {
+    if (!trayController) return;
+    trayController.setIconState(
+      trayController.resolveIconState(currentUnreadCount, settings.notificationsMuted)
+    );
+  }
+
+  /**
+   * Re-injects the notification bridge with the current sound/mute values. Called on dom-ready,
+   * did-finish-load, and every sound/mute toggle (tray-lifecycle.md's "Sound & mute" section).
+   * Failure is logged distinctly, not swallowed — see notifications.md's "Failure mode to log,
+   * not swallow": a silently-broken click-to-focus bridge must be detectable, not indistinguishable
+   * from success.
+   */
+  function injectNotificationBridge() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const script = buildNotificationBridgeScript(settings.soundEnabled, settings.notificationsMuted);
+    mainWindow.webContents.executeJavaScript(script, false).catch((err) => {
+      console.error(
+        '[gcd] DEGRADED: notification bridge injection failed — click-to-focus and sound/mute' +
+          ' control will not work until this is fixed. Likely cause: a CSP change on Google\'s' +
+          ' side (see docs/architecture/notifications.md).',
+        err
+      );
+    });
+  }
+
+  function persistSettings() {
+    saveSettings(settingsPath, settings);
+  }
+
+  function createWindow() {
+    const saved = loadSavedWindowState(windowStatePath);
+    const displays = getOrderedDisplays();
+    const state = resolveWindowState(saved, displays, DEFAULT_SIZE);
+
+    mainWindow = new BrowserWindow({
+      width: state.width,
+      height: state.height,
+      x: state.x,
+      y: state.y,
+      show: false,
+      icon: path.join(__dirname, '../../assets/icons/icon.png'),
+      webPreferences: {
+        partition: PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        // FR-05 / space rule `hidden-window-must-stay-live`: a hidden window must keep running
+        // its page script so notifications keep firing. See ADR-0002 for the Windows hide()
+        // caveat this alone does not fully resolve, and the fallback wired below.
+        backgroundThrottling: false,
+        preload: path.join(__dirname, '../preload/preload.js'),
+      },
+    });
+
+    if (state.isMaximized) {
+      mainWindow.maximize();
+    }
+
+    mainWindow.once('ready-to-show', () => {
+      if (!launchedHidden) {
+        mainWindow.show();
+      }
+    });
+
+    mainWindow.on('resize', scheduleWindowStateSave);
+    mainWindow.on('move', scheduleWindowStateSave);
+
+    // FR-06 / space rule `quit-only-from-tray`: the close (X) button hides, it never quits.
+    mainWindow.on('close', (event) => {
+      if (!isQuitting) {
+        event.preventDefault();
+        flushWindowState();
+        mainWindow.hide();
+      }
+    });
+
+    mainWindow.on('closed', () => {
+      mainWindow = null;
+    });
+
+    // Security baseline (electron-desktop.md §3, space rule `electron-security-baseline`): deny
+    // every popup by default, hand target=_blank/window.open to the system browser instead.
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    });
+
+    // will-navigate allowlist — anything outside ALLOWED_ORIGINS is handed to the system browser
+    // instead of loaded in-app. Provisional list, see ALLOWED_ORIGINS's own comment above.
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      let origin;
+      try {
+        origin = new URL(url).origin;
+      } catch {
+        event.preventDefault();
+        return;
+      }
+      if (!ALLOWED_ORIGINS.includes(origin)) {
+        event.preventDefault();
+        shell.openExternal(url);
+      }
+    });
+
+    mainWindow.webContents.on('dom-ready', injectNotificationBridge);
+    mainWindow.webContents.on('did-finish-load', injectNotificationBridge);
+
+    // FR-05 piece 3: tray unread indicator, driven by the page's own title prefix.
+    attachUnreadTitleListener(mainWindow.webContents, (unreadCount) => {
+      currentUnreadCount = unreadCount;
+      setUnreadOverlay(mainWindow, unreadCount);
+      refreshTrayIconState();
+    });
+
+    mainWindow.loadURL(START_URL);
+  }
+
+  function createTray() {
+    trayController = createAppTray({
+      getSoundEnabled: () => settings.soundEnabled,
+      getNotificationsMuted: () => settings.notificationsMuted,
+      getStartAtLogin: () => getStartAtLogin(),
+      onToggleShowHide: toggleShowHide,
+      onToggleStartAtLogin: () => {
+        const next = !getStartAtLogin();
+        setStartAtLogin(next);
+        trayController.refreshMenu();
+      },
+      onToggleSound: () => {
+        settings.soundEnabled = !settings.soundEnabled;
+        persistSettings();
+        injectNotificationBridge();
+        trayController.refreshMenu();
+      },
+      onToggleMute: () => {
+        settings.notificationsMuted = !settings.notificationsMuted;
+        persistSettings();
+        injectNotificationBridge();
+        refreshTrayIconState();
+        trayController.refreshMenu();
+      },
+      onExit: () => {
+        app.quit();
+      },
+    });
+    refreshTrayIconState();
+  }
+
+  // FR-08: focus the existing window instead of a second instance.
+  app.on('second-instance', () => {
+    focusMainWindow();
+  });
+
+  // Space rule `quit-only-from-tray`: only the tray's Exit entry (and OS shutdown, which also
+  // fires before-quit) actually terminates the process.
+  app.on('before-quit', () => {
+    isQuitting = true;
+    flushWindowState();
+  });
+
+  // Electron's Linux/Windows default would quit when the last window closes — overridden per
+  // FR-06 (close-to-tray keeps the process running with no window at all being a valid state,
+  // even though in practice the window is only ever hidden, never destroyed, by this app).
+  app.on('window-all-closed', () => {
+    // Intentionally not calling app.quit() — see tray-lifecycle.md.
+  });
+
+  ipcMain.on('notification:clicked', (event) => {
+    const senderOrigin = event.senderFrame ? event.senderFrame.origin : undefined;
+    if (!isAllowedSender(senderOrigin, ALLOWED_ORIGINS)) {
+      console.error(
+        `[gcd] rejected notification:clicked from disallowed origin: ${senderOrigin}`
+      );
+      return;
+    }
+    focusMainWindow();
+  });
+
+  app.whenReady().then(() => {
+    // Session configuration (UA + permission handler) MUST happen before the window's page
+    // loads, using the same partition the BrowserWindow is constructed with — otherwise the
+    // first load happens with the default (non-desktop) UA and no notification-permission grant.
+    const { session } = require('electron');
+    configurePersistentSession(session.fromPartition(PARTITION));
+
+    createWindow();
+    createTray();
+
+    app.on('activate', () => {
+      // No macOS dock re-open behavior needed (out of scope, ADR-0003) — kept only so this
+      // handler exists if a future BrowserWindow.getAllWindows() check is ever needed; currently
+      // a no-op since the single window is created once and only ever hidden/shown.
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  });
+}
