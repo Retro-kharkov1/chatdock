@@ -88,11 +88,30 @@ PNG/ICO; edit the source SVG and regenerate.
   paths do structural work" requirement literally at the tail, not just
   figuratively at the ring.
 - **`mark-tray.svg` is a separate source file**, not a downscale of
-  `master.svg` — tighter crop (less dead space around the mark, since tray
-  icons benefit from filling more of a much smaller canvas) and a heavier
-  ring stroke / larger nucleus (11px → 12.5px stroke, 7.5 → 8.5 radius) so
-  the interior mark doesn't thin out to invisibility once anti-aliased down
-  to 16px.
+  `master.svg` — its own viewBox crop and a heavier ring stroke / larger
+  nucleus so the interior mark doesn't thin out to invisibility once
+  anti-aliased down to 16px.
+- **2026-09-22 revision — the mark now fills the canvas much more
+  aggressively**, after owner feedback that it read as "small and floating"
+  at real desktop/tray size. Both source SVGs were rescaled: `master.svg`'s
+  geometry was uniformly scaled ~1.23× and re-centered on its 128×128
+  viewBox (alpha-bbox occupancy measured on the generated PNGs: **71%×69% →
+  88%×85%** at every size from 16px to 512px — a consistent, size-independent
+  jump because it lives in the shared source geometry, not a per-size
+  script parameter). `mark-tray.svg` reuses that same rescaled geometry with
+  its own independently-tuned, deliberately asymmetric `0 0 124 124`
+  viewBox crop (more room on the left, where the tail tip sits, than the
+  right) — tuned against real generated pixels, not geometry alone: a
+  symmetric `126×126` crop, and later a symmetric `124×124` crop centered
+  exactly on the shared bounding box, each produced a 16px PNG whose alpha
+  channel's bounding box touched 100% of the canvas on one axis (a real,
+  reproduced edge-touch caught by reading the generated pixels back). The
+  shipped asymmetric `0 0 124 124` crop is the one that measured a genuine
+  margin on every axis across every generated tray size
+  (16/20/22/24/32/48px — see Verification below). Badge size/offset in
+  `generate-icons.js` were left unchanged and re-verified against the
+  larger base mark — still read correctly at 16px with the ring/nucleus
+  intact under both the unread and muted badges.
 - **Badges are rendered fresh at each target size** and composited onto a
   freshly-rendered base at that same size (see `compositeBadge` in
   `generate-icons.js`) — never scaled down from one large composite — and
@@ -108,13 +127,39 @@ PNG/ICO; edit the source SVG and regenerate.
 
 ## Verification performed
 
-Rendered every generated file (not just the SVG sources) via `sharp` at
-its real target resolution, composited onto both a light (`#ECECEC`) and a
-dark (`#1E1E1E`/`#202020`) synthetic desktop background, and visually
-inspected the result — reported in the task response, not just "the script
-exited 0". Confirmed `assets/icons/icon.ico` actually contains all seven
-claimed frame sizes (16/24/32/48/64/128/256) by reading it back with Pillow,
-not by trusting the generation step.
+Same bar both times this asset set was built: render the generated files
+(never the SVG sources directly), composite them onto real light/dark
+backgrounds, and look at them — never trust a clean script exit alone.
+
+**Current revision (fill-the-canvas pass, 2026-09-22):**
+- Rendered every generated file via `sharp` at its real target resolution
+  (16/24/32/48/256 for the app icon; 16/20/22/24/32/48 for all three tray
+  states), composited onto a light (`#ECECEC`) and a dark (`#202020`)
+  synthetic desktop background, and visually inspected the result as
+  contact sheets and a direct before/after side-by-side at 256px.
+- Measured the actual glyph occupancy (alpha-channel bounding box as a
+  percentage of canvas) on the generated PNGs, not estimated from the SVG
+  source: app icon **71.1%×68.8% → 87.5%×85.2%** at 256px, consistent
+  (87.5%±3pp on both axes) from 16px through 512px — a decisive, uniform
+  jump, not a per-size tweak. Tray-normal was already tight going in
+  (93.8%×93.8% at 16px) and the goal was "bigger everywhere, never smaller
+  anywhere, never touching the edge": final measured occupancy across every
+  tray size is 90.6%–95.8% on one axis and 89.6%–93.8% on the other
+  (16/20/22/24/32/48px), with **no size on any axis measuring 100%** — i.e.
+  no edge-touch — after two rejected intermediate crops each *did* measure
+  a 100% (edge-touching) alpha bbox at 16px and were backed off before
+  shipping (see the design-decisions entry above for the exact numbers).
+- Re-confirmed `assets/icons/icon.ico` still contains all seven claimed
+  frame sizes ((16,16) through (256,256)) by reading it back with Pillow
+  after regeneration, not by trusting the script's exit code.
+- Re-checked the unread (red dot) and muted (gray crescent) tray states
+  specifically at 16px against the larger base mark: both badges still sit
+  in the corner without covering the nucleus or breaking the ring, on both
+  backgrounds.
+
+**Original build:** rendered every generated file via `sharp` at its real
+target resolution, composited onto light/dark backgrounds, and visually
+inspected the result. Confirmed `icon.ico`'s frame sizes with Pillow.
 
 ## Open design question left for the owner / electron-developer
 

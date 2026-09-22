@@ -1,27 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="6 10 100 100" width="100" height="100">
-  <title>Google Chat Desktop — tray-optimized mark (tight crop, heavier ring/nucleus for legibility at 16px)</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 124 124" width="124" height="124">
+  <title>Google Chat Desktop — tray-optimized mark (heavier ring/nucleus for legibility at 16px)</title>
+  <!-- Shares master.svg's absolute coordinates (same design, same scale);
+       only the ring/nucleus stroke weight differs (bumped heavier, since a
+       tray render sits closer to the worst-case tiny size than the app icon
+       does) and the viewBox crop is tuned independently.
+
+       124x124 viewBox, asymmetric on purpose (more room on the left, where
+       the tail tip sits, than on the right): tuned empirically against real
+       16px raster output, not from geometry alone. A 130x130 crop left a
+       generous, slightly-too-generous margin. A 126x126 crop, and later a
+       124x124 crop centered exactly on the shared bbox, each produced a
+       16px PNG whose alpha channel's bounding box touched 100% of the
+       canvas on one axis, a real, reproduced edge-touch, caught by
+       reading the generated pixels back, not predicted from the SVG. This
+       asymmetric 124x124 crop is the one that measured a genuine margin
+       (no axis at 100% alpha-bbox width/height) across every generated
+       tray size (16/20/22/24/32/48px). Never change this crop without
+       regenerating and re-measuring the alpha bbox at 16px afterwards; see
+       assets/README.md. -->
   <defs>
     <clipPath id="bubble-clip-tray">
-      <rect x="20" y="16" width="84" height="72" rx="20" ry="20" />
+      <rect x="16.645" y="9.88" width="103.32" height="88.56" rx="24.6" ry="24.6" />
     </clipPath>
   </defs>
 
   <g fill="#149960">
-    <rect x="20" y="16" width="84" height="72" rx="20" ry="20" />
+    <rect x="16.645" y="9.88" width="103.32" height="88.56" rx="24.6" ry="24.6" />
     <path d="
-      M 50 70
-      C 41 83 27 91 13 104
-      C 22 92 32 83 40 75
-      C 44 71 48 67 50 70
+      M 53.55 76.3
+      C 42.48 92.29 25.26 102.13 8.04 118.12
+      C 19.11 103.36 31.41 92.29 41.25 82.45
+      C 46.17 77.53 51.09 72.61 53.55 76.3
       Z" />
   </g>
 
   <g clip-path="url(#bubble-clip-tray)">
     <ellipse
-      cx="60" cy="50" rx="32" ry="24"
-      transform="rotate(-18 60 50)"
-      fill="none" stroke="#FFFFFF" stroke-width="12.5" />
+      cx="65.845" cy="51.7" rx="39.36" ry="29.52"
+      transform="rotate(-18 65.845 51.7)"
+      fill="none" stroke="#FFFFFF" stroke-width="15.4" />
   </g>
 
-  <circle cx="60" cy="50" r="8.5" fill="#FFFFFF" />
+  <circle cx="65.845" cy="51.7" r="10.5" fill="#FFFFFF" />
 </svg>

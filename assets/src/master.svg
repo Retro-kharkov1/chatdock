@@ -1,20 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <title>Google Chat Desktop — hybrid chat-bubble / electron-orbit mark</title>
+  <!-- Geometry scaled 1.23x from the original composition, re-centered on the
+       128x128 canvas, per 2026-09-22 owner feedback: the mark read as "small
+       and floating" at real desktop/tray size. Bounding box (bubble + tail
+       tip) is now x:8.04-119.97, y:9.88-118.12 -> occupies ~87% width /
+       ~85% height of the canvas, leaving ~6-8% breathing room per edge so it
+       still clears shell/taskbar clipping instead of running flush to the
+       pixel bounds. Do not hand-nudge these numbers independently of
+       mark-tray.svg's own crop — see assets/README.md. -->
   <defs>
     <clipPath id="bubble-clip">
-      <rect x="20" y="16" width="84" height="72" rx="20" ry="20" />
+      <rect x="16.645" y="9.88" width="103.32" height="88.56" rx="24.6" ry="24.6" />
     </clipPath>
   </defs>
 
   <!-- Silhouette: rounded-square chat body fused with an orbit-trail tail.
        Same fill, deliberately overlapping — reads as one solid shape at any size. -->
   <g fill="#149960">
-    <rect x="20" y="16" width="84" height="72" rx="20" ry="20" />
+    <rect x="16.645" y="9.88" width="103.32" height="88.56" rx="24.6" ry="24.6" />
     <path d="
-      M 50 70
-      C 41 83 27 91 13 104
-      C 22 92 32 83 40 75
-      C 44 71 48 67 50 70
+      M 53.55 76.3
+      C 42.48 92.29 25.26 102.13 8.04 118.12
+      C 19.11 103.36 31.41 92.29 41.25 82.45
+      C 46.17 77.53 51.09 72.61 53.55 76.3
       Z" />
   </g>
 
@@ -25,11 +33,11 @@
        continuous gesture. -->
   <g clip-path="url(#bubble-clip)">
     <ellipse
-      cx="60" cy="50" rx="32" ry="24"
-      transform="rotate(-18 60 50)"
-      fill="none" stroke="#FFFFFF" stroke-width="11" />
+      cx="65.845" cy="51.7" rx="39.36" ry="29.52"
+      transform="rotate(-18 65.845 51.7)"
+      fill="none" stroke="#FFFFFF" stroke-width="13.53" />
   </g>
 
   <!-- Nucleus: the orbit's fixed point, Electron's own visual anchor -->
-  <circle cx="60" cy="50" r="7.5" fill="#FFFFFF" />
+  <circle cx="65.845" cy="51.7" r="9.225" fill="#FFFFFF" />
 </svg>
