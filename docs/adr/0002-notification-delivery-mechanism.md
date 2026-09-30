@@ -4,6 +4,17 @@
 **Status**: accepted (superseded on the `backgroundThrottling` point — see "Revision 3" below)
 **Deciders**: tech-lead
 
+> **Status update, 2026-09-30 (pointer only; the decision text below is not rewritten).** Piece 1 and
+> Revision 3 (`backgroundThrottling`, Page Visibility) stand for any **page-level** notification. **Piece 2
+> (the injected `window.Notification` wrapper) and the fallback in "Risks" are under review**: Chat very
+> likely notifies through a service worker, which this wrapper does not see, and its premise that Chat's own
+> click handler navigates to the conversation is unverified. FR-05 is now split into FR-05a/b/c
+> ([requirements.md](../business/requirements.md)); the open mechanism choice, and the wording of the fallback
+> as the FR-05a floor (M3), live in [notifications.md](../architecture/notifications.md) and
+> [ADR-0004](0004-desktop-shell-technology-and-electron-retention.md) (Spikes A and C). The fallback's
+> "adopt only if a regression is observed" trigger no longer applies as written: BUG-01 is such an observation
+> on Windows, so the fallback is now a live candidate. A superseding ADR will follow the spikes.
+
 ## Context
 
 FR-05 is the core of the product: a message arriving while the window is hidden/minimized must

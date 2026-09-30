@@ -1,210 +1,185 @@
-# Notifications (FR-05)
+# Notifications (FR-05a, FR-05b, FR-05c)
 
 <overview>
-The full design and its rationale live in
-[ADR-0002](../adr/0002-notification-delivery-mechanism.md) — read that first. This doc is the
-concrete implementation surface an implementer builds against.
+The implementation surface for FR-05, which [requirements.md](../business/requirements.md) splits into
+three parts of different certainty: **FR-05a** (a native notification appears while the window is
+hidden, minimized or unfocused; unconditional), **FR-05b** (title = chat name, body = message; conditional)
+and **FR-05c** (click brings the window forward, unconditional; click opens *that* conversation,
+conditional). The decision record is [ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md)
+(Spikes A and C); [ADR-0002](../adr/0002-notification-delivery-mechanism.md) is the history of the
+page-`Notification` design and of the `backgroundThrottling` incident.
+
+**Status: the delivery mechanism is not decided.** Everything under "Candidate delivery mechanisms" is a
+design to be chosen between once Spikes A and C report; nothing there is a claim about how Google Chat
+or Electron actually behave. Statements tagged **[U]** are unverified. Statements about the current code
+cite `file:line` as of 2026-09-30 and must be re-checked when the code moves.
 </overview>
 
 <architecture>
-## Three independent pieces
+## 1. What the code does today (input as of commit d7f69e1, 2026-09-30; not a durable description: an implementer is concurrently adding `src/main/attention.js` and `src/main/appIdentity.js`, so re-read the code before relying on a row)
 
-### 1. Notification content + timing — native bridge, unmodified
-No code beyond configuration: `webPreferences.backgroundThrottling` is left at Electron's default
-(`true` — **do not set it `false`**, see "Page Visibility dependency" below), plus
-`session.setPermissionRequestHandler` on the `persist:google-chat` session granting `notifications`
-(deny everything else by default). Google Chat's own page JS calls `new Notification(...)` exactly
-as it would in a background browser tab; Electron/Chromium bridges that straight to the OS
-notification center. Nothing in this piece touches sender/preview content.
+| Piece | Where | Behaviour |
+|---|---|---|
+| Page-`Notification` bridge | `src/main/notifications.js:90-117` (`buildNotificationBridgeScript`), injected by `src/main/index.js:209-223` on `dom-ready`, `did-finish-load` and every sound/mute toggle | Wraps **`window.Notification`** in the page's main world: mute returns a stub, sound-off forces `silent`, and adds a `click` listener that calls `window.__gcdBridge.notificationClicked()`. It does **not** touch `ServiceWorkerRegistration.showNotification`. |
+| Click handling | `src/main/index.js:430-439`, `src/preload/preload.js:12-14` | `notification:clicked` (sender origin checked) then `focusMainWindow()` (restore if minimized, show, focus). Nothing resolves a conversation. |
+| Permission | `src/main/session.js:46-48` | Request handler grants only `notifications`; there is no permission *check* handler. |
+| Unread indicator | `src/main/index.js:363-368`, `src/main/notifications.js:130-134` | `page-title-updated` is parsed for a `(N)` prefix; drives the Windows overlay badge (`tray.js:129-137`), the tray glyph and the blink gate. Event-driven, no polling. |
+| Toast identity | `src/main/index.js:121-125` | `app.setAppUserModelId('dev.retro-kharkov1.google-chat-desktop')` is called unconditionally, and `package.json` `build.appId` is the same string, so a dev run and a packaged build share one AppUserModelID. |
+| Persistent log | none | The only diagnostics are `console.error` calls (`index.js:216, 433`). There is **no persistent application log** (needed by FR-05c, see section 6). |
 
-#### Page Visibility dependency — load-bearing, not incidental
-**Google Chat decides whether to raise a `Notification` at all by reading
-`document.visibilityState`.** If the page believes the tab/window is `"visible"`, it treats the
-user as already looking at the conversation and deliberately does not alert them — correct
-behavior for a foregrounded tab, and exactly the behavior that silently breaks notifications if
-`visibilityState` is ever wrong. This app's entire notification pipeline depends on Chromium
-reporting an honest `visible ↔ hidden` transition when the window is actually hidden/shown.
+### Reported diagnosis (earlier `electron-developer` investigation, reproduced in harnesses, **not confirmed against a real signed-in Chat**)
 
-This is why `backgroundThrottling` must stay at its default: per Electron's own docs (`BrowserWindow`,
-"Page visibility" section, `https://www.electronjs.org/docs/latest/api/browser-window`), disabling
-it pins `visibilityState` at `"visible"` regardless of the window's real state — which is exactly
-what broke notifications in the incident [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
-records (Revision 3). The same docs section names a second, independent way to get the same wrong
-`"visible"` reading: a `BrowserWindow` created with `show: false` also reports `"visible"` from
-construction until a real `show()`/`hide()` transition happens — which is why the hidden-autostart
-path forces a real `showInactive()` → `hide()` transition (see
-[tray-lifecycle.md](tray-lifecycle.md)).
+| Report | Consequence for the design |
+|---|---|
+| `ServiceWorkerRegistration.showNotification()` shows no toast in Electron 44.4.3 on Windows | If Chat notifies through the service worker (the 2026-09-30 finding in FR-05's history), the bridge above never sees it and Chromium may not show it either. Candidate cause of BUG-01. [U] |
+| The bridge only wraps `window.Notification` | Confirmed by reading the code (table above). |
+| Dev and packaged builds share one AUMID; the toast header shows "Electron" | Confirmed for the AUMID (table above). The header text is a report. [U] |
+| A synthetic toast click produced `close`, not `click` | If real clicks behave the same, no click-based design (FR-05c) works. Spike A must click a **real** toast. [U] |
 
-**Any future change to this window's configuration, injected script, or main-process code that
-could distort `document.visibilityState` — a different throttling-related flag, a devtools/overlay
-window, anything that changes how Chromium computes page visibility — is a direct risk to FR-05 and
-must be checked against this dependency before shipping**, not reasoned about from documentation
-alone (see ADR-0002's closing judgement note on this exact failure mode).
+None of these is a settled root cause. The owner also observed that toasts started appearing after
+diagnostic activity, so the failure may be state-dependent (Focus Assist, per-app notification settings,
+AUMID/shortcut registration) rather than a code defect. The design below does not assume either.
 
-### 2. Click → window focus, AND landing on the specific conversation — minimal main-world injection
+## 2. Page Visibility dependency (kept; still load-bearing for any page-level path)
 
-**Sharpened requirement (owner, this pass):** clicking a notification must not just bring the app
-to the foreground — it must land the user on the **specific conversation/message the notification
-was for**. "Window comes back showing whatever was last open" does not satisfy FR-05. The owner's
-own framing used the word "hooks," describing exactly the interception mechanism below — this is
-that mechanism's actual job, not a separate feature.
+Google Chat decides whether to raise a **page-level** notification by reading `document.visibilityState`.
+If the page believes it is `"visible"` it does not alert. That is why `backgroundThrottling` must stay at
+Electron's default and why the hidden-autostart path forces a real `showInactive()` then `hide()` (see
+[tray-lifecycle.md](tray-lifecycle.md)); the full incident is ADR-0002 Revision 3. Any change that could
+distort `visibilityState` (a throttling flag, an overlay window) must be verified by hiding the window and
+receiving a real message, not by reasoning (space rule `hidden-window-must-stay-live`).
 
-**Does the page already do this for us? Established here, to be confirmed empirically at task 5.**
-The wrapper below **delegates to the original `Notification` constructor and returns the real,
-unmodified `Notification` instance** to Google Chat's own calling code. This matters because it
-means Chat's own JS — not this wrapper — holds a live reference to that same object and can attach
-its own `onclick`/`addEventListener('click', ...)` handler to it, exactly as it would in a plain
-browser tab. The Web Notifications API allows multiple independent click listeners on one
-`Notification` instance (an `onclick` property assignment and any number of `addEventListener`
-listeners all fire on the same click, in registration order) — the wrapper's own listener does not
-call `preventDefault()` or `stopImmediatePropagation()`, so it cannot block Chat's own handler from
-also firing. **If Google Chat's web app already wires its own Notification objects' click handlers
-to its in-page router** (the same behavior it has in a background browser tab, which is the whole
-premise FR-05 was scoped around), then the deep-link navigation happens automatically, for free,
-the moment the click event fires — this wrapper does not need to know which conversation a
-notification was for; it never has to.
+This dependency governs **only the page-level path**. Whether the service-worker path also consults
+visibility is unknown [U] (Spike C).
 
-This is a testable, not assumed, claim: task 5's real-desktop verification must confirm Chat's page
-actually attaches a navigating click handler to its own `Notification` objects (observable as: click
-a notification while the window is hidden, and the correct conversation is visibly open once the
-window is shown — not just "a" conversation, or whatever was last open). If real testing shows Chat
-does **not** wire click-to-navigate on its own notifications (possible if Chat relies on some other
-signal, e.g. the Page Visibility/focus event, to trigger navigation only when a tab is already
-foregrounded), this piece degrades to the **named fallback** below — build it only if task 5 shows
-the automatic case fails, not speculatively.
+## 3. Candidate delivery mechanisms (choose after Spikes A and C)
 
-**Also carries FR-11/FR-12 (sound/mute)**, since this is the one place `Notification` calls are
-actually intercepted — see [tray-lifecycle.md](tray-lifecycle.md)'s "Sound & mute" section for where
-`window.__gcdSoundEnabled`/`window.__gcdMuted` are set from the main process on toggle. This is the
-canonical wrapper snippet; tray-lifecycle.md does not repeat it.
+The requirement (FR-05a) is a native toast in three "not focused" states. Four mechanisms can deliver it;
+they are ordered by how little they add.
 
-```js
-webContents.executeJavaScript(`
-  (() => {
-    if (window.__gcdNotifyPatched) return;
-    window.__gcdNotifyPatched = true;
-    const Original = window.Notification;
-    window.Notification = function (title, options) {
-      if (window.__gcdMuted) {
-        // FR-12: suppress entirely. Return a stub so page code calling n.close()/
-        // addEventListener afterward doesn't throw, but no real OS notification is created.
-        return { close() {}, addEventListener() {}, removeEventListener() {} };
-      }
-      // FR-11: force silent when sound is toggled off, unless the page already asked for silent.
-      const n = new Original(title, { ...options, silent: options.silent || !window.__gcdSoundEnabled });
-      // Own listener only, added in addition to whatever Chat's own code does with `n`
-      // afterward (n.onclick = ...  or n.addEventListener('click', ...)). Never calls
-      // preventDefault/stopImmediatePropagation — must never block Chat's own handler.
-      n.addEventListener('click', () => {
-        window.__gcdBridge && window.__gcdBridge.notificationClicked();
-      });
-      return n;
-    };
-    window.Notification.permission = Original.permission;
-    window.Notification.requestPermission = Original.requestPermission.bind(Original);
-  })();
-`, /* userGesture */ false);
-```
-`window.__gcdSoundEnabled`/`window.__gcdMuted` are set by the same `executeJavaScript` re-injection
-path immediately before/after the snippet above (their current values, from `settings.json`, are
-interpolated in at injection time and updated live on every tray toggle — see tray-lifecycle.md).
+| ID | Mechanism | Content (FR-05b) | Click (FR-05c) | What must be true | Status |
+|---|---|---|---|---|---|
+| **M0** | Chromium shows Chat's own notification natively; the shell only fixes the environment (toast identity, permissions, OS state) | Chat's own | Chat's own service-worker `notificationclick` handler | The toast fails today for an environmental reason, not a missing bridge (Spike A). The click reaches the handler and it routes to the conversation. | Zero code if it holds. [U] |
+| **M1** | The current page-`Notification` bridge | Chat's own | Focus only, plus whatever Chat's page does | Chat calls the page `Notification`, not the service worker. | Implemented; reported not to cover the service-worker path. |
+| **M2** | Observe Chat's service-worker `showNotification` call and re-raise it as a **main-process** Electron `Notification` | Title and body from the payload (FR-05b, if the payload carries the chat name) | Native `notification.on('click')` in main: **step 1 only** (window forward). Step 2 (open that conversation) is **not** delivered by M2 | Electron can run script in the service-worker context (`session.registerPreloadScript` documents `service-worker` contexts; `ServiceWorkerMain` exposes `ipc`, `send`, `scope`, `scriptURL`, and is marked Experimental; the fetched docs do not say notification events are supported). The payload carries the chat name. [U] | Candidate. |
+| **M3** | The ADR-0002 Revision 3 fallback: a main-process `Notification` raised when the `page-title-updated` unread count **increases** | Generic, worded so it stays true whatever the count means: "New message in Google Chat" (never "N new messages": see §5 on what `(N)` counts) | Focus only (native click) | Only that the title carries a count. | Documented floor: satisfies FR-05a and FR-05c step 1, not FR-05b or FR-05c step 2. |
 
-`window.__gcdBridge` is exposed by the preload via `contextBridge.exposeInMainWorld` (see
-[IPC Contract](ipc-contract.md) — `notificationClicked`). The original constructor is always
-delegated to first and the same live object is returned, so Google Chat's own registered
-`click`/`onclick` handling still runs unmodified — this wrapper adds only the OS-window-focus step,
-per the space's `wrapper-not-a-rewrite` rule.
+Decision rule, so the choice is mechanical once evidence exists:
 
-**Ordering, made explicit** (this is where a race could otherwise hide): both listeners — Chat's own
-and this wrapper's — are attached to the *same* click event and fire synchronously, in the
-renderer's own event-loop turn, **independently of window visibility**. Because piece 1's page JS
-keeps running while hidden (confirmed empirically at this project's pinned Electron version, at the
-default `backgroundThrottling` setting — see "Page Visibility dependency" above), Chat's in-page SPA
-navigation is not gated on the window being shown — it runs (and, in the normal case, completes,
-since client-side route changes are synchronous DOM/state updates, not network-bound) whether or
-not `win.show()` has happened yet. This wrapper's own listener independently sends a fire-and-forget
-IPC message; the main process's `win.show(); win.focus();` (below) runs asynchronously relative to
-the renderer's navigation. **Net effect**: by the time the window is actually shown, Chat's own
-navigation has normally already happened in the background, so the user sees the right conversation
-the instant the window appears — there is no user-visible race in the common case. Two edge cases to
-name rather than silently hand-wave:
-- **Page mid-reload when the notification is clicked** (e.g. `did-finish-load` just fired and the
-  wrapper is mid-re-injection): the clicked `Notification` instance may belong to a torn-down page
-  context. Treat this the same as the fallback below — show/focus the window, land wherever the
-  reloaded page currently is, and log it as a known degraded case rather than erroring.
-- **App was fully quit (not just hidden to tray) when a stale OS notification from a previous run is
-  clicked**: there is no live process to receive the click. This is a known limitation of the
-  mechanism (not fixable without a native OS toast-activation/relaunch integration, out of scope for
-  this personal utility) — clicking a notification after the app has fully exited may do nothing or
-  simply relaunch the app to its default view, not the specific conversation.
+1. If Spike A shows M0 works end to end (real toast, real click), stop: fix the environment, add no bridge.
+2. Else if Spike C shows a usable payload and the owner picks answer **(a)** in FR-05's open question, build
+   M2. **Be plain about what M2 buys: at best FR-05b (chat name in the title) and FR-05c step 1 (window
+   forward).** FR-05c step 2 (open *that* conversation) needs a further mechanism, for example driving
+   Chat's router from an identifier, which is **not designed** here and touches the space rule
+   `wrapper-not-a-rewrite`; it is a separate owner decision and a separate design. Building M2 does not make
+   step 2 available.
+3. Else build M3 (owner answer **(b)**, or M2 proves infeasible). M3 is the guaranteed floor for FR-05a.
 
-Main-process handler:
+**One path per message.** Two paths active for the same message would show two toasts. Whatever is built
+must name which path is authoritative and suppress the others (for example M2 or M3 active means the M1
+bridge stays installed for mute/sound but must not raise a second toast). The de-duplication key is
+undecided [U] and is an implementation question for Spike C.
 
-```js
-ipcMain.on('notification:clicked', () => {
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-});
-```
+### Rules that hold for every mechanism
 
-**Failure mode to log, not swallow**: if `executeJavaScript` throws (e.g. CSP change on Google's
-side) or the injected wrapper is never invoked (e.g. Chat redefines `window.Notification` after
-both `dom-ready` and `did-finish-load`), the implementer logs this distinctly rather than letting
-click-to-focus silently stop working — this is the fragility ADR-0002 already calls out, and it is
-also the skeptic-flagged most fragile point of this whole design (injecting into a page Google
-controls and can change at any time).
+- **Mute (FR-12) and sound (FR-11):** mute means no toast is created; sound-off creates it with
+  `silent: true`. Under M1 that is the injected wrapper; under M2/M3 it is the main-process code that
+  creates the `Notification`, reading `settingsStore` directly. Muting never affects the unread indicator.
+- **No toast for the conversation being viewed (FR-05a).** Under M0/M1/M2 that decision stays with Chat,
+  because the shell only surfaces calls Chat chose to make. Under M3 Chat's decision is invisible, so the
+  shell applies a coarser rule: **no toast while the main window is focused**. That is a superset of the
+  requirement (a focused window showing a *different* conversation also gets no toast); it is the closest
+  M3 can get without the conversation id, and it is stated here so it is not mistaken for full parity.
+- **Unread indicator (FR-05a):** global, independent of focus, stays until the unread count is zero. The
+  source is the `page-title-updated` count (section 5).
+- **Click, step 1 (unconditional):** `focusMainWindow()` (restore, show, focus). This already exists
+  (`index.js:165-170`) and covers hidden-to-tray and minimized.
+- **Click, step 2 (conditional, answer (a) only):** show the conversation the notification was for. How is
+  Spike C's output and needs an owner decision because reaching a conversation from a payload id means
+  driving Chat's router, which touches the space rule `wrapper-not-a-rewrite`. Not designed here.
 
-**Fallback — named, degraded, and must be surfaced as such, not silently substituted.** If task 5's
-verification shows Chat's own page does *not* navigate to the right conversation on notification
-click (see "Does the page already do this for us?" above), the implementer builds a best-effort
-substitute rather than leaving click-to-focus doing nothing useful: parse whatever conversation
-identifier is available from the `Notification`'s own `options` (Chat's own notifications commonly
-carry a `tag`, `data`, or a deep-link `body`/`icon` URL — the exact shape must be inspected from a
-real notification object during task 5, not guessed here) and, if a usable identifier is found,
-navigate the page via `location.hash`/`history.pushState` equivalent that Chat's own router
-responds to; if no usable identifier is found, **fall back further to just showing/focusing the
-window on whatever conversation is currently open, and log this explicitly as the degraded path**
-(e.g. `console.warn('[gcd] notification click could not resolve a target conversation, showing
-default view')`) so it is visible in the implementer's/owner's own verification rather than passing
-as if deep-linking worked. Do not build any of this speculatively — only after task 5 proves the
-automatic (page-native) path insufficient.
+## 4. Windows toast identity (proposal for Spike A to validate)
 
-### 3. Tray unread indicator — `page-title-updated`, no injection
-```js
-mainWindow.webContents.on('page-title-updated', (event, title) => {
-  const match = title.match(/^\((\d+)\)/);
-  setTrayUnread(match ? Number(match[1]) : 0);
-});
-```
-`setTrayUnread(n)` (in `src/main/tray.js`): `win.setOverlayIcon(icon, 'Unread messages')` /
-`win.setOverlayIcon(null, '')` on Windows, and swapping the `Tray`'s image between a plain and a
-badged/dot variant on Linux (no standard OS badge API there — NFR-01 already accepts this as a
-platform difference, not a defect). macOS is out of scope per [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md);
-no Dock-badge code path exists. Cleared when `n === 0` or when the window regains focus while
-showing the relevant conversation.
+Toasts on Windows are attributed to an AppUserModelID that must match a Start Menu shortcut carrying it
+(Electron notifications tutorial, cited in ADR-0004). Today dev and packaged share one AUMID
+(`index.js:124`). Proposal, **not yet validated**: derive the AUMID from `app.isPackaged` (the packaged
+value stays the `appId`; a dev run gets a distinct suffix) so a dev run cannot register or shadow the
+identity a packaged install owns. Open point: whether the NSIS installer's shortcut carries the AUMID
+that the runtime call sets [U]. Spike A owns the answer; until then do not change the packaged value,
+because renaming an AUMID can orphan the user's per-app notification settings.
 
-## Fallback — documented, currently-inactive contingency; not the active risk
+## 5. Tray unread indicator and the arrival event
 
-**Superseded understanding (see [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
-Revision 3):** this section originally treated `electron/electron#31016` (a Windows-specific freeze
-of a hidden window's script execution under `hide()` + `backgroundThrottling: false`) as the active
-risk this fallback exists for. Real-desktop verification found the opposite of what was feared:
-`#31016`'s freeze was **not** observed on this project's pinned Electron version (44.4.3) — a 1s
-interval was confirmed still firing every ~1s over 6s while the window was hidden. What actually
-broke notifications was the `backgroundThrottling: false` mitigation itself (see "Page Visibility
-dependency" above), not the freeze `#31016` describes. That mitigation is reverted (piece 1, above).
+`page-title-updated` remains the unread-count source, whichever delivery mechanism is chosen. Two facts
+that FR-14 (attention indicators, see [tray-lifecycle.md](tray-lifecycle.md)) depends on:
 
-This fallback therefore has **no active trigger right now**. It is kept, undeleted, as a documented
-option for a possible future regression — e.g. an Electron version bump that reintroduces
-hidden-window JS throttling at the *default* `backgroundThrottling` setting (a different condition
-than the one originally feared). **Concrete trigger, restated**: a future real-desktop verification,
-with `backgroundThrottling` left at its default, shows a notification missing or delayed while the
-window is hidden via close-to-tray. Until that is actually observed, do not build this fallback
-speculatively.
+- **What `(N)` counts is unknown [U].** The title prefix may be the number of unread **conversations**, not
+  messages, so a second message in an already-unread conversation might not change it (an arrival missed by
+  the count-increase trigger) and "N new messages" would be false. Treat it as a Spike A/C observation: type
+  several messages into one conversation and one into another, and record how the title moves. Until then no
+  user-visible text may claim a message count.
+- Today the only signal is a count, so a "new message arrived" event can be derived only as **the count
+  increased** (FR-14's stated degraded trigger). M2 and M3 produce a real arrival event (the moment the
+  main-process `Notification` is created); the attention code should accept either source through one
+  function so the implementation states which trigger it uses, as FR-14 requires.
+- **Delta from the requirement, tray glyph precedence** (`src/main/tray.js:41-45`): `resolveIconState`
+  returns `'muted'` before `'unread'`, so on Linux, where the tray glyph is the only unread signal, an
+  unread message while muted is **not visible**. FR-05a and FR-12 both require the indicator to stay
+  visible while muted. Windows is unaffected because the overlay badge (`tray.js:129-137`) is set
+  independently. Options: a combined muted+unread glyph (new icon art, an owner call) or keeping the
+  unread glyph and expressing mute in the tooltip. Open question 4 below.
 
-Design (full detail in ADR-0002's "Risks" section): a `page-title-updated` unread-count-transition
-(`0 → N`) fires a **main-process** `Notification` with generic content (sender/preview not
-recoverable this way), whose `click` handler is the native `notification.on('click', ...)` API — no
-injection needed for this path. This stays event-driven (no timer), so it does not violate NFR-02.
+## 6. Application log (new component required by FR-05c)
+
+FR-05c's degraded outcome requires a **warning-level entry in a persistent application log**. No such log
+exists (section 1). Minimum contract:
+
+- A file under `app.getPath('userData')` (for example `logs/`), size-bounded with rotation, so a long-lived
+  tray process cannot grow it without limit.
+- Levels at least `warn` and `error`; `console.*` output is not a substitute.
+- **Never** message text, sender names, chat names, cookies, tokens or any credential (space rule
+  `electron-security-baseline`). A click-resolution warning records only that resolution failed, the
+  mechanism in use and a timestamp.
+- The existing `console.error` degradation messages (`index.js:216, 433`) move onto it so they survive
+  a packaged run with no console.
+
+## 7. Failure modes to log, not swallow
+
+- `executeJavaScript` injection failure (already logged distinctly, `index.js:215-222`); with the log in
+  section 6 it becomes persistent.
+- The wrapper never invoked because Chat redefines `Notification` after both lifecycle events.
+- A service-worker preload (M2) that fails to register or receives no events: the app must log that the
+  service-worker path is not observing, or a silent M2 failure looks identical to "no messages".
+- A click that cannot be resolved to a conversation (FR-05c): warning, window still comes forward.
+- Stale toast clicked after the app fully exited: the click cannot reach a live process; this is a known
+  limit, not fixable without native toast-activation relaunch (out of scope, unchanged from ADR-0002).
+
+## 8. Verification (space rule `verify-on-a-real-desktop`)
+
+Every FR-05 scenario tagged `[manual-only]` needs a real toast on a real desktop, and the report must
+state which platform was tested. Windows verification does not establish Linux (libnotify) behaviour, which
+has never been run in this repo. The `[automatable]` scenarios use a stubbed notification source and stubbed
+handlers; a stub cannot prove a real toast appears or a real click is delivered (the reported synthetic-click
+result is exactly that gap).
+
+## Open questions and assumptions
+
+1. **Owner:** FR-05 answer (a) or (b) (bounded second source, or generic content and focus-only click).
+   Blocks M2 versus M3.
+2. **Spike A:** does a real (not synthetic) click on a real toast raise `click`? If not, FR-05c is not
+   satisfiable by any of M1-M3 on Windows without a different activation route.
+3. **Spike C:** does the payload carry the chat name, and does Chat's service-worker `notificationclick`
+   route to the conversation when the click is delivered to it (M0)?
+4. **Owner/UX:** tray glyph precedence while muted with unread (section 5).
+5. **Assumption:** M3's coarser suppression rule (no toast while focused) is acceptable as the degraded
+   behaviour.
+6. **Assumption:** the AUMID split (section 4) is safe; needs Spike A evidence.
 </architecture>
+
+<topics>
+- [ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md) — Spikes A, B, C and escalation triggers.
+- [ADR-0002](../adr/0002-notification-delivery-mechanism.md) — history of the page-`Notification` design.
+- [Tray & Lifecycle](tray-lifecycle.md) — FR-14 attention indicators that consume the arrival event.
+- [IPC Contract](ipc-contract.md) — `notification:clicked` and the provisional service-worker channel.
+- [Requirements FR-05](../business/requirements.md) — the authority.
+</topics>
