@@ -4,6 +4,12 @@
 Grounded in `~/.claude/skills/electron-desktop.md` §7 (tray, close-to-tray, single-instance,
 auto-launch mechanics — not restated here) plus the space's `quit-only-from-tray` rule, which is a
 hard constraint: the window's close button must never terminate the process, under any refactor.
+
+Three windows now exist: the **main Chat window** (close-to-tray, FR-06), the **Settings window**
+(destroyed on close, FR-15) and, when a Meet link is opened, the **call window** (destroyed on close,
+FR-16; see [meet-call-window.md](meet-call-window.md)). Close-to-tray, tray Show/Hide and the
+attention indicators of FR-14 all concern the **main window only**. Closing either of the other two
+never quits the app and never hides or closes the main window.
 </overview>
 
 <architecture>
@@ -21,8 +27,24 @@ mainWindow.on('close', (event) => {
 });
 ```
 
-`isQuitting` is set `true` **only** by the tray menu's Exit handler, immediately before calling
-`app.quit()`. `window-all-closed` does **not** call `app.quit()` (Electron's Linux/Windows default
+This hide-on-close handler is on the **main window only** (FR-06). The Settings window has none (it is
+destroyed on close). The call window has a **different** `close` handler (yield to `isQuitting`; block
+while the source picker is open; on a live call ask, if approved; otherwise destroy; see
+[meet-call-window.md](meet-call-window.md) §3 and §3b), which never hides. Closing either must still never
+quit the process, which `window-all-closed` (below) guarantees while the main window exists hidden. Do not
+copy the hide handler onto them: a hidden call window would keep the camera and microphone live (FR-16).
+
+`isQuitting` is set `true` in the app's **`before-quit` handler** (`src/main/index.js:418-421`, as of
+commit d7f69e1), not in the Exit handler: the Exit handler only calls `app.quit()`, and `before-quit` is
+what an OS shutdown also reaches, so shutdown lets the `close` handler through instead of being turned into
+a hide. **`before-quit` must therefore never be prevented and never show a dialog.** Because `app.quit()` closes
+every window first, a page whose `beforeunload` objection is not overridden would cancel the quit and leave
+`isQuitting` stuck at true (so the main window's X would destroy it); the rules that prevent this (override
+while quitting, reset if a quit is cancelled) are in [meet-call-window.md](meet-call-window.md) §3b and
+apply to the main window's contents too. Any confirm in front of
+Exit or a window close is added *before* `app.quit()` or inside a `close` interception that yields to
+`isQuitting` (see [meet-call-window.md](meet-call-window.md) §3b). `window-all-closed` does **not** call
+`app.quit()` (Electron's Linux/Windows default
 would otherwise quit the app when the last window closes — this must be overridden). The renderer
 process is never destroyed by hide — this is the same live-window requirement notifications depend
 on (space's `hidden-window-must-stay-live` rule; see [Notifications](notifications.md)).
@@ -124,7 +146,8 @@ entirely inside the main window's own input handling — it introduces no `Menu`
 menu bar, and therefore no second quit-capable surface. The Settings window (see below) does not
 need this: it has no free-text editing surface beyond simple form inputs, which Chromium's built-in,
 menu-independent keydown handling for `<input>`/`<select>` elements already covers without any
-explicit wiring.
+explicit wiring. The Meet call window is not covered by this fix and, with no menu, its edit shortcuts are
+Meet's own page behaviour [U: verify in Spike B].
 
 ## Tray icon and context menu (FR-07, FR-10, FR-11, FR-12)
 
@@ -133,16 +156,17 @@ Context menu, in order:
 
 | Entry | Type | Action | Why it earns its place |
 |---|---|---|---|
-| Show/Hide Google Chat | action | toggles `mainWindow.isVisible()` — `hide()` vs `show(); focus()` | FR-07's explicit requirement: close-to-tray removes the taskbar path back in on some platforms/configs, so the tray needs its own way in. |
+| Show call window — **conditional, PENDING OWNER APPROVAL (design OQ-10, amendment A4)** | action, first entry | present only while a call window exists, **in every one of its states** (opening, error, crashed, sign-in, Meet page); restores, raises and focuses the **call window**, and **when the source picker is open focus goes to the picker**; never touches the main window. **No tooltip change** (dropped from the design). The menu is rebuilt (`refreshMenu`, event-driven, not from the blink tick) when the call window is created and destroyed. See [meet-call-window.md](meet-call-window.md) §3b. | Buried call windows are otherwise reachable only by the OS window switcher. Additive to FR-07's "at minimum" list; not yet recorded in requirements. |
+| Show/Hide Google Chat | action | toggles the **main window only** (`toggleShowHide`, `src/main/index.js:172-179`): `hide()` vs restore/`show()`/`focus()`. While a call window is open it never hides, closes or focuses the call (owner-approved default; see [meet-call-window.md](meet-call-window.md)). | FR-07's explicit requirement: close-to-tray removes the taskbar path back in on some platforms/configs, so the tray needs its own way in. |
 | Mute notifications | checkbox | see "Notification sound, mute, and icon blinking" below | Owner-requested (FR-12). The **only** preference checkbox still on the tray — Start at login and Notification sound moved to the Settings window (FR-15); see that section. |
-| Settings… | action | opens/focuses the Settings `BrowserWindow` — see "Settings window (FR-15)" below | New entry point for Start at login, Notification sound, and Blink tray icon on unread, added so the tray menu stops growing with every new preference (FR-15). |
-| Exit | action | `isQuitting = true; app.quit();` | The **only** path that terminates the process — no in-page Exit control exists (space's `quit-only-from-tray` rule, FR-07). |
+| Settings… | action | opens/focuses the Settings `BrowserWindow` — see "Settings window (FR-15)" below | New entry point for Start at login, Notification sound, and Icon blinking (the setting label is under redesign, see [design docs](../design/00-settings-surface-spec.md)), added so the tray menu stops growing with every new preference (FR-15). |
+| Exit | action | `app.quit()` (`isQuitting` is set by `before-quit`, see above). **Proposed, PENDING OWNER APPROVAL (design OQ-2):** if a call window exists, Exit first **probes it as a close attempt**; only if Meet's page objects (a live call) does an asynchronous native confirm "Exit Google Chat Desktop?" appear, and `app.quit()` then runs only on "Exit"; a non-objecting call window is destroyed and Exit proceeds with no dialog; see [meet-call-window.md](meet-call-window.md) §3b. | The **only** path that terminates the process — no in-page Exit control exists (space's `quit-only-from-tray` rule, FR-07). |
 | *(separator)* — build/version label | disabled, non-clickable | none | Owner-requested mid-incident (2026-09-22), see "Build/version diagnostic line" below (FR-13). |
 
 **Amended per FR-15/Wireframe F** (supersedes the 7-item menu this table originally described):
 "Start at login" and "Notification sound" checkboxes are removed from this menu — they are now
 Settings-window-only controls (see "Settings window (FR-15)" below). This shrinks the menu from 7
-entries to 5.
+entries to 5 (6 while a call window exists, if "Show call window" is approved).
 
 Left-click/double-click on the tray icon mirrors the Show/Hide entry (Windows/Linux convention —
 macOS's different menu-bar convention is moot, out of scope per ADR-0003).
@@ -157,21 +181,32 @@ resolving that ambiguity by hand (process-start-time/source-mtime archaeology) c
 diagnostic round. A bare `app.getVersion()` does not answer "is this the current build?" — every dev
 run and every packaged build shares the same `package.json` version between releases.
 
-`src/main/version.js`'s `buildVersionLabel(version, isPackaged, mtimeMs)` combines three
-independently-read, never-hardcoded facts:
-- `app.getVersion()` — tracks `package.json` automatically.
-- `app.isPackaged` — distinguishes an installed build from a dev run from source.
-- the entry file's mtime (`fs.statSync(__filename).mtimeMs`), formatted `YYYY-MM-DD HH:mm` — a
-  per-build marker that changes on every `electron-builder` packaging run or source edit, with no
-  git-hash or build-time string injection this repo doesn't already have wired up.
+The label is built by `buildVersionLabel(buildInfo)` in `src/main/version.js` from `build-info.json`
+(GitVersion-derived, generated by `npm run generate-build-info`); as of commit d7f69e1 it renders
+`<version> (<shortSha>, <ci|local>)`, or `build info unavailable`. **This differs from FR-13's wording**
+(version, "packaged" or "source", and a build timestamp taken from the entry file's mtime), which is
+authoritative for the requirement: the code has moved to a build-info source and the requirement text has
+not been updated. Recorded as a discrepancy for the business-analyst rather than resolved here; the tray
+line's content is FR-13's, and this document does not define a third format.
 
-Example rendered label: `0.1.0 (packaged, built 2026-09-22 13:58)`. See FR-13 in
-[requirements.md](../business/requirements.md) for the acceptance criteria.
+**The Settings window's About line is a different, narrower thing (FR-15, ratified): the app name and the
+version number only**, with no build timestamp, no packaged/source word and no SHA. It must not reuse the
+tray string. See FR-13 in [requirements.md](../business/requirements.md) for the acceptance criteria.
 
 ### Start at login (FR-10)
 **Managed exclusively from the Settings window (FR-15) — no tray checkbox.** Mechanism unchanged
 from the original design, only the surface that calls it moves; see "Settings window (FR-15)"
 below for how the Settings window's switch reaches this code.
+
+**NFR-08 (Linux):** the autostart `Exec` path must be the space-free installed executable. Today
+`src/main/autostart.js:64-66` writes `"${process.execPath}" --hidden` (quoted). For the `.deb` that is
+`/opt/GoogleChatDesktop/google-chat-desktop` (space-free, see
+[build-linux-in-docker.md](../development/build-linux-in-docker.md) "Install path and names"). **Open
+item, unverified:** inside an **AppImage** `process.execPath` points into the temporary mount, which
+does not exist after the app exits, so an autostart entry written from an AppImage run would not launch at
+next login; the AppImage path (`APPIMAGE` environment variable) is the usual stable reference. The
+implementer must check this on a real AppImage run and either fix or state the limitation; NFR-08's
+scenario "the autostart entry points at the space-free executable" should be tested for both artifacts.
 
 Windows: `app.setLoginItemSettings({ openAtLogin: checked })` (Electron native API, confirmed
 Windows/macOS-only per `electronjs.org/docs/latest/api/app` — no Linux support). Read current state
@@ -205,22 +240,32 @@ Start at login (not a "need this in the next two seconds" control).
 **Mute notifications is the one setting exposed on *both* the tray menu and the Settings window**
 (FR-12/FR-15) — see "Settings window (FR-15)" below for the exact two-way sync wiring.
 
-**Blink tray icon on unread is Settings-window-only (FR-14/FR-15)** — see "Blink tray icon on
-unread (FR-14)" below for the timer/state-machine wiring; this section only owns the persisted flag.
+**Icon blinking (`blinkOnUnread`) is Settings-window-only (FR-14/FR-15)** and, by the owner-approved
+default, is **one setting for both the tray blink and the taskbar flash**; the persisted key keeps its
+name, only the user-facing label changes (design task). See "Attention indicators (FR-14)" below for the
+timer/flash wiring; this section only owns the persisted flag.
 
-`soundEnabled`/`notificationsMuted` need to reach the injected `Notification` wrapper in
-[notifications.md](notifications.md) piece 2, since that's where notifications are actually
-created — that file owns the canonical wrapper snippet (including the mute/sound branches); this
-section only owns where the flags come from and how they're persisted. On toggle, and at initial
-injection (`dom-ready`/`did-finish-load`), the main process pushes current values into the page via
-``webContents.executeJavaScript(`window.__gcdSoundEnabled = ${soundEnabled}; window.__gcdMuted =
-${notificationsMuted};`)``, evaluated **before** the wrapper snippet so the globals exist when the
-wrapper first reads them.
+`soundEnabled`/`notificationsMuted` must reach **whichever code creates the toast**. Today that is the
+injected `Notification` wrapper (`src/main/notifications.js:90-117`); if the delivery mechanism changes
+(M2/M3 in [notifications.md](notifications.md)) the creating code is in the main process and reads
+`settingsStore` directly, with no page globals. [notifications.md](notifications.md) owns which; this
+section only owns where the flags come from and how they're persisted. While the page wrapper is in use,
+main pushes current values into the page on toggle and at initial injection
+(`dom-ready`/`did-finish-load`) via
+``webContents.executeJavaScript(`window.__gcdSoundEnabled = ...; window.__gcdMuted = ...;`)``, evaluated
+**before** the wrapper snippet.
 
-Muting does **not** affect the tray unread indicator (piece 3 of notifications.md) — that stays
-driven by `page-title-updated` independent of these flags, per FR-12's explicit requirement that
-mute silences notifications, not the unread count. Muting **does** stop any active blink
-immediately (FR-14's "poking" rule) — see "Blink tray icon on unread (FR-14)" below.
+Muting does **not** affect the unread indicator — that stays driven by `page-title-updated`
+independent of these flags, per FR-12. Muting **does** stop any active tray blink immediately (FR-14's
+"poking" rule, decided by the owner for the blink). That muting also stops the **taskbar flash** is a
+**working assumption** in FR-14, not an owner decision; the design implements it and it is one line to
+change if the owner disagrees. The one notification that ignores mute is the app-status "A call is already
+open" notification of FR-16, which is not a chat message.
+
+**Delta from the requirement (tray glyph):** `resolveIconState` (`src/main/tray.js:41-45`) prefers
+`'muted'` over `'unread'`, so on Linux the unread state is invisible while muted, contradicting FR-05a and
+FR-12. Tracked as an open question in [notifications.md](notifications.md) §5; do not treat the current
+precedence as correct.
 
 ## Settings window (FR-15)
 
@@ -278,8 +323,9 @@ Side effects `applySetting` performs after a successful write, before returning:
   tray menu is a plain Electron `Menu` this process already holds a reference to — no IPC needed to
   update a native menu item from the same process that built it).
 - If `key === 'notificationsMuted'` and `value === true`, or `key === 'blinkOnUnread'` and
-  `value === false`: call `trayBlink.stopBlinking()` immediately (see "Blink tray icon on unread"
-  below) — a mid-blink mute or blink-disable must not wait for the next tick to take effect.
+  `value === false`: call `attention.stop()` immediately (stops the tray blink **and** clears the taskbar
+  flash; see "Attention indicators (FR-14)" below) — FR-14 stop trigger 3; a mid-blink mute or
+  blink-disable must not wait for the next tick to take effect.
 - Broadcast `settings:changed` (see IPC table) to the Settings window, **if one is currently open
   and it is not the window that originated this call** (see "Echo-loop prevention" below).
 
@@ -320,183 +366,97 @@ The tray menu's Mute click handler calls `applySetting` directly (not through th
 open Settings window — which is exactly the FR-15 "toggled from the tray while Settings is open"
 scenario this wiring exists for.
 
-## Blink tray icon on unread (FR-14)
+## Attention indicators (FR-14): tray blink and taskbar flash
 
-FR-14 (`requirements.md`) has already settled the two behavioral questions the adversarial review
-raised — what stops blinking, and whether it can resume. This section is the wiring: where the
-single timer lives, what event drives the stop, where the start/resume trigger is hooked in, and
-the interaction with mute/blink-off. It does not re-derive FR-14's decisions; it implements them.
+FR-14 (`requirements.md`) is the single authority for when the indicators start and stop; this section is
+only the wiring. It replaces the earlier "hidden / becomes visible" design. Owner-approved defaults
+applied here: **one** setting (`blinkOnUnread`) governs both the blink and the flash, and new-message
+indicators continue while the user is in the Meet call window or the Settings window (they are not the
+main Chat window, so the main window is still "not focused").
 
-### Timer module — single handle, start/stop only, never paused
-`src/main/trayBlink.js` owns the one blink timer, module-level, never exported as mutable state:
+### What the code does today, and where it differs from FR-14 (input as of commit d7f69e1, 2026-09-30; not a durable description: `src/main/attention.js` and `src/main/appIdentity.js` are being added concurrently, so re-read the code before relying on a row)
 
-```js
-// src/main/trayBlink.js
-let timerHandle = null; // null = not blinking. The only state this module holds.
+| FR-14 says | Code today | Delta |
+|---|---|---|
+| Start while the window is **not focused** (hidden, minimized, or visible without focus) | Gate is `isWindowVisible: () => mainWindow.isVisible()` (`src/main/index.js:194-200`, `src/main/tray.js:171`): starts only when `!isVisible()` | A window that is visible but behind another app never starts the blink. Whether `isVisible()` is false for a **minimized** window is not established here [U] (the code's own `toggleShowHide`, `index.js:172-179`, treats minimized separately, which suggests it is not); verify, but the gate must be focus-based either way. |
+| Stop when the window **gains focus** | Stop is wired to `'show'` and `'restore'` (`index.js:297-298`) | `show()` without focus (for example `showInactive()`) or a restore that the OS does not focus stops the indicators though FR-14 says it must not. |
+| Taskbar button flashes (Windows) | `flashFrame` is never called | Unimplemented (ADR-0004 S2). |
+| (Re)start on every **arrival** while not focused | `updateBlink(n)` calls `startBlinking()` for **any** `n > 0` title update (`tray.js:171-172`) | A title update that lowers the count (5 to 3) or repeats it also restarts the blink; only an increase or an arrival event should. |
+| Stop on unread = 0 | `n === 0` calls `stopBlinking()` (`tray.js:173-174`) | Correct; keep. |
+| Stop on mute-on or blinking-off | `applySetting` (`settingsStore.js`) calls `stopBlinking()` | Correct for the blink; must also clear the flash. |
 
-function startBlinking() {
-  if (timerHandle !== null) return; // already blinking — FR-14's "no second timer" case;
-                                     // also how "resume" stays safe (see below).
-  timerHandle = setInterval(tick, 1000); // FR-14's ~1s alternation; NFR-06's one allowed timer.
-}
+### Module shape
 
-function stopBlinking() {
-  if (timerHandle === null) return;
-  clearInterval(timerHandle);
-  timerHandle = null;
-  setStaticTrayState(); // restore the correct non-blinking icon (idle or unread-static per
-                         // notifications.md piece 3's current unread count) — never left
-                         // mid-blink-cycle when the timer stops.
-}
-
-function tick() {
-  // Icon-image swap only (tray.setImage()-equivalent) — no menu rebuild, no settings read,
-  // no other work, per NFR-06's per-tick cost bound.
-}
-
-function isBlinking() {
-  return timerHandle !== null;
-}
-
-module.exports = { startBlinking, stopBlinking, isBlinking };
-```
-
-`startBlinking` being a no-op whenever a timer is already running is what makes FR-14's "resume"
-behavior safe: a resume is just another call to `startBlinking()` from the same code path as the
-original start (see "Start/resume trigger" below) — there is no separate "resume" function and
-therefore no second way to accidentally create a second `setInterval`. `stopBlinking` always
-`clearInterval`s and nulls the handle together, never one without the other, so "cleared, not
-merely paused" (NFR-06) is a property of this module's only two entry points, not something callers
-have to get right themselves.
-
-### Stop triggers — window becomes visible, or unread returns to zero while still hidden
-FR-14 names two independent stop triggers (`requirements.md` FR-14, "Stop condition"), and this
-architecture wires both to the same `stopBlinking()` entry point rather than inventing a second stop
-path:
-
-**Trigger 1 — the window's `'show'` and `'restore'` events.** Blinking stops the instant the window
-**becomes visible**, independent of OS focus, the conversation shown, or remaining unread elsewhere.
-Electron's `BrowserWindow` emits `'show'` whenever the window transitions to visible — via `show()`
-**or** `showInactive()` — and `'restore'` when it transitions out of the minimized state; both are
-transition events, not polled state, so they fire exactly once per transition regardless of which
-caller triggered it (the tray's Show/Hide entry, a notification click's `win.show()` in
-notifications.md piece 2, `second-instance`'s `mainWindow.show()`, a taskbar restore). Wiring both
-to the same stop call, once, in `src/main/index.js`, is what keeps this a single hook instead of a
-call sprinkled into every place the window can become visible:
+`src/main/trayBlink.js` keeps owning the **single** blink timer exactly as before (module-level
+`timerHandle`, start is a no-op if set, stop clears and nulls together; NFR-06). A thin
+`attention` layer (new, may live in `tray.js` or its own module) is the only caller of both effects so the
+two can never disagree:
 
 ```js
-mainWindow.on('show', trayBlink.stopBlinking);
-mainWindow.on('restore', trayBlink.stopBlinking);
+// attention.start(): called on an arrival while the main window is not focused,
+//   blinkOnUnread on, notificationsMuted off.
+//   trayBlink.startBlinking();            // one timer, no-op if already running
+//   mainWindow.flashFrame(true);          // one OS request, no app-side timer (NFR-06)
+// attention.stop(): every stop trigger converges here.
+//   trayBlink.stopBlinking();             // clearInterval + null, restores static icon
+//   mainWindow.flashFrame(false);         // always explicit, see the flash note below
 ```
 
-`stopBlinking()` is itself a no-op when not currently blinking (see above), so this firing on paths
-that were never blinking in the first place — e.g. the hidden-autostart `showInactive()` → `hide()`
-pair described earlier in this document, which fires `'show'` immediately followed by `'hide'` at
-a moment nothing has ever started blinking yet — is harmless by construction, not something this
-wiring needs to special-case.
+`attention.stop()` is safe to call unconditionally (both halves are no-ops when idle), so all three FR-14
+stop triggers call the same function.
 
-**Trigger 2 — unread count returns to zero while the window is still hidden.** This is the case
-FR-14 added for the read-elsewhere scenario (the owner reads the message on another device, unread
-drops to 0 while the window here is still hidden): an icon that keeps blinking for a message that is
-no longer unread misreports state. This trigger is **not** a timer — it is driven by the same
-unread-count fact `notifications.md` piece 3's `setTrayUnread(n)` already tracks, one call site,
-same function:
+### Start and stop wiring
 
-```js
-// src/main/tray.js — setTrayUnread(n), extended (notifications.md piece 3's existing function)
-function setTrayUnread(n) {
-  // ...existing overlay/badge logic, unchanged...
-  if (n > 0 && !mainWindow.isVisible() && settingsStore.get('blinkOnUnread') && !settingsStore.get('notificationsMuted')) {
-    trayBlink.startBlinking();
-  } else if (n === 0) {
-    trayBlink.stopBlinking(); // FR-14 trigger 2 — unread cleared elsewhere while still hidden;
-                               // no-op (see trayBlink.js) if blinking wasn't running.
-  }
-}
-```
+- **Start, arrival.** The arrival event is, in order of preference, (1) the moment the delivery mechanism
+  raises a toast (M2/M3 in [notifications.md](notifications.md)); (2) the FR-14 degraded trigger, the
+  `page-title-updated` count **increasing** versus the previous observed count. The implementation states
+  which one it uses. The gate reads `!mainWindow.isFocused()` **once, at the arrival**, not polled
+  (NFR-02). Replace `isWindowVisible` with an `isWindowFocused` dependency in `createUnreadBlinkGate` and
+  add the previous-count comparison there so the pure gate stays unit-testable without Electron.
+- **Stop 1, focus.** `mainWindow.on('focus', attention.stop)`. Remove the `'show'` and `'restore'`
+  listeners. `focusMainWindow()` (restore, show, `focus()`) still stops them because the `focus` event then
+  fires; `showInactive()` in the hidden-autostart path does not, which is correct.
+- **Stop 2, unread returns to zero.** The `n === 0` branch, unchanged in principle, now calls
+  `attention.stop()`.
+- **Stop 3, setting change.** `applySetting` (above) calls `attention.stop()`.
+- **Mute while active:** covered by stop 3 (for the flash this is the working assumption above). **Mute turned off, or blinking turned back on, with unread
+  pending:** nothing starts until the next arrival (FR-14 working assumption).
+- **Focus in another of our windows** (Settings, call window) does not stop anything: only the **main**
+  window's `focus` event does.
 
-Both triggers converge on the exact same `stopBlinking()` — module-level `timerHandle`, `clearInterval`
-+ null together, never one without the other (see "Timer module" above) — so there is still only one
-function in the codebase that can ever stop a timer, and only one (`startBlinking`) that can ever
-start one. A stop from trigger 2 while trigger 1 also fires moments later (window opened right after
-the unread count synced to zero) is just two calls into the same no-op-safe function, not two
-competing stop mechanisms.
+### The flash: what is and is not established
 
-### Start/resume trigger — the same `setTrayUnread(n)` call site as trigger 2 above
-FR-14's start condition is "the first unread message" and its resume condition is "any subsequent
-arrival while still hidden" — both are the same event from this module's point of view, because
-`startBlinking()`'s own no-op-if-already-running guard is what tells the two apart; the caller does
-not need to know which case it is. This is the same `setTrayUnread(n)` extension shown under "Stop
-triggers" above — the `n > 0` branch starts/resumes, the `n === 0` branch (trigger 2) stops; both
-live in one function, one call site, so start and one of the two stops can never drift out of sync
-with each other. `mainWindow.isVisible()` is read once, synchronously, at the moment of the arrival
-— not polled — so this is still event-driven per NFR-02, and gates on the same "hidden/minimized"
-state FR-05's static badge already uses (see the visible-but-unfocused note below for why that gate
-is correct here even though it means something different for the badge).
+- Electron documents `win.flashFrame(flag)` as "Starts or stops flashing the window to attract user's
+  attention" (browser-window API). The excerpt fetched for this document does **not** say when the flash
+  ends on Windows, so this design **always calls `flashFrame(false)` on stop** instead of relying on the OS
+  to end it at focus.
+- **Risk, unverified:** `win.hide()` removes the window's taskbar button on Windows, so `flashFrame(true)`
+  on a window that is **hidden to tray** may have no visible effect. FR-14's manual scenario "the taskbar
+  button visibly flashes" is written for hidden, minimized and behind-other-windows. If a real Windows
+  desktop shows no flash for the hidden case, the requirement cannot be met for that state by
+  `flashFrame` alone; the options (for example keeping a minimized taskbar button instead of hiding, which
+  changes FR-06's close-to-tray behaviour) are an **owner decision** and this document does not choose.
+- Linux: `flashFrame` maps to a window-manager urgency hint whose visible effect is desktop-dependent;
+  best-effort per FR-14, verified on a real Linux desktop and not assumed.
+- WCAG 2.3.1's flash threshold cited in the design docs applies to the ~1 Hz tray alternation the app
+  controls. The OS taskbar flash rate is not app-controlled, so no rate claim is made for it.
 
-### Interaction with Settings/tray toggles
-Both are handled in `settingsStore.applySetting` (see "Settings window (FR-15)" above), not here:
-turning Mute on, or turning Blink off, while a blink is in progress calls `stopBlinking()`
-immediately rather than waiting for the next `tick()` — FR-14's "mute suppresses blink, not the
-underlying unread fact" rule and the Settings window's "immediate apply, no delay" rule (design spec
-§4) both require the mid-blink case to stop on the same event loop turn as the toggle, not on the
-next 1s tick.
+### NFR-06 as a checkable property
 
-### NFR-06 as a checkable property, not an aspiration
-"No duplicate or orphaned interval handles" is not observable from outside the process as written —
-nothing external can inspect Node's internal timer table. Made concrete instead as two things a test
-actually can assert, both against `src/main/trayBlink.js`'s public surface above:
+The two-part QA method is unchanged in shape, restated in focus terms: (1) a unit test with spied
+`setInterval`/`clearInterval` and a stubbed `flashFrame` over the 20-cycle sequence in NFR-06 (first arrival
+while not focused; gain focus (stop); lose focus; arrival (restart); arrival while already blinking (zero
+extra `setInterval`); show without focus (must **not** stop); mute on/off; blinking on/off; count to zero
+while not focused), asserting on every cycle that `flashFrame(true)` is requested on each start and
+`flashFrame(false)` on each stop; (2) the same sequence by hand on a real build, moving the window between
+hidden, minimized, visible-behind-another-window and focused. `_resetForTests` and `isBlinking()` remain
+the test seams. New test seams needed: an injectable `isFocused` and `flashFrame` on the gate.
 
-1. **Unit test with fake timers** (owned by `qa-automation`, built against this module): spy on
-   global `setInterval`/`clearInterval` (e.g. `jest.spyOn(global, 'setInterval')` /
-   `jest.useFakeTimers()`), then drive a sequence that exercises exactly the cases FR-14 names —
-   `startBlinking()` called twice in a row (simulating two arrivals while already blinking) asserts
-   `setInterval` was called **once**, not twice; `stopBlinking()` called twice in a row (simulating
-   a stop event firing on an already-stopped state, e.g. two `'show'`/`'restore'` events in
-   quick succession) asserts `clearInterval` was called **once**, not twice; a start → stop →
-   start (arrival → window opened → new arrival) sequence asserts `isBlinking()` is `true`, `false`,
-   `true` at each step and that `setInterval` was called exactly twice total (once per genuine
-   start, none wasted on the no-op calls). `isBlinking()` is exported from the module specifically
-   to give this test a way to assert intermediate state without reaching into module-private
-   variables. Also covers `setTrayUnread`'s own two branches directly (not just `trayBlink.js` in
-   isolation): `setTrayUnread(1)` while hidden calls `startBlinking()`; a subsequent
-   `setTrayUnread(0)` while still hidden (FR-14 trigger 2) calls `stopBlinking()` even though the
-   window never became visible; and `setTrayUnread(0)` called when nothing was blinking is a no-op
-   (asserted via `isBlinking()` staying `false` and `clearInterval` not being called an extra time)
-   — this is the case that proves trigger 1 and trigger 2 converge on the same safe `stopBlinking()`
-   rather than needing to be told apart by the caller.
-2. **Manual real-build pass**: open/hide the window 20 times in rapid succession while unread stays
-   above 0 (the exact scenario NFR-06's prose already names) and confirm no visible timer-related
-   CPU/behavior anomaly — this stays a code-review/manual-verification criterion (a human watching
-   the tray icon and a process monitor), not a runtime-testable assertion, because "no anomaly" is
-   not itself a machine-checkable predicate the way call counts in (1) are. Both methods are
-   required — the unit test proves the module's internal discipline; the manual pass is the closest
-   available approximation to actually observing OS-level timer/resource behavior end-to-end.
+### Superseded, removed from this document
 
-### The visible-but-unfocused case — what the tray shows, and what doesn't apply
-Neither the static unread badge (notifications.md piece 3) nor blinking (this section) triggers
-while the main window is visible-but-unfocused (on screen, behind another app) — both are gated on
-`!mainWindow.isVisible()` / "hidden/minimized", and a visible-but-unfocused window is, by
-definition, visible. This is a deliberate reuse of FR-05's existing gate, not an oversight this
-document is introducing: **the mechanism that actually draws the user's eye in that state is the OS
-notification toast itself**, which FR-05 already requires unconditionally in this exact scenario
-(`requirements.md` FR-05, "New message while window is open but unfocused on another app" — a
-notification is shown regardless of focus). The tray icon's job, both static and blinking, starts
-only where the OS notification's job ends — once the window is no longer even visible for a toast
-to have been shown against. A tray-icon change on top of an already-delivered OS toast would be a
-second, redundant attention mechanism for the same event, not a gap.
-
-What this does **not** cover, and is worth naming rather than leaving implicit: if the user misses
-or dismisses that toast, there is currently no persistent visual reminder on the tray icon while the
-window remains visible-but-unfocused with that message still unread — the static badge only starts
-once the window is hidden/minimized, and by then the message may already be several actions in the
-past for the user. This is a real, if narrow, residual gap between "an alert fired once" and "a
-persistent unread indicator," and it exists today under the *current* FR-05/FR-14 wording, which
-this document does not have standing to change. Flagged here for `business-analyst`/the owner to
-confirm is acceptable (a toast is enough) or to decide the badge/blink gate should key off OS focus
-rather than window visibility — a real, small design choice with its own tradeoff (an OS-focus gate
-would also badge/blink while the user is actively alt-tabbed away mid-task on the *same* machine,
-which the current visibility-only gate deliberately avoids). Not decided unilaterally here.
+The former "visible-but-unfocused case" section (which argued the OS toast is enough and that a tray
+signal would be redundant) is obsolete: FR-14 now requires the tray blink and taskbar flash in exactly that
+state, so the "residual gap" it flagged is closed by the requirement, not by a design choice here.
 
 ## Single-instance enforcement (FR-08)
 
