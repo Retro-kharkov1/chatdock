@@ -132,6 +132,8 @@ function bootstrap() {
   // this point in bootstrap) so applySetting's side effects always see the current instances.
   const settingsStore = createSettingsStore({
     settingsPath,
+    // First run of an installed build turns Start at login on (once); dev runs never do.
+    enableStartAtLoginOnFirstRun: app.isPackaged,
     getTrayController: () => trayController,
     // Mute-on / Icon-blinking-off must stop BOTH indicators (FR-14 stop 3), so the store's stop
     // hook is the attention controller's stop, not the bare tray timer.

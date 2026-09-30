@@ -167,3 +167,82 @@ test('a corrupt settings.json falls back to defaults instead of throwing', () =>
   assert.equal(store.get('soundEnabled'), true);
   assert.equal(store.get('blinkOnUnread'), true);
 });
+
+// ---- First-run defaults (owner decision 2026-09-30: everything ON after a fresh install) --------
+// Start at login is enabled exactly once, on the first run (no settings.json yet), and only for a
+// packaged build. An existing settings.json always wins; an entry the user later disables (Settings
+// or Task Manager) is never re-enabled by a restart.
+
+function fakeAutostart(initial = false) {
+  const calls = { set: [] };
+  let on = initial;
+  return {
+    calls,
+    get: () => on,
+    set: (v) => { calls.set.push(v); on = v; },
+  };
+}
+
+test('first run (no settings.json) enables Start at login and persists the file', () => {
+  const settingsPath = tempSettingsPath();
+  const autostart = fakeAutostart(false);
+  const store = createSettingsStore({ settingsPath, autostart, enableStartAtLoginOnFirstRun: true });
+  assert.deepEqual(autostart.calls.set, [true]);
+  assert.equal(store.getAll().startAtLogin, true);
+  assert.equal(fs.existsSync(settingsPath), true);
+});
+
+test('first run keeps the other documented defaults: sound on, blink on, mute off', () => {
+  const store = createSettingsStore({
+    settingsPath: tempSettingsPath(),
+    autostart: fakeAutostart(false),
+    enableStartAtLoginOnFirstRun: true,
+  });
+  const all = store.getAll();
+  assert.equal(all.soundEnabled, true);
+  assert.equal(all.blinkOnUnread, true);
+  assert.equal(all.notificationsMuted, false);
+});
+
+test('second launch does NOT re-apply first-run defaults (user choice survives)', () => {
+  const settingsPath = tempSettingsPath();
+  createSettingsStore({ settingsPath, autostart: fakeAutostart(false), enableStartAtLoginOnFirstRun: true });
+
+  // The user turned it off (or disabled it in Task Manager): OS now reports off.
+  const autostart2 = fakeAutostart(false);
+  const store2 = createSettingsStore({ settingsPath, autostart: autostart2, enableStartAtLoginOnFirstRun: true });
+  assert.deepEqual(autostart2.calls.set, []);
+  assert.equal(store2.getAll().startAtLogin, false);
+});
+
+test('an existing settings.json from an older version counts as "already chosen" - no first-run enable', () => {
+  const settingsPath = tempSettingsPath();
+  fs.writeFileSync(settingsPath, JSON.stringify({ soundEnabled: false }), 'utf8');
+  const autostart = fakeAutostart(false);
+  createSettingsStore({ settingsPath, autostart, enableStartAtLoginOnFirstRun: true });
+  assert.deepEqual(autostart.calls.set, []);
+});
+
+test('first run is a no-op when not requested (dev / unpackaged runs must not register electron.exe)', () => {
+  const autostart = fakeAutostart(false);
+  createSettingsStore({ settingsPath: tempSettingsPath(), autostart });
+  assert.deepEqual(autostart.calls.set, []);
+});
+
+test('first run: an OS failure is swallowed (no crash) and is not retried on the next launch', () => {
+  const settingsPath = tempSettingsPath();
+  const failing = { get: () => false, set: () => { throw new Error('boom'); } };
+  const store = createSettingsStore({ settingsPath, autostart: failing, enableStartAtLoginOnFirstRun: true });
+  assert.equal(store.getAll().startAtLogin, false);
+  assert.equal(fs.existsSync(settingsPath), true);
+});
+
+test('applySetting(startAtLogin) uses the injected OS layer and reports a read-back mismatch as a failure', async () => {
+  const lying = { get: () => false, set: () => {} };
+  const store = createSettingsStore({ settingsPath: tempSettingsPath(), autostart: lying });
+  const result = await store.applySetting('startAtLogin', true);
+  assert.equal(result.ok, false);
+  const honest = fakeAutostart(false);
+  const store2 = createSettingsStore({ settingsPath: tempSettingsPath(), autostart: honest });
+  assert.deepEqual(await store2.applySetting('startAtLogin', true), { ok: true, value: true });
+});

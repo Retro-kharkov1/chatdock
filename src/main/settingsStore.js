@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getStartAtLogin, setStartAtLogin } = require('./autostart');
+const realAutostart = require('./autostart');
 
 // FR-10/FR-11/FR-12/FR-14, docs/architecture/tray-lifecycle.md "Single source of truth". This
 // module is the single read/write authority for all four persisted preferences — the only code
@@ -82,8 +82,39 @@ function platformStartAtLoginFailureMessage() {
  *   open Settings window, or null/undefined if none is open, for the `settings:changed` broadcast.
  * @returns {{get, getAll, applySetting}}
  */
-function createSettingsStore({ settingsPath, getTrayController, getTrayBlink, getSettingsWindow } = {}) {
+function createSettingsStore({
+  settingsPath,
+  getTrayController,
+  getTrayBlink,
+  getSettingsWindow,
+  autostart = { get: realAutostart.getStartAtLogin, set: realAutostart.setStartAtLogin },
+  enableStartAtLoginOnFirstRun = false,
+} = {}) {
+  const getStartAtLogin = autostart.get;
+  const setStartAtLogin = autostart.set;
+  // First run = no settings.json yet. Any existing file (even one from an older version) means the
+  // user has already been through this app, so nothing is ever force-enabled over their choice.
+  const isFirstRun = !fs.existsSync(settingsPath);
   const state = loadPersistedSettings(settingsPath);
+
+  // Owner decision 2026-09-30: after a fresh install everything is ON (sound and blink are already
+  // ON in DEFAULTS; mute stays OFF because "on" would silence the app), so Start at login is enabled
+  // once, here. Runs at most once: the file written below makes every later launch a non-first run,
+  // which also means an entry the user disables (Settings switch or Task Manager) stays disabled.
+  // Opt-in via the flag so dev/unpackaged runs never register electron.exe as a login item.
+  if (isFirstRun && enableStartAtLoginOnFirstRun) {
+    try {
+      setStartAtLogin(true);
+    } catch (err) {
+      console.error('[gcd] first-run Start at login could not be enabled', err);
+    }
+    try {
+      state.startAtLogin = getStartAtLogin();
+    } catch {
+      // keep the default; the live value is re-derived below anyway.
+    }
+    persist(settingsPath, state);
+  }
 
   // `startAtLogin` is always re-derived from the live OS state at construction time — never
   // trusted from the cached settings.json copy, per FR-10's "reflects actual current OS-level
