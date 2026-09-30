@@ -19,14 +19,98 @@ function linuxAutostartPath() {
   return path.join(os.homedir(), '.config', 'autostart', 'google-chat-desktop.desktop');
 }
 
+const STARTUP_APPROVED_KEY =
+  'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
+
 /**
- * getStartAtLogin() — reads the actual OS-level state. `false` on any platform this app doesn't
- * implement the mechanism for (there is none left in scope — Windows and Linux are both covered).
+ * windowsLoginItemOptions() - the ONE set of { path, args, name } used for BOTH the write and the
+ * read-back. Electron decides `openAtLogin` by comparing the registry Run value with
+ * `"<path>" <args>`, so a read-back that omits the `--hidden` the write added never matches and
+ * reports false although the write succeeded. That mismatch was the "Couldn't change Start at
+ * login - Windows didn't apply the change" bug. `name` is pinned to the AppUserModelID (Electron's
+ * own default) so the Run value name and the StartupApproved lookup can never disagree.
+ */
+function windowsLoginItemOptions({ isPackaged, execPath, appPath, name }) {
+  return {
+    path: execPath,
+    args: isPackaged ? ['--hidden'] : [appPath, '--hidden'],
+    name,
+  };
+}
+
+/**
+ * isStartupApprovedDisabled(regQueryOutput) - Windows keeps the Task Manager "Startup apps"
+ * Enabled/Disabled switch in HKCU\...\Explorer\StartupApproved\Run as a REG_BINARY whose first
+ * byte has bit 0 set when the user disabled the entry (0x02/0x06 enabled, 0x03 disabled). No value
+ * at all means enabled.
+ */
+function isStartupApprovedDisabled(regQueryOutput) {
+  if (typeof regQueryOutput !== 'string') return false;
+  const m = /REG_BINARY\s+([0-9A-Fa-f]{2})/.exec(regQueryOutput);
+  if (!m) return false;
+  return (parseInt(m[1], 16) & 1) === 1;
+}
+
+/**
+ * readWindowsStartAtLogin() - the true OS-level state: the Run entry exists (with the exact
+ * registered command) AND the user has not switched it off in Task Manager. A user-disabled entry
+ * is a legitimate state to report as OFF, not a failure.
+ */
+function readWindowsStartAtLogin({ getLoginItemSettings, queryStartupApproved, options }) {
+  if (!getLoginItemSettings(options).openAtLogin) return false;
+  try {
+    return !isStartupApprovedDisabled(queryStartupApproved(options.name));
+  } catch {
+    return true; // cannot read the approval flag - trust the Run entry.
+  }
+}
+
+function queryStartupApprovedViaReg(name) {
+  const { execFileSync } = require('child_process');
+  try {
+    return execFileSync('reg', ['query', STARTUP_APPROVED_KEY, '/v', name], {
+      encoding: 'utf8',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return null; // reg.exe exits 1 when the value does not exist = enabled.
+  }
+}
+
+function currentWindowsOptions() {
+  const { app } = require('electron');
+  const { resolveAppUserModelId } = require('./appIdentity');
+  return windowsLoginItemOptions({
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+    appPath: app.getAppPath(),
+    name: resolveAppUserModelId({ isPackaged: app.isPackaged }),
+  });
+}
+
+/**
+ * linuxExecLine() - inside an AppImage `process.execPath` is a temporary mount that vanishes on
+ * exit, so the stable `$APPIMAGE` path must be registered instead. In dev, execPath is the bare
+ * electron binary and needs the app directory.
+ */
+function linuxExecLine({ isPackaged, execPath, appPath, appImage }) {
+  if (isPackaged) return `"${appImage || execPath}" --hidden`;
+  return `"${execPath}" "${appPath}" --hidden`;
+}
+
+/**
+ * getStartAtLogin() - reads the actual OS-level state. `false` on any platform this app doesn't
+ * implement the mechanism for.
  */
 function getStartAtLogin() {
   if (process.platform === 'win32') {
     const { app } = require('electron');
-    return app.getLoginItemSettings().openAtLogin;
+    return readWindowsStartAtLogin({
+      getLoginItemSettings: (o) => app.getLoginItemSettings(o),
+      queryStartupApproved: queryStartupApprovedViaReg,
+      options: currentWindowsOptions(),
+    });
   }
   if (process.platform === 'linux') {
     return fs.existsSync(linuxAutostartPath());
@@ -35,25 +119,14 @@ function getStartAtLogin() {
 }
 
 /**
- * setStartAtLogin(enabled) — writes the OS-level state.
- *
- * Both branches account for the dev-vs-packaged pitfall named in `electron-desktop.md` §10: in a
- * packaged build `process.execPath` IS the app's own binary and needs no extra argument; in dev,
- * `process.execPath` is the `electron.exe`/`electron` binary itself, which needs the app
- * directory as its first argument to know what to launch. Getting this wrong means "Start at
- * login" silently does nothing (or launches bare Electron with no app) the next time the OS logs
- * the user in — a failure mode that would not show up until the *next* login, long after this was
- * tested.
+ * setStartAtLogin(enabled) - writes the OS-level state (dev-vs-packaged launch command handled in
+ * windowsLoginItemOptions / linuxExecLine). Electron's set also clears a Task Manager "Disabled"
+ * flag, so turning the switch ON again after the user disabled it re-enables the entry.
  */
 function setStartAtLogin(enabled) {
   if (process.platform === 'win32') {
     const { app } = require('electron');
-    const args = app.isPackaged ? ['--hidden'] : [app.getAppPath(), '--hidden'];
-    app.setLoginItemSettings({
-      openAtLogin: enabled,
-      path: process.execPath,
-      args: enabled ? args : [],
-    });
+    app.setLoginItemSettings({ openAtLogin: enabled, ...currentWindowsOptions() });
     return;
   }
   if (process.platform === 'linux') {
@@ -61,9 +134,12 @@ function setStartAtLogin(enabled) {
     const filePath = linuxAutostartPath();
     if (enabled) {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      const execLine = app.isPackaged
-        ? `"${process.execPath}" --hidden`
-        : `"${process.execPath}" "${app.getAppPath()}" --hidden`;
+      const execLine = linuxExecLine({
+        isPackaged: app.isPackaged,
+        execPath: process.execPath,
+        appPath: app.getAppPath(),
+        appImage: process.env.APPIMAGE,
+      });
       const contents = [
         '[Desktop Entry]',
         'Type=Application',
@@ -79,7 +155,15 @@ function setStartAtLogin(enabled) {
     }
     return;
   }
-  // No-op elsewhere — macOS is out of scope (ADR-0003) and no other platform is targeted.
+  // No-op elsewhere - macOS is out of scope (ADR-0003) and no other platform is targeted.
 }
 
-module.exports = { getStartAtLogin, setStartAtLogin, linuxAutostartPath };
+module.exports = {
+  getStartAtLogin,
+  setStartAtLogin,
+  linuxAutostartPath,
+  windowsLoginItemOptions,
+  isStartupApprovedDisabled,
+  readWindowsStartAtLogin,
+  linuxExecLine,
+};
