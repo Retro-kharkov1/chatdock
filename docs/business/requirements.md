@@ -23,7 +23,7 @@ make a platform work that nobody will run was not justified.
 - Electron shell that loads the Google Chat web app in a native window.
 - Google account authentication that persists across restarts/reboots (no repeated login).
 - OS-native notifications for new Google Chat messages, delivered even when the window is
-  closed to tray, landing on the specific conversation/message when clicked (see FR-05).
+  closed to tray, opening that conversation when clicked (target; conditional on an open owner decision — see FR-05).
 - Close-to-tray behavior; tray icon with a context menu; explicit Quit/Exit action.
 - Single-instance enforcement (a second launch focuses the existing instance instead of opening
   a second window).
@@ -32,7 +32,10 @@ make a platform work that nobody will run was not justified.
 - Start automatically at OS login (FR-10).
 - Notification sound control, independent of the page's own settings (FR-11).
 - Manual notification mute ("quiet hours") via the tray menu (FR-12).
-- Blinking tray icon while there are unread messages (FR-14).
+- Blinking tray icon and flashing taskbar button while there are unread messages and the window is
+  not focused (FR-14).
+- Google Meet calls opened from Chat in an app-owned call window, with camera, microphone and screen
+  share (FR-16, NFR-07).
 - A dedicated Settings window consolidating start-at-login, notification sound, mute, and icon
   blinking (FR-15).
 
@@ -44,7 +47,8 @@ make a platform work that nobody will run was not justified.
   directly. (Revisit only if the DOM/web-notification-bridge approach in FR-05 proves unable to
   detect new messages reliably — see FR-05's mechanism note and ADR-0002's fallback.)
 - Multi-account support, multi-window/tabs, or switching between different Chat spaces/URLs
-  beyond the one configured entry URL.
+  beyond the one configured entry URL. (The Meet call window of FR-16 is the one accepted exception
+  to "one window"; it does not open other Google hosts in-app.)
 - Auto-update infrastructure (not requested; can be added later as a separate requirement).
 - Mobile builds.
 - Accessibility/localization work beyond what Chromium/the Google Chat web app already provides.
@@ -130,104 +134,196 @@ Feature: Session persistence
     (this is expected/correct behavior, not a defect)
 ```
 
-### FR-05 — System notifications for new messages, landing on the specific conversation when clicked
-When a new Google Chat message arrives for the signed-in user, the application delivers an
-OS-native notification (Windows Action Center / Linux notify-send-compatible), regardless of
-whether the application window is currently visible, minimized, or hidden to the tray.
-Notifications are **not** delivered while the window is open and focused on the relevant
-conversation (matching normal chat-app behavior — no notification for a conversation the user is
-actively looking at). Notifications are suppressed entirely while the app's mute setting (FR-12)
-is on, and are delivered silently (no sound) while the app's sound setting (FR-11) is off.
+### FR-05 — System notifications for new messages, landing on the conversation when clicked
+*Amended 2026-09-30 (owner decisions). FR-05 is now three parts with different certainty. Part A is
+unconditional. Parts B and C partly depend on ADR-0004 Spike C and on an owner decision that has not
+been made (see "Open question"). The parts are stable sub-IDs: FR-05a, FR-05b, FR-05c.*
 
-The notification shows the sender's name and a message preview, consistent with what the Google
-Chat web app itself would show via the browser Notifications API.
+**Priority: Must (all three parts).**
 
-**Clicking a notification does two things, both required** — this is a sharpened requirement (the
-owner's own words: "on clicking, jump into the chat *to that message*"), not satisfied by focusing
-the window alone:
-1. The application window is brought to focus (restored from the tray if hidden).
-2. The application is showing the **specific conversation the notification was for**, with that
-   message visible — not whatever conversation happened to be open before the window was hidden.
+#### FR-05a — A native notification appears at all (unconditional)
+When a new Google Chat message arrives for the signed-in user, the application shows an OS-native
+notification (Windows Action Center / Linux notify-send-compatible) **while the window is hidden to
+the tray, minimized, or visible but not focused** (FR-14's definition of "not focused"). This is the
+core of the whole application and is required regardless of how the open question below is decided;
+today it is a live failure on Windows (ADR-0004, BUG-01).
 
-If the specific conversation cannot be determined (a named, logged, degraded case — see
-[notifications.md](../architecture/notifications.md)), the window still comes to focus, but this is
-an explicitly degraded outcome, not the target behavior, and must be visibly logged so it is never
-mistaken for the feature working correctly.
+Rules that bound it (unchanged from before):
+- No notification for a conversation the user is actively looking at (window focused and showing that
+  conversation).
+- Suppressed entirely while Mute (FR-12) is on; delivered without sound while Notification sound
+  (FR-11) is off.
+- The tray icon shows a visible static unread indicator (e.g. a badge overlay) **whenever at least one
+  conversation is unread, independent of window focus** — it stays after the window gains focus and
+  clears only when no unread conversation remains (clearing rules per conversation are the Chat
+  page's own). The tray has **one global icon**, so the indicator is global. FR-14's blink and flash
+  are separate and are tied to the not-focused condition.
 
-While the window is hidden/minimized and there are unread messages, the tray icon shows a visible
-unread indicator (e.g. a badge overlay); the indicator clears once the user has viewed the
-relevant conversation(s).
+#### FR-05b — Notification content (target; conditional on Spike C and the owner's answer)
+The owner requires the notification to show **which chat the message is from**: the chat name (the
+sender's name for a direct message) as the title and the message text as the body. A notification
+showing only generic text (for example "N new messages") does not meet this part.
+
+#### FR-05c — Click behaviour
+Clicking a notification does two things:
+1. **(Unconditional)** The application window is brought to the front and given focus, **including
+   when it was hidden to the tray or minimized** (restored from the tray if hidden).
+2. **(Conditional on Spike C and the owner's answer)** The application shows **that conversation** —
+   not whichever conversation happened to be open before. The owner's words are "open that chat".
+   Scrolling to the specific message is **not** required; see the stretch question below.
+
+**Degraded outcome — defined.** If the conversation cannot be determined, the window still comes to the
+front and focused (step 1), and the app writes a **warning-level entry to its persistent application
+log** stating that a notification click could not be resolved to a conversation. "Visibly" means
+findable in that log by the owner or a tester; no on-screen message is required. It must never be
+silent, so a degraded click is never mistaken for the feature working.
+
+#### What applies under each owner answer
+| Element | Under (a) — bounded second source accepted | Under (b) — generic content, focus-only click |
+|---|---|---|
+| FR-05a delivery | Applies | Applies |
+| FR-05b content (chat name title, message body) | Applies | **Does not apply**; generic text is the accepted content and this document is amended |
+| FR-05c step 1 (bring forward, from tray/minimized) | Applies | Applies |
+| FR-05c step 2 (open that conversation) | Applies | **Does not apply**; amended |
+| Degraded-outcome logging | Applies to any unresolved click | Not needed — the focus-only click is then the standard behaviour, not a degradation |
+
+Until the owner answers, the conditional scenarios below are the **target** and are written as such; a
+test author must not treat a failure of a conditional scenario as a regression before Spike C reports.
 
 ```gherkin
 Feature: System notifications
-  Scenario: New message while window is hidden to tray
+  # Tags: [automatable] = unit/integration test with a stubbed notification source and stubbed
+  # handlers. [manual-only] = needs the real OS toast to be displayed or clicked on a real desktop.
+  # ---- FR-05a: unconditional ----
+  Scenario: [manual-only] A notification appears for a new message while hidden to tray
     Given the application is running with the window hidden to tray
-    And the user is signed in
+    And the user is signed in and "Mute notifications" is off
     When a new Google Chat message arrives for the signed-in user
-    Then an OS-native notification is shown with the sender's name and a message preview
+    Then an OS-native notification is shown
     And the tray icon shows an unread indicator
 
-  Scenario: New message while window is open but unfocused on another app
-    Given the application window is open but another application has OS focus
+  Scenario: [manual-only] A notification appears while the window is minimized
+    Given the application window is minimized
     When a new Google Chat message arrives
     Then an OS-native notification is shown
 
-  Scenario: New message while the user is actively viewing that conversation
+  Scenario: [manual-only] A notification appears while the window is visible but not focused
+    Given the application window is visible but another application has OS focus
+    When a new Google Chat message arrives
+    Then an OS-native notification is shown
+
+  Scenario: [automatable] No notification for the conversation being viewed
     Given the application window is open, focused, and showing the conversation the message
       belongs to
     When a new message arrives in that conversation
     Then no OS-native notification is shown for that message
 
-  Scenario: Clicking a notification lands on the specific message, not just any window focus
-    Given the window is hidden to tray
-    And a new message arrives in conversation "B" while conversation "A" was the last one open
-    And an OS-native notification is shown for that message in conversation "B"
-    When the user clicks the notification
-    Then the application window is restored/focused
-    And the application is showing conversation "B" specifically, not conversation "A"
-    And the message that triggered the notification is visible in that conversation
-    And the tray unread indicator is cleared for conversation "B"
-
-  Scenario: Notifications suppressed while muted (FR-12)
+  Scenario: [automatable] Notifications suppressed while muted (FR-12)
     Given the user has enabled "Mute notifications" from the tray menu
     When a new Google Chat message arrives while the window is hidden
     Then no OS-native notification is shown
     And the tray unread indicator still updates (mute silences notifications, not the unread count)
 
-  Scenario: Notification sound off (FR-11)
-    Given the user has turned off "Notification sound" from the Settings window (see FR-15 —
-      Notification sound is a Settings-only control, not a tray checkbox)
+  Scenario: [automatable] Notification sound off (FR-11)
+    Given the user has turned off "Notification sound" in the Settings window (FR-15)
     And "Mute notifications" is not enabled
     When a new Google Chat message arrives while the window is hidden
     Then an OS-native notification is still shown
     And it is delivered without sound
+
+  Scenario: [automatable] The tray indicator is global and observable
+    Given the tray icon shows the unread indicator because conversations "A" and "B" are unread
+    When conversation "B" has been viewed and "A" is still unread
+    Then the tray icon still shows the unread indicator
+    When conversation "A" has also been viewed
+    Then the tray icon returns to its normal (non-unread) icon
+
+  # ---- FR-05c step 1: unconditional ----
+  Scenario: [manual-only] Clicking a notification brings the window forward from the tray
+    Given the window is hidden to tray and an OS-native notification is shown
+    When the user clicks the notification
+    Then the window is restored, brought to the front and focused
+
+  Scenario: [manual-only] Clicking a notification brings the window forward from minimized
+    Given the window is minimized and an OS-native notification is shown
+    When the user clicks the notification
+    Then the window is restored, brought to the front and focused
+
+  # ---- FR-05b: conditional on Spike C + owner answer (a) ----
+  Scenario: [manual-only] [conditional - applies under (a)] Title names the chat and body is the message
+    Given a new message arrives in the direct message with "Olena"
+    When the OS-native notification is shown
+    Then its title is "Olena" and its body is the message text
+
+  Scenario: [manual-only] [conditional - applies under (a)] Notification in a group space names the space
+    Given a new message arrives in the group space "Team Alpha" from a sender "Olena"
+    When the OS-native notification is shown
+    Then its title identifies the chat ("Team Alpha", with or without the sender's name)
+    And its body is the message text
+
+  # ---- FR-05c step 2: conditional on Spike C + owner answer (a) ----
+  Scenario: [manual-only] [conditional - applies under (a)] Clicking opens that conversation, not just any focus
+    Given the window is hidden to tray
+    And a new message arrives in conversation "B" while conversation "A" was the last one open
+    And an OS-native notification is shown for that message
+    When the user clicks the notification
+    Then the window is restored and focused
+    And the application is showing conversation "B", not conversation "A"
+
+  Scenario: [manual-only] [conditional - applies under (a)] Click opens the conversation from a minimized window
+    Given the window is minimized and a notification is shown for a message in conversation "B"
+    When the user clicks the notification
+    Then the window is restored, focused and showing conversation "B"
+
+  Scenario: [automatable] [conditional - applies under (a)] Unresolvable conversation is a logged degraded outcome
+    Given an OS-native notification is shown for a message
+    And the specific conversation cannot be determined
+    When the user clicks the notification
+    Then the window is brought to the front and focused
+    And a warning-level entry is written to the application's persistent log stating the click could
+      not be resolved to a conversation
 ```
 
-**Resolved (was an open question), and corrected after real-machine testing:** the web version of
-Google Chat already requests browser Notification permission and calls the standard Web
-Notifications API when the tab is backgrounded; Electron bridges `Notification()` calls from a
-background/hidden `BrowserWindow` to the OS notification center, provided the renderer stays alive
-**and Google Chat's own `document.visibilityState` check reports the window as actually hidden**.
-That second condition was missed in the original design: an earlier revision of this mechanism set
-`backgroundThrottling: false` believing it was required to keep the hidden page's JS running, but
-that flag has the side effect of pinning `visibilityState` at `"visible"` — which made Google Chat
-believe the window was always visible and suppress every notification while hidden. This was caught
-in the owner's real test (a colleague's message produced no notification) and traced by
-`electron-developer`; see [ADR-0002](../adr/0002-notification-delivery-mechanism.md) Revision 3 for
-the full incident and root cause. **Corrected mechanism**: `backgroundThrottling` is left at
-Electron's default — this project's pinned Electron version (44.4.3) was empirically confirmed to
-keep a hidden page's JS/timers running at normal speed without that flag, so no override is needed,
-and the page reports its visibility honestly. See [notifications.md](../architecture/notifications.md)
-for the full mechanism and its Page Visibility dependency, and [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
-for the historical Electron issue `#31016` this design originally (and, it turned out,
-unnecessarily) guarded against, now kept only as a documented, currently-inactive fallback. Also see
-that doc for the click-to-conversation mechanism and its own named fallback if Google Chat's page
-turns out not to wire click-to-navigate on its own `Notification` objects.
+**Open question (owner decision; not decided here) — how to reach the right conversation.** ADR-0004
+states the choice the owner will face once Spike C reports (what Chat's notification actually carries,
+and whether a conversation identifier is reachable without scraping):
+- **(a)** accept a bounded second source for this one purpose (the document title / unread state, or
+  reading the page) — which touches the space rule `wrapper-not-a-rewrite`; or
+- **(b)** accept generic notification content and a click that only brings the window forward.
+
+Sub-questions: if only the sender is known and the message is in a group space, is a sender-only title
+acceptable, or must the space name be shown? **Stretch question:** should a click also scroll to the
+specific message, or is opening the chat enough? (The owner said "open that chat"; scrolling is
+excluded unless the owner asks for it.)
+
+#### History — superseded mechanism notes (not normative)
+*Kept so a reader does not re-derive them. The current mechanism is undecided; these describe what was
+believed and what happened, and the downstream architecture docs that cite them are listed as
+superseded in the [change log](#change-log).*
+
+- **Earlier design, corrected after real-machine testing.** The design assumed Google Chat calls the
+  standard Web Notifications API when the tab is backgrounded and that Electron bridges those calls to
+  the OS while the renderer stays alive **and** Chat's own `document.visibilityState` reports the
+  window as hidden. An earlier revision set `backgroundThrottling: false`, which pins `visibilityState`
+  at `"visible"`, so Chat suppressed every notification while hidden. Caught in the owner's real test
+  and traced by `electron-developer`; see [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
+  Revision 3. `backgroundThrottling` is left at Electron's default (empirically confirmed on the pinned
+  Electron 44.4.3).
+- **2026-09-30 finding (secondary evidence, unverified in this repo).** Chat very likely raises its
+  real notifications through a **service worker** (`ServiceWorkerRegistration.showNotification`), not
+  a page-level `Notification`. Risks, not facts: the shell's wrapper around the page `Notification`
+  may never see them and the current shell never displays service-worker notifications (a candidate
+  cause of BUG-01, ADR-0004 Spike A); the `tag` may identify the sender, not the conversation, and the
+  page URL may not change per conversation; the service worker's own click handler may or may not route
+  to the right conversation and the page cannot reach it. What Chat's notification carries is
+  ADR-0004 **Spike C**.
 
 ### FR-06 — Close-to-tray
-Clicking the window's close (X) button hides the window (does not destroy the application
-process, does not quit). The application keeps running in the background and continues to
-receive and surface notifications per FR-05 while hidden.
+Clicking the **main Chat window's** close (X) button hides the window (does not destroy the
+application process, does not quit). The application keeps running in the background and continues to
+receive and surface notifications per FR-05 while hidden. This behaviour applies to the main window
+only: the Meet call window (FR-16) is **destroyed** when closed, not hidden, and the Settings window
+keeps its own behaviour (FR-15). Neither of them quits the application.
 
 ```gherkin
 Feature: Close-to-tray
@@ -247,9 +343,11 @@ Feature: Close-to-tray
 ### FR-07 — Tray icon and context menu
 A tray icon is present whenever the application is running. Right-clicking it opens a context
 menu with, at minimum:
-- **Show/Hide Google Chat** — toggles the window's visibility (mirrors double-click on the tray
-  icon). Earns its place because close-to-tray (FR-06) removes the taskbar window as the way to
-  bring it back on some platforms/configurations, so the tray needs its own explicit way back in.
+- **Show/Hide Google Chat** — toggles the **main Chat window's** visibility (mirrors double-click on
+  the tray icon). While a Meet call window (FR-16) is open it acts on the main window only and never
+  hides or closes the call (working assumption, pending the owner — see FR-16). It earns its place
+  because close-to-tray (FR-06) removes the taskbar window as the way to bring it back on some
+  platforms/configurations, so the tray needs its own explicit way back in.
 - **Mute notifications** — checkbox toggle; see FR-12. This is the **only** preference checkbox
   that remains on the tray menu — see FR-15's "Tray menu vs. Settings window" decision for why
   Start at login and Notification sound were moved to the Settings window instead.
@@ -264,8 +362,8 @@ The application does **not** provide a way to quit from within the web page itse
 Exit control) — Exit is reachable only via the tray context menu, per the owner's explicit
 requirement.
 
-Left-clicking (or double-clicking, per platform convention — see `tray-lifecycle.md`) the tray icon toggles
-window visibility, mirroring the menu's Show/Hide entry.
+Left-clicking (or double-clicking, per platform convention) the tray icon toggles
+the main window's visibility, mirroring the menu's Show/Hide entry.
 
 ```gherkin
 Feature: Tray context menu
@@ -319,7 +417,8 @@ Feature: Single instance
 Installable packages are produced for **Windows and Linux** (macOS is out of scope — owner
 decision, see [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md) and NFR-05). See
 **NFR-05** for what "installer" realistically means per platform given the signing constraint on
-Windows.
+Windows. The Linux packages must also satisfy **NFR-08** (install path and executable name without
+spaces; the `.deb` declares its audio runtime dependency).
 
 ```gherkin
 Feature: Distribution installers
@@ -331,6 +430,7 @@ Feature: Distribution installers
     Given a release build has been produced
     Then a Linux AppImage artifact exists for that release
     And a Linux .deb package artifact exists for that release
+    And the Linux install path, executable name and .deb dependency declaration satisfy NFR-08
 ```
 
 ### FR-10 — Start automatically at OS login
@@ -461,176 +561,235 @@ Feature: Build/version diagnostic line
 build-time string injection — this repo has neither wired up, and the mtime already satisfies the
 owner's actual need ("can I tell this is the current build") without adding new build tooling.
 
-### FR-14 — Blinking tray icon on unread
-While the window is hidden/minimized and there is at least one unread message (the same condition
-that drives FR-05's static unread indicator), the tray icon **alternates** between its normal
-icon and its unread icon, drawing attention the way classic desktop messengers did ("blink until
-you look"), instead of only showing a static badge.
+### FR-14 — Attention indicator on unread: blinking tray icon and flashing taskbar button
+**Priority: Must.** *Amended 2026-09-30 (owner decision): extended from "tray blink while hidden" to
+"tray blink and taskbar flash whenever the window is not focused". Earlier wording is superseded, not
+kept alongside.*
 
-**Start/resume condition — decided, including the case the adversarial review flagged as
-unspecified:** blinking (re)starts on **every new-message-arrival event** that occurs while the
-window is hidden/minimized, not only the first message that takes unread from 0 to ≥1. Precisely:
-- The first unread message (unread count 0 → ≥1) starts blinking, exactly as originally specified.
-- Any **subsequent** new message that arrives while the window is still hidden also (re)starts
-  blinking — **even if blinking had already stopped** because the window was opened and re-hidden
-  in the meantime without the user viewing the relevant unread conversation. This is the exact
-  scenario the reviewer raised (unread already >0, blinking stopped, window hidden again, a new
-  message then arrives) — the answer is: blinking resumes.
-- A new message that arrives while the icon is **already blinking** is a no-op for the blink state
-  itself (it is already blinking) and must not create a second timer — see NFR-06.
+While the main Chat window is **not focused** and there is at least one unread message (this uses
+FR-05's unread state; the static indicator itself is focus-independent, see FR-05a), the application draws attention on two
+surfaces at once:
+1. **Tray icon** — alternates between its normal icon and its unread icon, the way classic desktop
+   messengers did ("blink until you look"), instead of only showing a static badge.
+2. **Taskbar button** — flashes (Windows `flashFrame`) until the window gains focus.
 
-  Decision rationale: the owner's stated intent for this feature is to have the icon "draw my eye
-  when messages arrive, like the old days" — an attention-getting signal tied to the *arrival
-  event*, not to a stale "still have something unread" fact. A silently-static icon sitting next to
-  an unread badge, at the exact moment a brand-new message has just landed, fails that intent. So
-  the trigger for (re)starting blinking is every arrival while hidden, not only the transition into
-  the unread state.
+**"Not focused" — defined precisely.** The main Chat window is not focused when it is any of:
+hidden to the tray; minimized; or visible but without OS input focus (behind other windows, or another
+application has focus). "Focused" means the main Chat window has OS input focus. The Settings window
+and the Meet call window (FR-16) are separate windows: having focus in one of them does **not** make
+the main Chat window focused, so a new message still triggers the indicator (working assumption — see
+the open question at the end of this section).
 
-**Stop condition — decided, not open for re-litigation. This is the single, authoritative
-definition of when blinking stops; NFR-06 does not redefine it, it only specifies the timer
-mechanics used to implement it.** Blinking stops on **any of three** triggers, never on a timer
-and never after a fixed number of blink cycles:
-1. **The window becomes visible.** "Becomes visible" is defined precisely, since the reviewer
-   correctly flagged that "opened" is otherwise ambiguous to implement and test — the window
-   transitioning from hidden/minimized to shown/restored (`window.isVisible()` becoming `true`) is
-   what stops blinking, **regardless of**:
-   - whether the window also receives OS input focus at that moment — a window restored to visible
-     but not given focus still stops blinking;
-   - which conversation the window happens to be showing when it becomes visible — blinking stops
-     even if the window is showing a conversation other than the one the unread message belongs to;
-   - whether unread messages remain for a *different* conversation the user has still not looked at
-     — blinking still stops the moment the window is visible; FR-05's separate static unread
+**Start/resume condition:** both indicators (re)start on **every new-message-arrival event** that
+occurs while the main window is not focused, not only the first message that takes unread from 0 to ≥1.
+Precisely:
+- The first unread message (unread count 0 → ≥1) starts them.
+- Any **subsequent** new message that arrives while the window is still not focused also (re)starts
+  them — **even if they had already stopped** because the window gained focus and then lost it again
+  without the user viewing the relevant unread conversation.
+- A new message that arrives while the tray icon is **already blinking** is a no-op for the blink
+  state itself and must not create a second timer — see NFR-06. The taskbar flash is likewise
+  re-requested without stacking.
+
+  Decision rationale: the owner's stated intent is to have the shell "draw my eye when messages
+  arrive". An attention signal tied to the *arrival event*, not to a stale "still have something
+  unread" fact, is what serves that. The owner extended it to the taskbar button because a window
+  that is open but buried behind other windows is the common real case, and a tray icon alone does
+  not reach it.
+
+**Dependency on FR-05.** The arrival event that starts the indicators is only as good as the
+detection mechanism behind FR-05a, which is itself undecided (service-worker notifications, ADR-0004
+Spikes A and C). If per-message arrival cannot be detected reliably, the **acceptable degraded
+trigger** is: the global unread count **increases** while the window is not focused. That still starts
+both indicators; what it loses is the "new message while unread was already above zero" precision when
+a read and an unread cancel out between two observations. Any implementation must state which trigger
+it uses.
+
+**Stop condition — decided. This is the single, authoritative definition of when the indicators
+stop; NFR-06 does not redefine it, it only specifies the timer mechanics.** Both indicators stop on
+**any of three** triggers, never on a timer and never after a fixed number of cycles:
+1. **The main window gains OS input focus.** Being restored, shown or brought to the front without
+   receiving focus does **not** stop them (this reverses the earlier "becomes visible" rule). Once
+   focused, they stop regardless of:
+   - which conversation the window is showing — they stop even if it shows a conversation other than
+     the one the unread message belongs to;
+   - whether unread messages remain for a different conversation — FR-05's separate static unread
      indicator keeps reflecting whatever unread state remains, unaffected by this stop event.
-2. **The unread count returns to zero while the window is still hidden.** This covers the case
-   where the underlying unread state disappears without the window ever becoming visible — for
-   example, the owner reads the message on another device, Google Chat syncs the read state in the
-   background, and the app's unread count drops to 0 while the window is still hidden/minimized on
-   this machine. An icon that keeps blinking for messages that are no longer unread would misreport
-   state, which is exactly what this requirement exists to avoid, so blinking stops immediately
-   when this happens, independent of trigger 1. Note this is **not** a timer or cycle-count auto-stop
-   — it is driven by the same unread-count fact FR-05's static indicator already tracks, not by
-   elapsed time.
-3. **The blinking setting itself changes, mid-blink.** If "Icon blinking" (`blinkOnUnread`) is
-   turned off, or "Mute notifications" (`notificationsMuted`) is turned on, while the icon is
-   currently blinking, blinking stops immediately as a direct effect of that setting change — it
-   does not wait for the next unread-arrival or visibility event to take effect. This is a genuine
-   third stop trigger, not a restatement of trigger 2: it fires on a **preference change**,
-   independent of whether the unread count is still greater than zero (unread messages can remain
-   — the static FR-05 indicator keeps showing them, per the mute interaction below — only the
-   alternation stops). See `tray-lifecycle.md`'s `applySetting`, which calls
-   `trayBlink.stopBlinking()` immediately on exactly these two setting transitions, and NFR-06's
-   QA scenario list, which exercises this trigger explicitly.
+2. **The unread count returns to zero while the window is still not focused** (for example the
+   messages were read on another device and Google Chat's synced read state reaches this client).
+   Driven by the same unread-count fact FR-05 tracks, not by elapsed time.
+3. **A setting changes mid-indicator.** If "Icon blinking" (`blinkOnUnread`) is turned off, or "Mute
+   notifications" (`notificationsMuted`) is turned on, while an indicator is active, it stops
+   immediately as a direct effect of the setting change, independent of whether unread messages
+   remain. NFR-06's QA scenario list exercises this trigger. (The existing implementation applies it in
+   `applySetting`; the architecture doc describing that is listed as superseded in the
+   [change log](#change-log).)
 
-An indicator that gives up on its own (by timer or cycle count) while the message is still unread
-would misreport state, so absent any of the three triggers above, blinking never stops on its own.
+This is deliberately a **lower bar** than FR-05's "viewed" condition (which requires the user to have
+actually looked at the specific conversation before its unread contribution clears). The indicators'
+only job is to get the window in front of the user's eyes, which gaining focus already satisfies;
+FR-05 tracks whether content was actually read. Gaining focus and then losing it again without
+viewing the conversation does not, by itself, restart them — that takes a **new** message arrival.
 
-This is deliberately a **lower bar** than FR-05's "viewed" condition (which requires the user to
-have actually looked at the specific conversation before its unread contribution clears). Blinking
-and FR-05's unread indicator are two independent state machines that happen to share a trigger
-(new-message arrival) and a visual resource (the tray icon): blinking's only job is to get the
-window in front of the user's eyes, which "became visible" already satisfies; FR-05's job is to
-track whether the content was actually read, which requires more than visibility. Opening the
-window and then re-hiding it without having viewed the relevant conversation does not, by itself,
-restart blinking — that would require a **new** message arrival, per the start/resume condition
-above.
+**Interaction with mute (FR-12) — decided:** while "Mute notifications" is on, the tray icon does
+**not** blink, but the static unread indicator still shows (FR-05). Mute means "don't poke me";
+blinking is poking. The unread state must not be lost because notifications are muted. Turning mute
+on while an indicator is active is stop trigger 3.
 
-**Interaction with mute (FR-12) — decided:** while "Mute notifications" is on, the icon does
-**not** blink, but still shows the static unread indicator when there are unread messages. Mute
-means "don't poke me"; blinking is poking. The underlying information (messages are unread) must
-not be lost just because notifications are muted — so the icon falls back to FR-05's existing
-static unread state instead of going silent. If both an unread state and a "muted" tray icon
-variant exist, the unread state takes visual precedence while both conditions are true (conveying
-"you have unread messages" outranks conveying "notifications are muted" — the user already knows
-they muted it). Turning mute on while the icon is already blinking is stop trigger 3 above: it
-stops the active blink immediately, not merely prevents a future one from starting.
+**Working assumption (not an owner decision): mute also suppresses the taskbar flash.** The owner
+decided mute for the tray blink; extending it to the flash follows the same "don't poke me" logic but
+was not stated. Pending the owner's confirmation.
+
+**Mute turned OFF while unread messages exist and the window is not focused — working assumption:**
+turning mute off does **not** start the indicators by itself, because they are tied to an arrival
+event (see the rationale above); they start on the **next** arrival. The static unread icon is
+unaffected either way. The same applies when "Icon blinking" is turned back on.
 
 **What alternates:** the tray icon cycles between the existing **normal** icon and the existing
-**unread** icon (the same icon FR-05 already defines as the static indicator) at a fixed interval
-of approximately 1 second (1000 ms) per phase. This reuses the icon assets already required by
-FR-05 — no new icon art is introduced by this requirement.
+**unread** icon at approximately 1 second (1000 ms) per phase. No new icon art is introduced.
 
-**User-switchable — decided:** blinking can be turned on/off independently of the underlying
-unread indicator itself (which is not optional — FR-05 always requires *some* unread signal).
-When blinking is turned off (see FR-15), unread messages while the window is hidden still show the
-existing static unread icon from FR-05; only the alternation stops. The control for this toggle is
-specified in FR-15 (Settings), not the tray context menu — see FR-15's rationale for why this one
-setting does not also get a tray quick-toggle.
+**User-switchable — decided:** the "Icon blinking" setting (FR-15) turns the attention indicator on or
+off independently of the underlying unread indicator (not optional — FR-05 always requires *some*
+unread signal). When off, unread messages still show the static unread icon; the tray alternation
+stops **and the taskbar button does not flash** (turning it off mid-flash stops the flash — stop
+trigger 3). **Working assumption, pending the owner:** "Icon blinking" governs **both** the tray blink
+and the taskbar flash; a separate flash setting is not provided.
 
 ```gherkin
-Feature: Blinking tray icon on unread
-  Scenario: Blinking starts when an unread message arrives
+Feature: Attention indicator on unread (tray blink and taskbar flash)
+  # Tags: [automatable] = state logic tested with the flash request and tray-image swap stubbed.
+  # [manual-only] = the real visible taskbar flash on a real desktop.
+  Scenario: [manual-only] The real taskbar button visibly flashes and stops on focus (Windows)
+    Given the window is hidden, minimized or behind other windows on a real Windows desktop
+    When a new message arrives with blinking enabled and mute off
+    Then the taskbar button visibly flashes
+    When the window is focused
+    Then the flashing stops
+
+  Scenario: [automatable] Indicators start when an unread message arrives while hidden to tray
     Given the application window is hidden to tray
     And there are currently no unread messages
     And icon blinking is enabled (FR-15) and "Mute notifications" is off
     When a new Google Chat message arrives
     Then the tray icon begins alternating between its normal and unread icon states
+    And the taskbar button flashes on Windows
 
-  Scenario: Blinking stops only when the window is opened
-    Given the tray icon is currently blinking due to unread messages
-    When the user opens/restores the application window
+  Scenario: [automatable] Indicators start when the window is minimized
+    Given the application window is minimized
+    And icon blinking is enabled and "Mute notifications" is off
+    When a new Google Chat message arrives
+    Then the tray icon begins alternating
+    And the taskbar button flashes on Windows
+
+  Scenario: [automatable] Indicators start when the window is visible but behind other windows
+    Given the application window is visible but another application has OS focus
+    And icon blinking is enabled and "Mute notifications" is off
+    When a new Google Chat message arrives
+    Then the tray icon begins alternating
+    And the taskbar button flashes on Windows
+
+  Scenario: [automatable] No indicator while the window is focused
+    Given the application window is visible and has OS input focus
+    When a new Google Chat message arrives in a conversation other than the one shown
+    Then the tray icon does not blink
+    And the taskbar button does not flash
+
+  Scenario: [automatable] Gaining focus stops both indicators
+    Given the tray icon is blinking and the taskbar button is flashing
+    When the main window gains OS input focus
     Then the tray icon stops blinking immediately
-    And it does not resume blinking on its own after any fixed delay or blink count
+    And the taskbar button stops flashing
+    And neither resumes on its own after any fixed delay or cycle count
 
-  Scenario: Window becoming visible stops blinking even without OS input focus
-    Given the tray icon is currently blinking
+  Scenario: [automatable] Becoming visible without focus does not stop the indicators
+    Given the tray icon is blinking and the window is hidden to tray
     When the window is restored to visible but does not receive OS input focus
-    Then the tray icon stops blinking
+    Then the tray icon is still blinking
+    And the taskbar button is still flashing
 
-  Scenario: Window becoming visible while showing a different conversation still stops blinking
-    Given the tray icon is blinking due to an unread message in conversation "B"
-    And conversation "A" is the conversation currently shown when the window is opened
-    When the user opens/restores the window (still showing conversation "A", not "B")
-    Then the tray icon stops blinking
-    And the static unread indicator for conversation "B" remains visible per FR-05, unaffected by
-      this scenario
+  Scenario: [automatable] Gaining focus while showing a different conversation still stops the indicators
+    Given the indicators are active due to an unread message in conversation "B"
+    And conversation "A" is the conversation shown when the window gains focus
+    When the user focuses the window (still showing conversation "A", not "B")
+    Then both indicators stop
+    And the static unread indicator for conversation "B" remains visible per FR-05
 
-  Scenario: Blinking resumes when a new message arrives after blinking had already stopped, with
-      unread still pending
-    Given the window was briefly opened and re-hidden without the user viewing the relevant unread
-      conversation
-    And blinking has stopped as a result (the window became visible, per the stop condition)
+  Scenario: [automatable] Indicators resume when a new message arrives after they had stopped, with unread pending
+    Given the window gained focus and then lost it again without the user viewing the relevant
+      unread conversation
+    And both indicators stopped when it gained focus
     And the unread count is still greater than 0
-    When a new Google Chat message arrives while the window remains hidden
+    When a new Google Chat message arrives while the window is not focused
     Then the tray icon begins alternating again
+    And the taskbar button flashes again
 
-  Scenario: A new message while the icon is already blinking does not spawn a second timer
+  Scenario: [automatable] A new message while the tray icon is already blinking does not spawn a second timer
     Given the tray icon is currently blinking due to unread messages
-    When another new Google Chat message arrives while the window is still hidden
+    When another new Google Chat message arrives while the window is still not focused
     Then the tray icon continues alternating at the same interval
     And no additional/duplicate blink timer is created (see NFR-06)
 
-  Scenario: Unread count returns to zero while the window stays hidden also stops blinking
-    Given the tray icon is currently blinking due to unread messages
-    And the window remains hidden/minimized throughout this scenario
-    When the unread count drops to zero (e.g. the messages were read from another device and
-      Google Chat's synced read state reaches this client)
-    Then the tray icon stops blinking immediately
-    And this happens without the window ever becoming visible
+  Scenario: [automatable] Unread count returns to zero while the window is not focused
+    Given both indicators are active due to unread messages
+    And the window remains not focused throughout this scenario
+    When the unread count drops to zero
+    Then the tray icon stops blinking and the taskbar button stops flashing immediately
+    And this happens without the window ever gaining focus
 
-  Scenario: Blinking does not stop on its own over time
-    Given the tray icon is currently blinking due to unread messages
-    When an extended period of time passes with the window still not opened
-    Then the tray icon is still blinking (no auto-stop)
+  Scenario: [automatable] Indicators do not stop on their own over time
+    Given both indicators are active due to unread messages
+    When an extended period passes with the window still not focused
+    Then the tray icon is still blinking and the taskbar button is still flashing
 
-  Scenario: Muted — no blink, but unread state still visible
+  Scenario: [automatable] [working assumption for the flash] Muted — no blink, no flash, but unread state still visible
     Given "Mute notifications" is enabled
-    And there are unread messages while the window is hidden
+    And there are unread messages while the window is not focused
     Then the tray icon does not blink
+    And the taskbar button does not flash
     And the tray icon still shows the static unread indicator (per FR-05)
 
-  Scenario: Blinking disabled by user preference
+  Scenario: [automatable] Muting while the indicators are active stops them
+    Given both indicators are active
+    When the user turns "Mute notifications" on
+    Then the tray icon stops blinking and the taskbar button stops flashing immediately
+
+  Scenario: [automatable] Blinking disabled by user preference
     Given "Icon blinking" is turned off in Settings (FR-15)
-    And there are unread messages while the window is hidden
+    And there are unread messages while the window is not focused
     Then the tray icon shows the static unread indicator
     And the tray icon does not alternate
+    And the taskbar button does not flash [working assumption: one setting governs both]
 
-  Scenario: No unread messages — no blinking
+  Scenario: [automatable] Turning "Icon blinking" off while the indicators are active stops both
+    Given both indicators are active
+    When the user turns "Icon blinking" off in Settings
+    Then the tray icon stops blinking and the taskbar button stops flashing immediately
+    And the static unread indicator remains
+
+  Scenario: [automatable] [working assumption] Turning mute off does not start the indicators retroactively
+    Given "Mute notifications" is on and there are unread messages while the window is not focused
+    When the user turns "Mute notifications" off
+    Then neither indicator starts by itself
+    And the next new message arriving while the window is not focused starts both indicators
+
+  Scenario: [automatable] No unread messages — no indicators
     Given there are no unread messages
     Then the tray icon shows its normal (non-blinking, non-unread) state
+    And the taskbar button is not flashing
 ```
 
-**Scope note:** this requirement extends FR-05's existing unread indicator; it does not change
-when a message counts as "unread" or how the indicator clears — those rules are FR-05's, unchanged.
+**Platform note:** the taskbar flash is required on Windows. Electron's `flashFrame` also exists on
+Linux (a window-manager urgency hint whose visible effect depends on the desktop environment); Linux
+is best-effort and its real behaviour is verified on a real Linux desktop, not assumed.
+
+**Scope note:** this requirement extends FR-05's existing unread indicator; it does not change when a
+message counts as "unread" or how that indicator clears — those rules are FR-05's, unchanged.
+
+**Working assumptions pending the owner (not decisions):** (1) "Icon blinking" governs both the tray
+blink and the taskbar flash; (2) mute also suppresses the flash; (3) turning mute or blinking back on
+does not start the indicators until the next arrival; (4) while the user is in the Meet call window
+(FR-16) or the Settings window, a new chat message still triggers the indicators, because the main
+Chat window is not focused. The owner may instead want the flash independently switchable.
 
 ### FR-15 — Settings window
 A dedicated Settings window consolidates preference management in one place, replacing the
@@ -639,6 +798,11 @@ added icon-blinking preference (FR-14) somewhere to live without growing the tra
 
 **Covers, at minimum:** Start at login (FR-10), Notification sound (FR-11), Mute notifications
 (FR-12), Icon blinking (FR-14).
+
+**Open question (owner), from FR-14:** if the "Icon blinking" setting also governs the taskbar flash
+(working assumption), its label must say so, because "Icon blinking" no longer describes what it does;
+if the flash gets its own setting, this window gains a control and needs a wireframe from
+`ux-ui-designer`. Not decided here; FR-15 is otherwise unchanged.
 
 **Tray menu vs. Settings window — decided by the owner directly (supersedes the earlier draft):**
 an earlier draft of this document kept all three existing tray checkboxes (Start at login,
@@ -819,6 +983,172 @@ Feature: Settings window
 of scope for this document — a `ux-ui-designer` owns that. This requirement specifies what must be
 manageable, how it opens, when it takes effect, and where it persists, not what it looks like.
 
+### FR-16 — Google Meet calls in an app-owned call window
+**Priority: Must** (owner-requested 2026-09-30). **Status: delivery conditional on Spike B** — real
+Meet inside Electron is an unsupported configuration and is **unverified**; see the verification
+clause below and [ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md).
+
+When the user opens a Google Meet call link from Chat, the call opens in an **app-owned call window**
+instead of the system browser, and the call works inside it:
+- **Camera, microphone and screen share must work** in the call window.
+- **The Google login carries over** — the user is already signed in to Meet, with no second sign-in
+  (the call window shares the app's signed-in session, FR-04).
+- **Screen share uses the application's own source picker.** When Meet requests a screen or window
+  to share, the application shows a picker listing the available sources and the user chooses one (or
+  cancels). **The application never picks a source automatically**, under any circumstance.
+- **Closing the call window destroys it** — it is never hidden or kept alive — which ends the call for
+  this participant and **releases the camera, microphone and any screen capture**. It never quits the
+  application and does not close or hide the main Chat window; the app stays resident per FR-06/FR-07.
+  (FR-06's close-to-tray applies to the main window only.)
+- **Only `https://meet.google.com` gets this treatment.** Every other link still opens in the system
+  browser. The exact matching rule is in NFR-07.
+
+**What counts as "a Meet link from Chat" (scope).** In scope: any Meet link the user activates inside
+the main Chat window — a link in a message, Chat's own **Join / Meet buttons**, and calendar or
+meeting cards rendered by Chat — whether the page opens it as a new window or navigates the main frame
+to it (the main-frame case is intercepted, see NFR-07). Out of scope: a Meet link opened from outside
+the application (another app, the OS, a browser); those are not the app's to route.
+
+**Working defaults, pending the owner (assumptions, not decisions — the owner has not answered yet):**
+- **One call window at a time.** Activating a second Meet link while a call window is open focuses the
+  existing call window and does **not** open a second one or navigate the existing call away
+  unprompted. **The user is told**, by a native OS notification reading "A call is already open. The
+  new link was not opened." It is shown **regardless of mute**, because it is app status, not a chat
+  message. Clicking it focuses the existing call window. It reuses the notification surface, so it
+  adds no new UI and needs no extra wireframe. The action is never silent.
+- **Linux with PipeWire:** the application relies on the operating system's own screen-share picker
+  and does **not** show the app picker there (a second picker would be redundant); it still never
+  chooses a source automatically. On Windows the app picker is always used. **This departs from the
+  owner's stated decision that screen share uses "the app's own picker"**, so it is tied to Spike B:
+  Spike B must verify that `setDisplayMediaRequestHandler` can defer to the portal picker without the
+  app auto-choosing a source. If it cannot, the owner's original decision (the app's own picker on
+  Linux too) stands and the wireframe must cover it.
+- **Tray "Show/Hide Google Chat" acts on the main window only** while a call is open, and never
+  hides or closes the call window.
+- Attention indicators (FR-14) still fire while the user is inside the call window.
+
+Each scenario is tagged **[automatable]** (unit/integration test, with real Meet replaced by a stub
+page or stubbed handlers) or **[manual-only]** (needs a real Meet call, real devices and a real desktop).
+
+```gherkin
+Feature: Google Meet calls in an app-owned call window
+  Scenario: [automatable] Open a Meet link from Chat
+    Given the user is signed in and the main window shows a Chat message with a Meet link
+      on https://meet.google.com
+    When the user clicks the link
+    Then a call window owned by the application is created for that URL
+    And the system browser is not opened
+    And the call window uses the same session as the main window (so no second sign-in is needed)
+
+  Scenario: [automatable] Chat's own Join button and a calendar card open the call window
+    Given the main window shows a Join button or a calendar card whose target is a Meet URL
+    When the user activates it
+    Then the call window is created and the system browser is not opened
+
+  Scenario: [automatable] The main frame navigating to a Meet URL is intercepted
+    Given the main window is about to navigate itself to a Meet URL
+    Then the navigation is prevented in the main window
+    And the call window is created for that URL instead
+
+  Scenario: [manual-only] Login carries over in a real call
+    Given the user is signed in to the application
+    When a real Meet call link is opened
+    Then the call loads signed in with no Google sign-in prompt
+
+  Scenario: [manual-only] Camera and microphone work in a real call
+    Given the call window is open on a real Meet call
+    When the user enables camera and microphone
+    Then the other participants receive the user's video and audio
+
+  Scenario: [automatable] Screen share shows the app's own picker (stubbed display-media source)
+    Given the call window requests display capture and a stubbed display-media source list is supplied
+    Then the application's source picker is shown listing the stubbed sources
+    And no source is returned to the page until the user selects one
+
+  Scenario: [automatable] Cancelling the picker shares nothing (stubbed display-media source)
+    Given the application's source picker is shown
+    When the user cancels it
+    Then the display-capture request is denied
+    And no source was chosen automatically
+
+  Scenario: [manual-only] Screen share of a real screen or window in a real call
+    Given the call window is open on a real Meet call
+    When the user picks a real screen or window in the app's picker
+    Then that source is shared in the call
+
+  Scenario: [manual-only] Linux with PipeWire uses the OS picker
+    Given a Linux desktop using PipeWire
+    When the user starts a screen share
+    Then the operating system's picker is shown and the app's picker is not
+    And no source is chosen without a user action
+
+  Scenario: [automatable] Closing the call window destroys it and does not quit the app
+    Given the call window is open and the main Chat window is hidden to tray
+    When the user closes the call window
+    Then the call window is destroyed (not hidden)
+    And the application process keeps running
+    And the tray icon remains visible
+    And the main Chat window remains hidden
+
+  Scenario: [manual-only] Closing the call window releases the devices
+    Given a real call with camera on and a screen shared
+    When the user closes the call window
+    Then the camera indicator turns off and no capture indicator remains
+    And the call has ended for this participant
+
+  Scenario: [automatable] A second Meet link focuses the existing call window (working default)
+    Given a call window is open
+    When the user activates another Meet link
+    Then the existing call window is focused
+    And no second call window is created
+    And a native OS notification "A call is already open. The new link was not opened." is shown,
+      even if "Mute notifications" is on
+    And clicking that notification focuses the existing call window
+
+  Scenario: [automatable] Tray Show/Hide does not affect the call window (working default)
+    Given a call window is open
+    When the user chooses "Show/Hide Google Chat" from the tray
+    Then only the main window is shown or hidden
+    And the call window stays open
+
+  Scenario: [automatable] A non-Meet link still goes to the system browser
+    Given the main window shows a Chat message with a link to any other address
+    When the user clicks the link
+    Then the link opens in the system browser
+    And no call window is created
+
+  Scenario: [automatable] Lookalike host does not get the call window
+    Given a link whose host is not exactly meet.google.com (the cases are in NFR-07)
+    When the user clicks it
+    Then it opens in the system browser and no call window is created
+```
+
+**Requires a wireframe.** The screen-share source picker is a **new UI surface** (what it lists, how a
+source is previewed and chosen, cancel, empty and error states). It needs a wireframe from
+`ux-ui-designer` before any implementation; this document does not design it and states only the
+behavioural rules above. (Under the Linux/PipeWire working default the app picker is not shown there,
+which the wireframe need not cover unless the owner reverses that default or Spike B shows the
+portal picker cannot be deferred to.)
+
+**Verification — every release.** Real Meet inside Electron is unverified today (ADR-0004 Spike B:
+a real call with camera, microphone and screen share, on Windows and on Linux) and is not a
+documented, supported configuration for Meet, so it can break on a user-agent or embedding change on
+Google's side. Every **[manual-only]** scenario above must be **re-run by hand on every release**, on a
+real desktop, stating which platform was actually tested (the same discipline as sign-in under
+ADR-0001). A release that has not re-verified it must say so in its release notes.
+
+**Open questions (owner):**
+- If Spike B shows Meet does not work in Electron, what does the owner want? ADR-0004 lists Meet in the
+  system browser (Linux only, or everywhere), a Windows-only in-app Meet, or accepting the limitation.
+- Does a Linux machine (or VM with a desktop session and a camera or virtual camera) exist for the
+  Linux half of Spike B? If not, Linux Meet stays unverified.
+- Please confirm or change the four working defaults above (one call window, with the native
+  "call already open" notification, shown regardless of mute, on a second link; OS picker on Linux/PipeWire; tray Show/Hide acts on the main window only; indicators
+  fire during a call).
+- **Spike B (Linux picker):** verify that `setDisplayMediaRequestHandler` can defer to the portal
+  picker without the app choosing a source automatically. If not, does the owner accept the app's own
+  picker on Linux (the original decision)?
+
 ## Non-Functional Requirements
 
 ### NFR-01 — Cross-platform parity, with explicit exceptions
@@ -860,6 +1190,8 @@ Because the application embeds a full Chromium renderer showing a real Google si
   Node integration in the renderer that loads Google Chat (`contextIsolation: true`,
   `nodeIntegration: false`) — this is a baseline Electron hardening expectation, not a
   discretionary nice-to-have, precisely because the same window also handles a real login form.
+- The Meet call window (FR-16) is governed by NFR-07 in addition; nothing in it relaxes the
+  main window's baseline above.
 
 ### NFR-05 — Distribution/signing reality (ties to FR-09)
 See the corresponding item in Risks & Open Questions for the full justification. Summary of what
@@ -894,6 +1226,9 @@ cost, not a theoretical one:
   is already active (see FR-14) must reuse the existing timer, not create an additional one.
 - Each blink tick does only an icon-image swap (`tray.setImage()`-equivalent); it does not rebuild
   the context menu, re-read settings from disk, or do any work beyond changing the displayed icon.
+- The taskbar flash (FR-14) is a single operating-system request that the OS itself keeps flashing
+  until focus; the application adds **no** timer of its own for it, so it does not add to the
+  one-timer budget above.
 - The 1-second (1000 ms) alternation interval (FR-14) is the accepted cadence; it is not so
   aggressive that it can be mistaken for a resource issue (a 1 Hz timer with a single icon swap is
   negligible on both target platforms), and it is not adjustable per this spec — a configurable
@@ -913,15 +1248,180 @@ module) that is the sole reference to the running interval:
   1. An automated unit/integration test spies on the `setInterval`/`clearInterval`-equivalent calls
      (or the handle-owning module's public start/stop functions) and asserts the call counts stay
      balanced — exactly one net-active timer — across a scripted sequence of at least 20 start/
-     stop/resume cycles (covering: first unread, window-opens-without-viewing, second unread
-     arrives, window opens again, mute on/off, and unread-count-returns-to-zero-while-hidden per
-     FR-14's second stop trigger), and that a same-cycle repeat "new message while blinking" event
-     triggers zero additional `setInterval` calls.
-  2. A manual/exploratory pass on a real running build: repeat the same 20-cycle open/hide/message
-     sequence and confirm (via a temporary debug log line on create/clear printing the handle's
-     identity, or the OS process's active-timer/handle count if the runtime exposes one) that at
-     most one blink timer is ever live at a time, and that it reaches zero live timers once the
-     sequence ends with no unread messages remaining.
+     stop/resume cycles, stated in FR-14's focus terms (covering: first unread while not focused;
+     window gains focus (stop); window loses focus again without the conversation being viewed;
+     second unread arrives while not focused (resume); a message while already blinking; window
+     restored to visible **without** focus (must not stop); mute on/off; "Icon blinking" on/off;
+     and unread-count-returns-to-zero-while-not-focused per FR-14's second stop trigger). Alongside
+     the timer counts it asserts, on every cycle, that the taskbar-flash request is made on each
+     start/resume and cleared on each stop (no flash left running with no unread), and that a
+     same-cycle repeat "new message while blinking" event triggers zero additional `setInterval` calls.
+  2. A manual/exploratory pass on a real running build: repeat the same 20-cycle sequence, moving the
+     window between hidden-to-tray, minimized, visible-behind-another-window and focused, and confirm
+     (via a temporary debug log line on create/clear printing the handle's identity, or the OS
+     process's active-timer/handle count if the runtime exposes one) that at most one blink timer is
+     ever live at a time, that the taskbar button flashes and stops as FR-14 states, and that both
+     reach zero once the sequence ends with no unread messages remaining.
+
+### NFR-07 — Security of the Meet call window (ties to FR-16)
+**Priority: Must.** Mirrors the amended space rule `electron-security-baseline` (owner decision
+2026-09-30, UI-01), which is the authority if the two ever differ. FR-16 is the single exception to
+"external links open in the system browser"; this requirement bounds it.
+
+- **Exact origin match.** A link gets the call window only if, after normal URL parsing, its scheme is
+  `https` and its hostname is **exactly** `meet.google.com`. No suffix, substring or wildcard matching.
+  Host case is normalised by URL parsing (`MEET.GOOGLE.COM` is the same host). Anything that only
+  *looks* like the host is refused: a trailing dot, userinfo tricks (`meet.google.com@evil.example`),
+  lookalike hosts. Per the space rule, the origin must equal `https://meet.google.com`: an explicit
+  port other than the default 443 is refused, and a URL carrying userinfo is refused.
+- **Wrapper unwrapping.** Only a `https://www.google.com/url?q=<target>` wrapper is unwrapped, and only
+  **once**. The wrapper's own URL must be exactly that host and path; the target must be a parseable
+  URL and must then pass the exact test above on its own. A wrapper without `www`, a nested wrapper
+  (the target is itself a wrapper), an unparseable `q`, and a wrapper whose target is `http` or any
+  other host all go to the system browser. A wrapper-shaped URL on any other host is **not**
+  unwrapped.
+- **Call window hardening**, checked on the `webPreferences` the call window is **created with** (and
+  on its live web contents where the test can reach them): `contextIsolation` on, `nodeIntegration`
+  off, `sandbox` on; it shares the main session (so the login carries over); it denies its own popups;
+  its navigation is limited to `meet.google.com` and `accounts.google.com`.
+- **Main-window navigation.** A Meet URL that the **main window** tries to navigate itself to
+  (`will-navigate`, not just a new-window request) is intercepted and treated exactly like a link
+  click: prevented in the main window and routed by these rules. All other main-window navigation is
+  **out of scope** of this requirement and unchanged.
+- **Permissions scoped to Meet.** Camera, microphone and display-capture permissions are granted only
+  when **both** the requesting origin and the top-level page's origin are exactly
+  `https://meet.google.com`, enforced in **both** the permission-request handler and the
+  permission-check handler. Every other case is refused: any other origin (including the main Chat
+  window's own), `http://meet.google.com`, and a Meet frame embedded inside a page that is not Meet.
+  The existing notifications permission for the main window is unchanged.
+- **Screen share is never automatic** — it always goes through the app's own source picker (FR-16),
+  except where the operating system's picker is relied on (Linux/PipeWire working default in FR-16).
+- **Closing the call window never quits the app** (FR-06/FR-07).
+- **Everything else is unchanged:** every other URL still goes to the system browser; the main window's
+  NFR-04 baseline is untouched; session cookies and credentials are never logged, persisted or
+  transmitted by this feature.
+
+All scenarios below are **[automatable]** (URL classification and handlers are pure decisions and can
+be tested without a real Meet). The real-call checks are the **[manual-only]** scenarios in FR-16.
+
+```gherkin
+Feature: Meet call window security
+  Scenario Outline: [automatable] Only the exact Meet origin opens the call window
+    When the user clicks the link "<url>"
+    Then the outcome is "<outcome>"
+
+    Examples:
+      | url                                                                          | outcome        |
+      | https://meet.google.com/abc-defg-hij                                         | call window    |
+      | https://MEET.GOOGLE.COM/abc-defg-hij                                         | call window    |
+      | https://meet.google.com:443/abc-defg-hij                                     | call window    |
+      | https://www.google.com/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij    | call window    |
+      | http://meet.google.com/abc-defg-hij                                          | system browser |
+      | https://meet.google.com@evil.example/                                        | system browser |
+      | https://meet.google.com:8443/abc-defg-hij                                    | system browser |
+      | https://meet.google.com./abc-defg-hij                                        | system browser |
+      | https://meet.google.com.evil.example/abc                                     | system browser |
+      | https://evilmeet.google.com/abc                                              | system browser |
+      | https://notmeet.google.com/abc                                               | system browser |
+      | https://google.com/meet                                                      | system browser |
+      | https://chat.google.com/                                                     | system browser |
+      | https://google.com/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij        | system browser |
+      | https://www.google.com/url?q=http%3A%2F%2Fmeet.google.com%2Fabc-defg-hij     | system browser |
+      | https://www.google.com/url?q=https%3A%2F%2Fwww.google.com%2Furl%3Fq%3Dhttps%253A%252F%252Fmeet.google.com%252Fabc | system browser |
+      | https://www.google.com/url?q=%%%not-a-url                                    | system browser |
+      | https://www.google.com/url?q=https%3A%2F%2Fevil.example%2F                   | system browser |
+      | https://evil.example/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij      | system browser |
+
+  Scenario: [automatable] The main window navigating itself to a Meet URL is intercepted
+    Given the main window attempts to navigate to https://meet.google.com/abc-defg-hij
+    Then the navigation is prevented in the main window
+    And the call window is created for that URL
+
+  Scenario: [automatable] The call window is hardened, checked on creation
+    When the call window is created
+    Then the webPreferences it is created with have contextIsolation on, nodeIntegration off and
+      sandbox on
+    And it uses the main session
+    And a popup opened from it is denied
+
+  Scenario: [automatable] Call window navigation is limited
+    Given the call window is open on a Meet call
+    When the page attempts to navigate to a host other than meet.google.com or accounts.google.com
+    Then the navigation is blocked
+
+  Scenario Outline: [automatable] Media permissions only for the Meet origin
+    When a page at "<requesting>" embedded in a top-level page at "<top>" requests camera, microphone
+      or display capture
+    Then the request result is "<request>"
+    And the permission check for the same permission reports "<request>"
+
+    Examples:
+      | requesting                | top                       | request |
+      | https://meet.google.com   | https://meet.google.com   | granted |
+      | http://meet.google.com    | http://meet.google.com    | denied  |
+      | https://chat.google.com   | https://chat.google.com   | denied  |
+      | https://evil.example      | https://evil.example      | denied  |
+      | https://meet.google.com   | https://chat.google.com   | denied  |
+      | https://meet.google.com   | https://evil.example      | denied  |
+      | https://evil.example      | https://meet.google.com   | denied  |
+
+  Scenario: [automatable] No automatic screen source (stubbed display-media source)
+    When Meet requests display capture
+    Then the app's source picker is shown
+    And no source is selected without a user action
+
+  Scenario: [automatable] Closing the call window never quits
+    Given the call window is the only visible window
+    When it is closed
+    Then the process keeps running and the tray icon remains
+```
+
+### NFR-08 — Linux install path and executable name; declared runtime dependency (ties to FR-09)
+**Priority: Must.**
+
+- The Linux **install path and the executable file name contain no space character.**
+- **In scope, derived from the above:** the FR-10 Linux autostart entry's `Exec` path must refer to
+  that space-free executable path (it follows automatically, but is checked). **In scope as a working
+  assumption pending the owner:** the Linux **AppImage artifact file name** contains no space
+  character. **Not covered:** the directory a user chooses to put an AppImage in, and the
+  user-visible product name shown in window titles and launchers (it may contain spaces).
+- The `.deb` package **declares its runtime audio dependency** in its dependency metadata, so
+  installing it with the system package manager pulls in the library the application needs to run
+  and play sound, instead of leaving the app to fail at launch on a clean system. Which package that
+  is belongs to the implementer, who must state it; it is not named here.
+
+```gherkin
+Feature: Linux packaging
+  Scenario: [automatable] Install path and executable name have no spaces
+    Given a release .deb has been produced
+    Then the install directory path declared for the application contains no space character
+    And the application's executable file name contains no space character
+
+  Scenario: [automatable] The AppImage artifact name has no spaces (working assumption)
+    Given a release AppImage has been produced
+    Then its file name contains no space character
+
+  Scenario: [automatable] The deb declares its audio runtime dependency
+    Given a release .deb has been produced
+    When its control metadata is inspected
+    Then its dependency list includes the package providing the runtime audio library
+
+  Scenario: [automatable] The autostart entry points at the space-free executable
+    Given "Start at login" is enabled on Linux (FR-10)
+    Then the autostart .desktop file's Exec path contains no space character
+    And it refers to the installed executable
+
+  Scenario: [automatable] Install and launch on a clean Debian/Ubuntu system
+    Given a clean Debian or Ubuntu system without the audio library preinstalled
+    When the .deb is installed with the system package manager
+    Then the audio dependency is installed with it
+    And the application launches without a missing-library error
+
+  Scenario: [manual-only] Sound plays on a real Linux desktop
+    Given the .deb is installed on a real Debian or Ubuntu desktop with working audio output
+    When a notification with sound enabled (FR-11) is delivered
+    Then the sound is audible
+```
 
 ## Risks & Open Questions
 
@@ -990,11 +1490,12 @@ FR-05 notification failure) — see FR-13 and [ADR-0002](../adr/0002-notificatio
 ### Resolved — blinking tray icon and Settings window (FR-14, FR-15)
 Not part of the original scope; added on explicit owner request ("I want the tray icon to blink
 when there are messages, like in the old days" / "so that all this can be managed — sound, icon
-blinking, and so on"). Decided rather than left open: blinking becomes visible ("stops") only when
-the window becomes visible (never on a timer or blink count) and resumes on any subsequent new
-message that arrives while hidden, even if it had already stopped once (see FR-14's full
-start/resume and stop conditions); muted unread state stays visible but stops blinking; Settings
-changes apply immediately with no Save/Cancel.
+blinking, and so on"). Decided rather than left open: the attention indicator (tray blink and, since
+2026-09-30, taskbar flash) stops only when the main window **gains focus** (never on a timer or blink
+count, and no longer merely on becoming visible) and resumes on any subsequent new message that
+arrives while the window is not focused, even if it had already stopped once — FR-14 holds the full
+start/resume and stop conditions and is the single authority; muted unread state stays visible but
+does not blink; Settings changes apply immediately with no Save/Cancel.
 
 **Tray menu vs. Settings — superseded decision.** An earlier draft kept the tray menu's three
 existing checkboxes (Start at login, Notification sound, Mute notifications) unchanged, reasoning
@@ -1012,7 +1513,7 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
 | FR-02 | Window state persistence |
 | FR-03 | Google account authentication |
 | FR-04 | Session persistence across restarts/reboots |
-| FR-05 | System notifications for new messages, landing on the specific conversation when clicked |
+| FR-05 | System notifications: FR-05a delivery, FR-05b content, FR-05c click (amended 2026-09-30) |
 | FR-06 | Close-to-tray |
 | FR-07 | Tray icon and context menu |
 | FR-08 | Single-instance behavior |
@@ -1021,14 +1522,85 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
 | FR-11 | Notification sound control |
 | FR-12 | Mute notifications ("quiet hours") |
 | FR-13 | Build/version diagnostic line in the tray menu |
-| FR-14 | Blinking tray icon on unread |
+| FR-14 | Attention indicator on unread: blinking tray icon and flashing taskbar button (amended 2026-09-30) |
 | FR-15 | Settings window |
+| FR-16 | Google Meet calls in an app-owned call window (new 2026-09-30) |
 | NFR-01 | Cross-platform parity, with explicit exceptions |
 | NFR-02 | Resource usage for an always-running tray app |
 | NFR-03 | Startup time |
 | NFR-04 | Security posture of an embedded Google login |
 | NFR-05 | Distribution/signing reality |
 | NFR-06 | Bounded cost of the blinking tray icon |
+| NFR-07 | Security of the Meet call window (new 2026-09-30) |
+| NFR-08 | Linux install path, executable name and declared audio dependency (new 2026-09-30) |
+
+### Traceability of the 2026-09-30 changes
+
+| ID | Priority | Change | Traces to |
+|----|----------|--------|-----------|
+| FR-05a | Must (unconditional) | Split out: a native notification appears while hidden, minimized or unfocused (BUG-01 core) | ADR-0004 Spike A; FR-11, FR-12, FR-14 |
+| FR-05b | Must (conditional) | Title = chat name, body = message text; applies under owner answer (a) only | ADR-0004 Spike C; ADR-0002 piece 2; space rule `wrapper-not-a-rewrite`; open question in FR-05 |
+| FR-05c | Must (step 1 unconditional, step 2 conditional) | Click brings window forward from tray/minimized; step 2 opens that conversation under (a) only; degraded outcome logged | ADR-0004 Spike C; open question in FR-05 |
+| FR-06, FR-07 | Must | Scoped: close-to-tray and tray Show/Hide act on the main window only | FR-16 |
+| FR-09 | Must | Prose and Linux scenario now reference NFR-08 | NFR-08, NFR-05 |
+| FR-10 | Must | Linux autostart `Exec` path must be the space-free executable path (checked under NFR-08); FR-10 text itself unchanged | NFR-08 |
+| FR-14 | Must | Amended: taskbar flash added; condition "hidden" becomes "not focused"; stop on focus; degraded trigger stated; working assumptions on flash, mute and the setting | ADR-0004 (S2: `flashFrame` unimplemented), FR-05a, FR-12, FR-15, NFR-06 |
+| FR-16 | Must (conditional on Spike B) | New: Meet in app-owned call window, own screen-share picker | ADR-0004 Spike B; space rule `electron-security-baseline`; NFR-07; wireframe from `ux-ui-designer` still to be produced; four working defaults pending the owner |
+| NFR-07 | Must | New: exact-origin match, hardened call window, permissions scoped to Meet | Space rule `electron-security-baseline` (amended 2026-09-30, UI-01); NFR-04 |
+| NFR-08 | Must | New: no spaces in Linux install path/executable name; deb declares audio dependency | FR-09, FR-10, NFR-05 |
+
+## Change log
+
+- **2026-09-30** — Owner decisions folded in. FR-05 sharpened (notification title/body content; click
+  from tray or minimized opens that conversation) and marked doubtful in mechanism after the
+  service-worker finding, with the deep-link approach left as an open owner question (ADR-0004
+  Spike C). FR-14 reworked: taskbar flash added, trigger and stop changed from hidden/visible to
+  not-focused/focused (the earlier "becoming visible stops blinking" rule is reversed). FR-16 and
+  NFR-07 added for Meet in an app-owned call window (unverified in Electron, Spike B, re-verify each
+  release). NFR-08 added for Linux packaging. Scope lists updated. FR-06 and FR-07 scoped to the
+  main window; FR-09 references NFR-08. FR-01..FR-04, FR-08, FR-10..FR-13 and FR-15 otherwise
+  unchanged.
+- **2026-09-30 (review pass)** — After adversarial review: FR-05 split into FR-05a (unconditional
+  delivery), FR-05b/FR-05c (conditional on Spike C and the owner's answer), with a table of what
+  applies under each answer, the degraded-outcome logging defined, the tray unread indicator restated
+  as a single global observable state, "with that message visible" dropped (the owner said "open that
+  chat"), and the earlier mechanism text demoted to history. FR-14 gained a stated dependency on the
+  FR-05 mechanism and a degraded trigger, working assumptions for the flash, and mute-off behaviour.
+  FR-16 tagged scenarios automatable or manual-only, defined destroy-on-close and the scope of Chat's
+  own Join buttons, and recorded four working defaults. NFR-06's QA sequence restated in focus terms.
+  NFR-07's matrix widened. NFR-08 scoped. Stale "becomes visible" wording removed from the Risks
+  section.
+
+- **2026-09-30 (second review pass)** — FR-05a's static unread indicator made independent of focus
+  (consistent with FR-14). FR-05 and FR-14 scenarios tagged automatable or manual-only. FR-16: a
+  second Meet link now tells the user it was not opened; the Linux/PipeWire default is tied to a Spike
+  B check and an open question because it departs from "the app's own picker". NFR-07's port/userinfo
+  rule stated as the space rule's, without hedge. Design docs added to the superseded list; FR-15 gained
+  the label question; FR-09 and FR-10 added to the changes table.
+
+### Downstream docs superseded
+
+These documents still describe rules this requirements document has changed. They are **not
+authoritative where they conflict**; `tech-lead` is to update them after the owner approves this
+document.
+- [tray-lifecycle.md](../architecture/tray-lifecycle.md) — the blink start/stop rules ("hidden" /
+  "becomes visible", including its `applySetting` and stop-condition sections) and the tray
+  Show/Hide behaviour now conflict with FR-14 (focus-based, plus the taskbar flash) and FR-07.
+- [notifications.md](../architecture/notifications.md) — the page-`Notification` bridge mechanism, the
+  Page Visibility dependency and the click-to-conversation mechanism now conflict with FR-05 (three
+  parts, the service-worker finding, conditional content and click).
+- [00-settings-surface-spec.md](../design/00-settings-surface-spec.md) — the "Blink tray icon on
+  unread" label (lines 127, 154, 171), the §9 tray-only blink state machine (hidden/visible triggers,
+  no taskbar flash) and the mute note now conflict with FR-14. **Owner decision needed:** if the
+  "Icon blinking" setting also governs the taskbar flash (working assumption), its label in FR-15 and
+  the Settings window must change to say so (for example "Flash and blink on new message"); if the
+  flash gets its own setting, FR-15 gains a control and needs a wireframe.
+- [01-settings-wireframes.md](../design/01-settings-wireframes.md) — repeats the same label
+  (lines 36, 76, 116, 138), the same "Blinks on a new message; stops…" helper text, and a state table
+  whose stop trigger is "window becomes visible"; both conflict with FR-14. `02-rationale.md` cites
+  the same rules (its proposed "FR-14" text) and needs the same check.
+- To be checked by `tech-lead` for the same reason (not verified here): ADR-0002 piece 2 and its
+  fallback (ADR-0004 already touches them), `ipc-contract.md`, and `packaging-release.md` (NFR-08).
 
 Later design/test artifacts should cite these IDs directly (e.g. "implements FR-05", "covers
 NFR-04") rather than re-describing the requirement.
