@@ -1,5 +1,13 @@
 # Plan: Google Chat Desktop MVP
 
+> **Partly superseded, 2026-09-30.** This plan covers FR-01..FR-15 and predates FR-05a/b/c, the
+> focus-based FR-14 with taskbar flash, FR-16, NFR-07 and NFR-08. Its notification tasks (5, 5b, 6) and the
+> blink/`show`-`restore` wiring describe designs that
+> [notifications.md](../architecture/notifications.md) and [tray-lifecycle.md](../architecture/tray-lifecycle.md)
+> now replace or reopen. Do not implement from those tasks. A follow-up plan for the new work is to be
+> written after Spikes A, B and C; once the MVP is fully shipped, fold this file's durable content into the
+> architecture docs and delete it (`tech-writing`).
+
 <overview>
 The implementation plan for the first shippable version of `google-chat-desktop`, covering all of
 FR-01…FR-15 and NFR-01…NFR-06. Read [Architecture](../architecture/README.md) and
