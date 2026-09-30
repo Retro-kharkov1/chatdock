@@ -127,7 +127,7 @@ in (login behavior once, notification behavior grouped together).
 ### General
 | # | Control | Type | Default | Persisted key | Applies |
 |---|---|---|---|---|---|
-| 1 | **Start at login** | switch (`role="switch"`, native `<input type="checkbox">`) | off | read live from OS at every window open (Windows: `app.getLoginItemSettings().openAtLogin`; Linux: existence of the XDG `.desktop` file) — never trusted from a cached preference, per FR-10's existing "reflects actual current OS-level state" rule | immediately |
+| 1 | **Start at login** | switch (`role="switch"`, native `<input type="checkbox">`) | **on after a fresh install** (enabled once on the first run of a packaged build - no `settings.json` yet; an existing file or a later user choice is never overridden) | read live from OS at every window open (Windows: `app.getLoginItemSettings({ path, args: ['--hidden'], name }).openAtLogin` with the **same** options the write used, AND not switched off in Task Manager - a user-disabled entry reads as off, not as an error; Linux: existence of the XDG `.desktop` file) — never trusted from a cached preference, per FR-10's existing "reflects actual current OS-level state" rule | immediately |
 
 ### Notifications
 | # | Control | Type | Default | Persisted key | Applies |

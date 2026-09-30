@@ -193,6 +193,14 @@ version number only**, with no build timestamp, no packaged/source word and no S
 tray string. See FR-13 in [requirements.md](../business/requirements.md) for the acceptance criteria.
 
 ### Start at login (FR-10)
+**First-run default (owner decision 2026-09-30): ON.** After a fresh install every setting is on —
+Start at login, Notification sound, Icon blinking; Mute stays off (on would silence the app). The
+app itself applies it, once, in `createSettingsStore` (`settingsStore.js`): when `settings.json`
+does not exist yet and the build is packaged (`enableStartAtLoginOnFirstRun: app.isPackaged`) it calls
+the same `setStartAtLogin(true)` and writes the file. Any existing file — including one from an older
+version — counts as "already chosen", so a restart never re-enables an entry the user turned off
+(Settings switch or Task Manager). One code path for Windows and Linux; the NSIS installer is not
+involved (an installer-side Run-key write would be Windows-only and would bypass the read-back).
 **Managed exclusively from the Settings window (FR-15) — no tray checkbox.** Mechanism unchanged
 from the original design, only the surface that calls it moves; see "Settings window (FR-15)"
 below for how the Settings window's switch reaches this code.
@@ -204,12 +212,19 @@ below for how the Settings window's switch reaches this code.
 item, unverified:** inside an **AppImage** `process.execPath` points into the temporary mount, which
 does not exist after the app exits, so an autostart entry written from an AppImage run would not launch at
 next login; the AppImage path (`APPIMAGE` environment variable) is the usual stable reference. The
-implementer must check this on a real AppImage run and either fix or state the limitation; NFR-08's
+implementer must check this on a real AppImage run and either fix or state the limitation (`linuxExecLine()` now registers `$APPIMAGE` when set; still unverified on a real AppImage run); NFR-08's
 scenario "the autostart entry points at the space-free executable" should be tested for both artifacts.
 
-Windows: `app.setLoginItemSettings({ openAtLogin: checked })` (Electron native API, confirmed
-Windows/macOS-only per `electronjs.org/docs/latest/api/app` — no Linux support). Read current state
-via `app.getLoginItemSettings().openAtLogin`, and — per the design spec's read-back-verification
+Windows: `app.setLoginItemSettings({ openAtLogin, path, args: ['--hidden'], name })` (Electron native
+API, confirmed Windows/macOS-only per `electronjs.org/docs/latest/api/app` — no Linux support).
+Read current state via `app.getLoginItemSettings({ path, args, name }).openAtLogin` with **exactly the
+same options as the write** (`windowsLoginItemOptions()` in `autostart.js`): Electron compares the
+registry Run value to `"<exe>" <args>`, so a bare `getLoginItemSettings()` never matches an entry
+registered with `--hidden` and reports false — that was the "Couldn't change Start at login —
+Windows didn't apply the change" bug (0.0.1-61). `name` is pinned to the AppUserModelID. The state is
+ON only if the Run entry exists **and** `HKCU\...\Explorer\StartupApproved\Run` does not carry the
+Task Manager "Disabled" flag (first byte odd); a user-disabled entry reports OFF truthfully, and
+turning the switch ON again re-enables it (Electron's set clears the flag). Then, and — per the design spec's read-back-verification
 decision (`00-settings-surface-spec.md` §6) — re-read it immediately after every `setLoginItemSettings`
 call to confirm the change actually took, never trusting a non-throwing call alone.
 
