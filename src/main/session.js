@@ -31,21 +31,48 @@ function buildDesktopUserAgent() {
   return `Mozilla/5.0 (${platformToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
 }
 
+/** originOf(value) - the origin of a URL or origin string (trailing slash tolerated), or undefined. */
+function originOf(value) {
+  if (typeof value !== 'string') return undefined;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * configurePersistentSession(ses)
+ * configurePersistentSession(ses, { notificationOrigins })
  *
- * Applies the two session-wide settings FR-03/FR-04/FR-05 depend on:
+ * Applies the session-wide settings FR-03/FR-04/FR-05 depend on:
  * - the desktop UA (see buildDesktopUserAgent above)
- * - a permission-request handler that grants only `notifications` and denies everything else by
- *   default (notifications.md piece 1: "deny everything else by default").
+ * - permission handlers (request AND check) that grant only `notifications`, and only to the
+ *   allowlisted notification origins - never to whatever origin happens to be loaded - and deny
+ *   everything else (notifications.md piece 1: "deny everything else by default").
  *
  * @param {Electron.Session} ses The session obtained via `session.fromPartition(PARTITION)`.
+ * @param {{notificationOrigins: string[]}} opts See origins.js.
  */
-function configurePersistentSession(ses) {
+function configurePersistentSession(ses, { notificationOrigins }) {
   ses.setUserAgent(buildDesktopUserAgent());
-  ses.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === 'notifications');
+
+  const allowed = (permission, origin) =>
+    permission === 'notifications' &&
+    origin !== undefined &&
+    Array.isArray(notificationOrigins) &&
+    notificationOrigins.includes(origin);
+
+  ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    let origin = originOf(details && details.requestingUrl);
+    if (origin === undefined && webContents && typeof webContents.getURL === 'function') {
+      origin = originOf(webContents.getURL());
+    }
+    callback(allowed(permission, origin));
   });
+
+  ses.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
+    allowed(permission, originOf(requestingOrigin) ?? originOf(details && details.requestingUrl))
+  );
 }
 
 module.exports = { PARTITION, buildDesktopUserAgent, configurePersistentSession };
