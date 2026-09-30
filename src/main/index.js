@@ -8,31 +8,9 @@ const path = require('path');
 // run only when loaded by the real Electron binary, so `require('../src/main/index.js')` from
 // `node --test` still works exactly as it did in the scaffold pass.
 
-/**
- * isAllowedSender(frameOrigin, allowlist)
- *
- * Pure check behind docs/architecture/ipc-contract.md's "Sender validation" section: before
- * acting on the `notification:clicked` IPC message, the main-process handler (wired below) must
- * confirm the message actually came from a frame whose origin is one this app legitimately loads
- * (`chat.google.com`, plus `accounts.google.com` during sign-in — see
- * docs/architecture/overview.md's `will-navigate` allowlist), not from some other origin that
- * ended up execution context via a bug or a compromised page.
- *
- * @param {string} frameOrigin The origin to check, as read from `event.senderFrame`'s origin
- *   (e.g. `"https://chat.google.com"`). Origins never include a path, so this is a plain string
- *   equality check against the allowlist — no prefix/substring matching, precisely so a
- *   similar-looking-but-different origin (e.g. `"https://chat.google.com.evil.example"` or
- *   `"https://evilchat.google.com"`) is rejected rather than accidentally matched.
- * @param {string[]} allowlist The allowed origins (see overview.md's `will-navigate` allowlist —
- *   the same list backs both checks, per ipc-contract.md).
- * @returns {boolean} `true` only if `frameOrigin` is a case-sensitive exact match for one entry
- *   in `allowlist`. `false` for any non-string `frameOrigin`, an empty/missing allowlist, or no
- *   match — never throws.
- */
-function isAllowedSender(frameOrigin, allowlist) {
-  if (typeof frameOrigin !== 'string' || !Array.isArray(allowlist)) return false;
-  return allowlist.includes(frameOrigin);
-}
+// isAllowedSender lives in originCheck.js (shared with the service-worker IPC path) and is
+// re-exported below, so test/index.test.js and this module's API are unchanged.
+const { isAllowedSender } = require('./originCheck');
 
 /**
  * decideSingleInstanceAction(gotLock)
@@ -64,7 +42,7 @@ if (process.versions.electron) {
 }
 
 function bootstrap() {
-  const { app, BrowserWindow, ipcMain, shell, Menu } = require('electron');
+  const { app, BrowserWindow, ipcMain, shell, Menu, Notification } = require('electron');
   const {
     resolveWindowState,
     getWindowStatePath,
@@ -76,8 +54,15 @@ function bootstrap() {
   const {
     buildNotificationBridgeScript,
     attachUnreadTitleListener,
+    parseUnreadCount,
   } = require('./notifications');
-  const { createAppTray, setUnreadOverlay, createUnreadBlinkGate } = require('./tray');
+  const { createAppTray, setUnreadOverlay } = require('./tray');
+  const { createAttentionController, bindWindowFocus } = require('./attention');
+  const { createUnreadTracker } = require('./unreadTracker');
+  const { buildOrigins, parseDevStartUrl } = require('./origins');
+  const { resolveAppUserModelId } = require('./appIdentity');
+  const { createToastService } = require('./nativeToast');
+  const { attachServiceWorkerNotifications } = require('./serviceWorkerNotifications');
   const { createSettingsStore, getSettingsPath } = require('./settingsStore');
   const { openSettingsWindow, getSettingsWindow } = require('./settingsWindow');
   const trayBlink = require('./trayBlink');
@@ -105,7 +90,15 @@ function bootstrap() {
   // Provisional per overview.md — task 2 (real sign-in, out of scope this pass) is what actually
   // settles this list. If a real sign-in with 2FA hits a blocked navigation, add the origin it
   // needed here rather than treating this as final. Do not present this as a completed list.
-  const ALLOWED_ORIGINS = ['https://chat.google.com', 'https://accounts.google.com'];
+  // Dev-only test seam (never active in a packaged build, loopback http only - see origins.js):
+  // point the window at a local harness page so notification/attention behaviour can be
+  // exercised without a signed-in Chat session.
+  const devStart = parseDevStartUrl(process.env.GCD_DEV_START_URL, app.isPackaged);
+  const startUrl = devStart ? devStart.url : START_URL;
+  // ALLOWED_ORIGINS: navigation + app IPC. NOTIFICATION_ORIGINS: who may notify (service-worker
+  // IPC, the `notifications` permission) - chat only, not the sign-in origin.
+  const { navigationOrigins: ALLOWED_ORIGINS, notificationOrigins: NOTIFICATION_ORIGINS } =
+    buildOrigins(devStart ? devStart.origin : null);
 
   // FR-10's third scenario: launched by the OS's autostart mechanism, the app must come up with
   // the window hidden, not forced open. Both autostart.js branches arrange to pass this flag.
@@ -121,7 +114,8 @@ function bootstrap() {
   // Windows notification/AppUserModelID — needed for Start Menu/Action Center toast identity in
   // dev, before the installer sets this up for a packaged build (electron-desktop.md §5).
   if (process.platform === 'win32') {
-    app.setAppUserModelId('dev.retro-kharkov1.google-chat-desktop');
+    // BUG-01-G: packaged = build.appId (unchanged for installed users), dev = distinct stable id.
+    app.setAppUserModelId(resolveAppUserModelId({ isPackaged: app.isPackaged }));
   }
 
   /** @type {Electron.BrowserWindow | null} */
@@ -139,7 +133,9 @@ function bootstrap() {
   const settingsStore = createSettingsStore({
     settingsPath,
     getTrayController: () => trayController,
-    getTrayBlink: () => trayBlink,
+    // Mute-on / Icon-blinking-off must stop BOTH indicators (FR-14 stop 3), so the store's stop
+    // hook is the attention controller's stop, not the bare tray timer.
+    getTrayBlink: () => ({ stopBlinking: () => attention.stop() }),
     getSettingsWindow: () => getSettingsWindow(),
   });
 
@@ -185,18 +181,74 @@ function bootstrap() {
     );
   }
 
-  // FR-14 start/resume + trigger-2-stop wiring (docs/architecture/tray-lifecycle.md "Start/resume
-  // trigger" / "Stop triggers") — the pure gate lives in tray.js (`createUnreadBlinkGate`,
-  // unit-tested in test/trayBlink.test.js); this closure only supplies the live Electron-backed
-  // dependencies. Trigger 1 (window becomes visible) is wired separately, directly to
-  // `trayBlink.stopBlinking`, on the window's 'show'/'restore' events below — it does not go
-  // through this gate.
-  const updateBlinkOnUnreadChange = createUnreadBlinkGate({
-    isWindowVisible: () => Boolean(mainWindow && mainWindow.isVisible()),
+  // FR-14 / FR-15: tray blink + taskbar flash from one state machine (attention.js). Only OS
+  // input focus of the main window stops them - see bindWindowFocus below.
+  // "Focused" = the main window has OS input focus. isFocused() alone is not trustworthy for a
+  // window that was just minimized or hidden (observed on Electron 44.4.3 / Windows 11: it kept
+  // reporting true after minimize()), and FR-14 defines hidden and minimized as not focused.
+  const isMainWindowFocused = () =>
+    Boolean(
+      mainWindow &&
+        !mainWindow.isDestroyed() &&
+        mainWindow.isVisible() &&
+        !mainWindow.isMinimized() &&
+        mainWindow.isFocused()
+    );
+  const attention = createAttentionController({
+    isWindowFocused: isMainWindowFocused,
     getBlinkOnUnread: () => settingsStore.get('blinkOnUnread'),
     getNotificationsMuted: () => settingsStore.get('notificationsMuted'),
     startBlinking: () => trayBlink.startBlinking(),
     stopBlinking: () => trayBlink.stopBlinking(),
+    // A hidden window has no taskbar button, so this is a no-op there; the tray blink is the
+    // indicator in that state. Never show the window just to flash it.
+    flashFrame: (flag) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(flag);
+    },
+  });
+
+  // Live native toasts must be referenced until closed or Electron may garbage-collect them
+  // before the user clicks.
+  const liveToasts = new Set();
+  function showNativeToast({ title, body, silent }) {
+    const toast = new Notification({ title, body, silent });
+    liveToasts.add(toast);
+    const release = () => liveToasts.delete(toast);
+    toast.on('click', () => {
+      release();
+      focusMainWindow(); // FR-05c step 1
+    });
+    toast.on('close', release);
+    toast.on('failed', (_e, error) => {
+      release();
+      console.error('[gcd] native toast failed:', error);
+    });
+    toast.show();
+    // Handle for same-tag replacement (nativeToast.js): the newer toast closes this one.
+    return { close: () => toast.close() };
+  }
+
+  // Main-process toast service: re-raises service-worker notifications (Electron shows none),
+  // applies mute/sound, feeds attention, and runs the unread-count fallback.
+  const toasts = createToastService({
+    showNativeToast,
+    getMuted: () => settingsStore.get('notificationsMuted'),
+    getSoundEnabled: () => settingsStore.get('soundEnabled'),
+    isWindowFocused: isMainWindowFocused,
+    onArrival: () => attention.onArrival(),
+  });
+
+  // ONE unread baseline for both consumers (F2): a real increase feeds the attention controller
+  // and the generic-toast floor; every other settled change only keeps their bookkeeping in sync.
+  const unread = createUnreadTracker({
+    onIncrease: (n) => {
+      attention.onUnreadCount(n);
+      toasts.onUnreadIncrease(n);
+    },
+    onObserve: (n) => {
+      attention.observeUnreadCount(n);
+      toasts.onUnreadObserve(n);
+    },
   });
 
   /**
@@ -289,13 +341,11 @@ function bootstrap() {
     mainWindow.on('resize', scheduleWindowStateSave);
     mainWindow.on('move', scheduleWindowStateSave);
 
-    // FR-14 trigger 1 (docs/architecture/tray-lifecycle.md "Stop triggers"): the window becoming
-    // visible stops blinking immediately, independent of which conversation is shown or how much
-    // unread remains elsewhere. `stopBlinking()` is itself a no-op when nothing is blinking, so
-    // this firing on paths that were never blinking (e.g. the hidden-autostart showInactive() ->
-    // hide() pair above) is harmless by construction.
-    mainWindow.on('show', () => trayBlink.stopBlinking());
-    mainWindow.on('restore', () => trayBlink.stopBlinking());
+    // FR-14 stop trigger 1: ONLY the main window gaining OS input focus stops the indicators.
+    // 'show'/'restore' are deliberately NOT bound any more - a window that is shown or restored
+    // behind other windows must keep blinking/flashing (FR-14 reverses the old "becomes visible"
+    // rule). The binding is extracted to attention.js so it is unit-tested.
+    bindWindowFocus(mainWindow, attention);
 
     // Clipboard accelerator restoration (docs/architecture/tray-lifecycle.md "Application menu
     // suppression" — "What this costs, and how it's paid for"): suppressing the application menu
@@ -357,17 +407,24 @@ function bootstrap() {
     });
 
     mainWindow.webContents.on('dom-ready', injectNotificationBridge);
-    mainWindow.webContents.on('did-finish-load', injectNotificationBridge);
+    mainWindow.webContents.on('did-finish-load', () => {
+      injectNotificationBridge();
+      // Seed the shared baseline from the count the title already shows (D1a).
+      unread.onPageLoaded(parseUnreadCount(mainWindow.webContents.getTitle()));
+    });
 
     // FR-05 piece 3: tray unread indicator, driven by the page's own title prefix.
     attachUnreadTitleListener(mainWindow.webContents, (unreadCount) => {
       currentUnreadCount = unreadCount;
       setUnreadOverlay(mainWindow, unreadCount);
       refreshTrayIconState();
-      updateBlinkOnUnreadChange(unreadCount);
+      // Unread-count trigger (FR-14's acceptable degraded trigger + the generic-toast floor),
+      // through the shared baseline. Real arrival events (service-worker / page notifications)
+      // reach attention.onArrival directly.
+      unread.onRawCount(unreadCount);
     });
 
-    mainWindow.loadURL(START_URL);
+    mainWindow.loadURL(startUrl);
   }
 
   function createTray() {
@@ -384,6 +441,7 @@ function bootstrap() {
         await settingsStore.applySetting('notificationsMuted', next);
         injectNotificationBridge();
         refreshTrayIconState();
+        attention.onSettingsChanged();
       },
       onOpenSettings: () => {
         openSettingsWindow({ appIconPath: path.join(__dirname, '../../assets/icons/icon.png') });
@@ -438,6 +496,25 @@ function bootstrap() {
     focusMainWindow();
   });
 
+  // Sender check shared by the page-bridge notification channels (chat origin only, like the
+  // service-worker channel - the sign-in origin has no business raising notifications).
+  function fromAllowedFrame(event, channel) {
+    const origin = event.senderFrame ? event.senderFrame.origin : undefined;
+    if (isAllowedSender(origin, NOTIFICATION_ORIGINS)) return true;
+    console.error(`[gcd] rejected ${channel} from disallowed origin: ${origin}`);
+    return false;
+  }
+
+  // The page created its own native toast (window.Notification path): arrival signal only.
+  ipcMain.on('notification:arrived', (event) => {
+    if (fromAllowedFrame(event, 'notification:arrived')) toasts.noteArrival();
+  });
+
+  // A page-initiated ServiceWorkerRegistration.showNotification (Electron shows no toast for it).
+  ipcMain.on('notification:show', (event, payload) => {
+    if (fromAllowedFrame(event, 'notification:show')) toasts.show(payload);
+  });
+
   // Settings window channels (docs/architecture/ipc-contract.md "Settings window"). No sender-
   // origin check here — unlike 'notification:clicked' above, the Settings window only ever loads
   // this app's own bundled local HTML, never a third-party origin (see settingsWindow.js).
@@ -454,6 +531,7 @@ function bootstrap() {
     if (result.ok) {
       if (key === 'soundEnabled' || key === 'notificationsMuted') injectNotificationBridge();
       if (key === 'notificationsMuted') refreshTrayIconState();
+      attention.onSettingsChanged();
     }
     return result;
   });
@@ -463,7 +541,16 @@ function bootstrap() {
     // loads, using the same partition the BrowserWindow is constructed with — otherwise the
     // first load happens with the default (non-desktop) UA and no notification-permission grant.
     const { session } = require('electron');
-    configurePersistentSession(session.fromPartition(PARTITION));
+    const persistentSession = session.fromPartition(PARTITION);
+    configurePersistentSession(persistentSession, { notificationOrigins: NOTIFICATION_ORIGINS });
+    // BUG-01-B: intercept Chat's own service-worker showNotification (see
+    // serviceWorkerNotifications.js). Must be registered before the page loads its worker.
+    attachServiceWorkerNotifications(persistentSession, {
+      preloadPath: path.join(__dirname, '../preload/serviceWorkerPreload.js'),
+      allowedOrigins: NOTIFICATION_ORIGINS,
+      onShow: (payload) => toasts.show(payload),
+      log: (msg, err) => console.error(msg, err === undefined ? '' : err),
+    });
 
     createWindow();
     createTray();
