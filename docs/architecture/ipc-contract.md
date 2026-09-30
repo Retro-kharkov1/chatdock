@@ -4,9 +4,10 @@
 The complete, narrow surface `src/preload/preload.js` exposes via `contextBridge`, plus the one
 main-world injection used by the notification-click bridge (a different mechanism — see
 [Notifications](notifications.md)), plus the separate, smaller surface the Settings window's own
-preload exposes (see [Tray & Lifecycle](tray-lifecycle.md)'s "Settings window (FR-15)"). This is the
-contract the implementer and the tests both cite; nothing beyond this list is exposed to the
-renderer(s).
+preload exposes (see [Tray & Lifecycle](tray-lifecycle.md)'s "Settings window (FR-15)"), plus two
+**provisional** surfaces added by the 2026-09-30 requirements (the Meet contents has none; the call
+window's app view, the screen-share picker and an optional service-worker channel are sketched). This is the contract the
+implementer and the tests both cite; nothing beyond this list is exposed to the renderer(s).
 </overview>
 
 <architecture>
@@ -19,7 +20,7 @@ preload's own code, and from the main-world injection in `notifications.md` via 
 
 | Exposed function (`window.__gcdBridge.<name>`) | Wire IPC channel | Direction | Payload | Purpose |
 |---|---|---|---|---|
-| `notificationClicked()` | `'notification:clicked'` | renderer → main, `ipcRenderer.send` (fire-and-forget) | none | Sent by the injected `Notification` click wrapper (see notifications.md §2). Main responds by showing/focusing the window. No response value — the renderer does not need one. |
+| `notificationClicked()` | `'notification:clicked'` | renderer → main, `ipcRenderer.send` (fire-and-forget) | none | Sent by the injected page-`Notification` click wrapper (mechanism M1 in [notifications.md](notifications.md)). Main responds by showing/focusing the window (FR-05c step 1). No response value. **Mechanism-dependent:** if M0, M2 or M3 is chosen, the click is delivered by the OS notification to main (or to Chat's own service worker) and this channel may become unused; remove it then rather than leave an unused bridge. It carries no conversation id, so it cannot serve FR-05c step 2. |
 
 The two names are deliberately different: `notificationClicked` is the JS function exposed on
 `window.__gcdBridge` (renderer-facing API surface, camelCase per JS convention); `'notification:clicked'`
@@ -80,6 +81,63 @@ window's `notificationClicked`, because the Settings window's UI genuinely needs
 `notificationClicked`, which is correctly fire-and-forget. This is the one place in the app where a
 request/response IPC round trip is used, and it exists specifically because this window's own
 renderer-side state (the switches) needs to reconcile against a main-process-confirmed outcome.
+
+## Call window (FR-16): Meet contents has no bridge; the app view has a narrow one — PROVISIONAL
+
+The call window holds two web contents (see [Meet Call Window](meet-call-window.md) §3a).
+
+**The Meet contents has no preload script and exposes nothing:** no `contextBridge` object, no IPC channel
+is reachable from Meet's page (space rule `electron-security-baseline`). Everything the app needs from it is
+done from the main process (window events, `render-process-gone`, `did-fail-load`, permission and
+display-media handlers).
+
+**The app view** (a child `WebContentsView` that draws the loading, load-error and crashed panels and the
+status strip) loads only bundled local HTML, with its own preload exposing `window.__gcdCallUiBridge`. It is
+**provisional**: it follows the Meet design, which is under review, and the offline and back-online states
+are cut and have no channel. Security constraints (context isolation, sandbox, no Node, no navigation,
+non-persistent separate session, local content only) are in
+[Meet Call Window](meet-call-window.md) §3a and are not repeated here. Never merged into any other preload.
+
+| Exposed function | Wire channel | Direction | Payload | Purpose |
+|---|---|---|---|---|
+| `onState(cb)` | `'callui:state'` | main → view, `webContents.send`; view subscribes via `ipcRenderer.on` | `{ state: 'opening' \| 'slow' \| 'load-error' \| 'crashed' \| 'ok', address: string, errorCode?: number, strip?: 'link-blocked' \| null }` | The complete UI state, replaced whole on every change (no partial updates to drift). `address` is a display string main builds (for example `meet.google.com/abc-defg-hij`), never a raw URL with query or fragment. `errorCode` is a number; the wording for each code is local to the view. `strip` is an enum; the view holds the text. **No string taken from the Meet page is ever sent.** |
+| `act(action)` | `'callui:action'` | view → main, `ipcRenderer.send` (fire-and-forget) | `{ action: 'retry' \| 'reload' \| 'close' \| 'dismiss-strip' }` | The user pressed a button. Main ignores any value outside the enum **and** any action illegal in the current state: `retry` only in `load-error`; `reload` only in `slow` or `crashed`; **`close` only in `slow`, `load-error` or `crashed`** (the states where the design offers a Close button and no live page can object; it destroys the window directly, with no probe or dialog; there is no in-view close in `opening` or `ok`); `dismiss-strip` only with a strip showing. |
+
+Sender validation: main accepts `'callui:action'` only when `event.sender` is the app view's own web
+contents (its stored id) and its frame URL is the bundled local file. Anything else is dropped and logged as
+a warning, without content. Nothing is invoked with a response (`send`, not `invoke`) because the view has
+no use for a return value; the next `callui:state` is the only feedback. The close and Exit confirms
+(design SC-2) are native OS dialogs, not channels (see [Meet Call Window](meet-call-window.md) §3b, pending
+owner approval).
+
+## Screen-share picker window — PROVISIONAL
+
+**Provisional: the picker is being wireframed ([design/05](../design/05-meet-source-picker.md)), and these
+channels may change with it.** The picker loads only this app's own local HTML with its own preload
+(`__gcdPickerBridge`), the same trust model as the Settings window, never a third-party origin. Nothing
+below may be exposed on the main window's, the Meet contents' or the app view's bridge.
+
+| Exposed function | Wire channel | Direction | Payload | Purpose |
+|---|---|---|---|---|
+| `getSources()` | `'picker:get-sources'` | renderer → main, `invoke` | none | Returns the list of screens/windows (id, name, thumbnail) for this request. Thumbnails show live screen content: never logged or persisted. |
+| `choose(sourceId)` | `'picker:choose'` | renderer → main, `invoke` | `{ sourceId: string }` | The user's selection; main returns that source to the pending display-media request. Only a value from the list main just sent is accepted. |
+| `cancel()` | `'picker:cancel'` | renderer → main, `send` | none | Denies the request. Closing the picker window without choosing is equivalent. |
+
+There is never an automatic choice: with no `choose`, the request is denied. **Where the picker exists:**
+on Windows always; on Linux X11 (design position); **not** on Linux Wayland/PipeWire, where the OS
+picker replaces it **only if Spike B shows the conditions in [Meet Call Window](meet-call-window.md) §5 hold**
+(the user chooses explicitly; a silent or pre-selected source is never allowed on any platform). If Spike B
+shows they do not, this window is used there too. The OS-picker path adds no channel.
+
+## Service-worker context — PROVISIONAL, only if mechanism M2 is chosen
+
+If [Notifications](notifications.md) mechanism **M2** is built, a service-worker preload script forwards
+Chat's `showNotification` payload to main over the service-worker IPC that Electron's `ServiceWorkerMain`
+exposes (`ipc`, `send`; Experimental, [U]). Contract if built: a single fire-and-forget channel from the
+service-worker context to main carrying only `{ title, body, tag, icon }` (fields Chat supplied; no cookies,
+no page state). Main must validate that the sender's `scope`/`scriptURL` origin is exactly
+`https://chat.google.com` before acting, the same rule as the sender validation above. Not built, not
+chosen: it exists so the surface is reviewed before code, not after.
 
 ## What is deliberately NOT exposed to the Settings window
 

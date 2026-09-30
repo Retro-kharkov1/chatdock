@@ -1,7 +1,7 @@
 # Process & Window Model, Session, Window-State Persistence
 
 <overview>
-Implements FR-01, FR-02, FR-03, FR-04. Grounded in `~/.claude/skills/electron-desktop.md` §1, §4
+Implements FR-01, FR-02, FR-03, FR-04, and carries the window model that FR-15 and FR-16 extend. Grounded in `~/.claude/skills/electron-desktop.md` §1, §4
 (process architecture and session/UA mechanics — not restated in full here) and
 [ADR-0001](../adr/0001-google-sign-in-strategy.md) (sign-in strategy — read that ADR before this
 doc for the *why*; this doc covers the concrete configuration).
@@ -13,7 +13,12 @@ doc for the *why*; this doc covers the concrete configuration).
 - **Main process** (`src/main/index.js`): the only process with Node/Electron main-process API
   access. Owns `app` lifecycle, the single `BrowserWindow`, the `Tray`, the persistent session, and
   all notification/tray/IPC wiring described in the sibling docs.
-- **Renderer**: exactly **one** `BrowserWindow`, loading
+- **Windows**: one **main** `BrowserWindow` (this section), plus two on-demand secondary windows that
+  are destroyed on close and never replace it: the **Settings window** (FR-15, local bundled HTML, own
+  preload; see [Tray & Lifecycle](tray-lifecycle.md)) and the **Meet call window** (FR-16, third-party
+  Meet page with no preload, plus a small app-owned local view for loading/error/crash UI; see
+  [Meet Call Window](meet-call-window.md)). At most one of each exists.
+- **Main renderer**: the main `BrowserWindow`, loading
   `https://chat.google.com/app/chat/SPACE_ID` (FR-01) directly — never an Electron `<webview>`
   tag (per ADR-0001 and the space's `electron-security-baseline` rule). Treated as untrusted
   third-party content: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`,
@@ -51,9 +56,14 @@ doc for the *why*; this doc covers the concrete configuration).
 
 `setWindowOpenHandler()` denies every popup by default and hands any `target=_blank`/`window.open`
 call to `shell.openExternal()` instead of opening it inside the app (per
-`electron-security-baseline`). `will-navigate` is validated against an allowlist starting with
-`chat.google.com`/`accounts.google.com` origins; anything else is prevented and handed to the
-system browser the same way.
+`electron-security-baseline`), **with one exception**: a Google Meet link (exact match, see
+[Meet Call Window](meet-call-window.md) and the space rule's "Single exception") is denied as a popup and
+opened in the app-owned call window instead. `will-navigate` is validated against an allowlist starting
+with `chat.google.com`/`accounts.google.com` origins; anything else is prevented and handed to the
+system browser the same way, except that the main window navigating itself to a Meet URL is prevented and
+routed to the call window. The permission handlers on this shared session are origin-aware for camera,
+microphone and display capture (Meet origin only); they no longer amount to "grant notifications, deny the
+rest" (see [Meet Call Window](meet-call-window.md) §4).
 
 **This allowlist is provisional, not settled.** Google's sign-in flow — especially 2-factor/
 security-challenge steps (prompt approval, backup codes, security-key/WebAuthn challenges) — can
