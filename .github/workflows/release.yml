@@ -71,36 +71,25 @@ jobs:
       - name: Determine version
         id: gitversion
         uses: gittools/actions/gitversion/execute@v4.7.0
-        # Exports both `${{ steps.gitversion.outputs.<name> }}` and `GitVersion_<Name>` env
-        # vars (e.g. GitVersion_FullSemVer, GitVersion_ShortSha, GitVersion_BranchName) — the
-        # latter is what scripts/generate-build-info.js's CI fast path reads, so build-info.json
-        # doesn't need to re-invoke GitVersion a second time in the same job.
-
-      - name: Generate build-info.json
-        # Explicit step, not relying on the npm `predist`/`prepack` lifecycle hooks — this
-        # workflow invokes `npx electron-builder` directly (see below), which does not go
-        # through `npm run dist`/`npm run pack` and therefore does not trigger those hooks.
-        # A local developer running `npm run dist`/`npm run pack` still gets this via the hook;
-        # see package.json.
-        run: npm run generate-build-info
+        # Exports both `${{ steps.gitversion.outputs.<name> }}` and `GitVersion_<Name>` env vars
+        # (GitVersion_SemVer, GitVersion_FullSemVer, GitVersion_ShortSha, GitVersion_BranchName).
+        # scripts/build.js reads the env vars, so GitVersion is not re-run in the same job.
 
       - name: Build and publish (tagged release)
         if: startsWith(github.ref, 'refs/tags/v')
-        # -c.extraMetadata.version overrides package.json's `version` at pack time only (verified
-        # against this repo's own installed electron-builder CLI source, which documents this
-        # exact flag as `electron-builder -c.extraMetadata.foo=bar`) — this is what makes the
-        # installer filename and `app.getVersion()` both carry the GitVersion-computed version,
-        # without hand-editing package.json in git. SemVer (not FullSemVer) is used here
-        # deliberately: it is the plain, npm/semver-valid string electron-builder needs for the
-        # package version; the branch/sha/build-source detail that SemVer alone can't carry lives
-        # in build-info.json instead (see scripts/generate-build-info.js's field contract).
-        run: npx electron-builder ${{ matrix.build-flag }} --publish always -c.extraMetadata.version=${{ steps.gitversion.outputs.semVer }}
+        # scripts/build.js is the single packaging entry point (same one `npm run dist` uses
+        # locally). In CI it reads the GitVersion_* variables exported by the step above - GitVersion
+        # is not run a second time - writes build-info.json, and passes the GitVersion SemVer to
+        # electron-builder as -c.extraMetadata.version. That one value lands in the installer/deb/
+        # AppImage names, latest*.yml, the Windows file version and app.getVersion(); the build
+        # fails if any produced artifact name or latest*.yml lacks it. Tag v0.1.0 => 0.1.0.
+        run: node scripts/build.js ${{ matrix.build-flag }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build only (manual run, no publish)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: npx electron-builder ${{ matrix.build-flag }} --publish never -c.extraMetadata.version=${{ steps.gitversion.outputs.semVer }}
+        run: node scripts/build.js ${{ matrix.build-flag }} --publish never
 
       - name: Upload build artifacts
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
