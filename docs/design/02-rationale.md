@@ -100,12 +100,14 @@ one control that can genuinely fail per-platform.
 - Mute notifications (FR-12) — explicitly requested, the one control kept on the tray too.
 - Blink tray icon on unread — the owner's literal ask ("blink the tray icon... like in the old
   days"), and the reason a Settings surface was requested at all.
-- **About/version line, mirrored from the tray's FR-13 entry** — the only addition not directly
-  requested. Justified because it's zero-cost (same string, already computed for the tray menu, not a
-  new fact to derive), purely informational (not a second control to keep in sync — nothing to
-  desync), and lands exactly where a user goes when something needs troubleshooting, which is the
-  documented reason FR-13 exists in the first place (the build-identification incident recorded in
-  [ADR-0002](../adr/0002-notification-delivery-mechanism.md)).
+- **About/version line** — the only addition not directly requested. **Corrected 2026-09-30:** this
+  rationale originally said the line mirrored the tray's FR-13 diagnostic string. FR-15 (ratified) is
+  authoritative and narrower: the About line shows the **app name and version number only**, and is not
+  the FR-13 string. Justified because it's zero-cost (one static label, no new state), purely informational
+  (nothing to keep in sync), and sits where a user conventionally looks for "what version is this". The
+  build-identification detail (SHA, source, timestamp) stays in the tray's FR-13 line, the documented
+  reason for which is the incident recorded in
+  [ADR-0002](../adr/0002-notification-delivery-mechanism.md).
 
 **Deliberately NOT built (argued against, not silently omitted):**
 - **Scheduled "quiet hours"** (auto-mute on a time window/per-day schedule) — the owner's own phrasing
@@ -113,8 +115,10 @@ one control that can genuinely fail per-platform.
   manual toggle, and this design does not reopen that call. A time-picker UI, per-day schedules, and
   timezone handling are real added surface for a personal single-user utility with no stated need for
   automation.
-- **A second "reduce motion"/"disable blink" control** — redundant with the "Blink tray icon on
-  unread" switch itself, which already *is* the opt-out (spec §8, WCAG 2.3.1). Adding a second control
+- **A second "reduce motion"/"disable blink" control** — redundant with the blink switch itself, which
+  already *is* the opt-out (spec §8, WCAG 2.3.1) and, since 2026-09-30, also switches off the taskbar flash
+  (owner-approved default: one setting for both; a separate flash setting would be a new control needing a
+  wireframe, and is not provided). Adding a second control
   for the same effect would only add confusion ("which one do I turn off?").
 - **Custom notification sound file picker / volume control** — FR-11's own scope note already rules
   this out ("Custom notification sounds are not requested and are out of scope"); no reason to reopen
@@ -137,8 +141,15 @@ This document does not edit `requirements.md` (out of this task's boundary — `
 that file and is actively writing it in parallel). Flagging here what that document will need to
 reflect once this design is accepted:
 
+> **Superseded 2026-09-30.** The proposals below became FR-14 and FR-15, and FR-14 was then amended by the
+> owner: the attention indicator is the tray blink **and** the taskbar flash, starts while the main window
+> is **not focused** (hidden, minimized, or visible without focus) and stops when it **gains focus** (the
+> "shown/focused" wording in the first bullet was imprecise; "becomes visible" is no longer a stop
+> trigger). The text below is kept as the record of what the design proposed; `requirements.md` FR-14 is
+> the authority and the spec §9 is corrected to match.
+
 - **New FR, proposed "FR-14" — Blink tray icon on unread.** Acceptance criteria should mirror the
-  state machine in [the spec §9](00-settings-surface-spec.md#9-tray-icon-blink--state-machine-fr-05fr-12-interaction-new-blink-behavior):
+  state machine in [the spec §9](00-settings-surface-spec.md#9-attention-indicators--state-machine-fr-05fr-12fr-14-interaction--settled-corrected-2026-09-30):
   blinks only while unread > 0 AND the setting is on AND not muted; stops immediately when the main
   window is shown/focused (not on a timer, not tied to unread reaching 0); muted suppresses blink but
   keeps the existing FR-05 static badge.

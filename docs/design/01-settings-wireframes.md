@@ -39,9 +39,15 @@ helper/error text. Window is fixed 380×460 CSS px in every state below.
 │                                                │
 ├──────────────────────────────────────────────┤
 │  Google Chat Desktop                          │
-│  0.0.1-19 (0ce64f7, local)                    │
+│  0.0.1-19                                     │
 └──────────────────────────────────────────────┘
 ```
+
+> **REDESIGN NEEDED (FR-14 amended 2026-09-30) — wireframes A, B, D.** The blink row's label ("Blink tray
+> icon on unread") and helper text ("Blinks on a new message; stops the moment you open the window.") no
+> longer match the requirement: the one setting now governs the tray blink **and** the taskbar flash, and
+> both stop when the window **gains focus**, not when it is opened. The boxes are left as drawn until
+> `ux-ui-designer` redraws the row; do not implement this copy. Everything else in A/B/D stands.
 
 Tab order (top → bottom): Start at login → Notification sound → Mute notifications → Blink tray icon
 on unread. About line is static text, not in the tab sequence.
@@ -79,7 +85,7 @@ contrast must be verified independently, not assumed from the light spec:
 │                                                │
 ├──────────────────────────────────────────────┤
 │  Google Chat Desktop                          │
-│  0.0.1-19 (0ce64f7, local)                    │
+│  0.0.1-19                                     │
 └──────────────────────────────────────────────┘
 ```
 
@@ -165,25 +171,27 @@ path to "silence it right now") and is live-synced with the same control in Sett
 
 ## G. Tray icon — state table (not a screen; the icon itself has no interactive layout)
 
-Settled per spec §9/FR-14 — three visual states cover every possible icon appearance; no additional
-"has the window been opened since blinking last stopped" axis is needed (see note below the table).
+Settled per spec §9/FR-14 (corrected 2026-09-30) — three visual states cover every possible tray-icon
+appearance; no additional "has the window been focused since blinking last stopped" axis is needed. The
+**taskbar flash** (Windows) is not a tray-icon state: it runs alongside "Unread (blinking)" and is not drawn
+here. "Not focused" = hidden to tray, minimized, or visible without OS input focus.
 
 | State | Condition | Visual |
 |---|---|---|
 | Idle | unread = 0 | plain icon, no badge |
-| Unread (static) | unread > 0, AND (`notificationsMuted` OR `blinkOnUnread` off OR blinking has been stopped by one of the transitions below and no qualifying new message has arrived since) | plain icon + badge overlay (Windows: `setOverlayIcon`; Linux: badged icon variant — see [notifications.md](../architecture/notifications.md) piece 3) |
-| Unread (blinking) | unread > 0, `blinkOnUnread` on, NOT muted, and blinking currently active | alternates plain ↔ badged icon every ~1s (see spec §9) |
+| Unread (static) | unread > 0, AND (`notificationsMuted` OR the blink setting off OR the indicators have been stopped by one of the transitions below and no qualifying new message has arrived since) | plain icon + badge overlay (Windows: `setOverlayIcon`; Linux: badged icon variant — see [notifications.md](../architecture/notifications.md) §5, which also records that the current muted glyph hides this state on Linux) |
+| Unread (blinking) | unread > 0, the blink setting on, NOT muted, the main window not focused, and the indicators currently active | tray alternates plain ↔ badged icon every ~1s **and** the taskbar button flashes (see spec §9) |
 
 **Transitions (all settled, spec §9):**
 
 | From → To | Trigger |
 |---|---|
-| Idle → Unread (blinking) | new message arrives, `blinkOnUnread` on, not muted |
-| Idle → Unread (static) | new message arrives, AND (`notificationsMuted` OR `blinkOnUnread` off) |
-| Unread (blinking) → Unread (static or Idle) | window becomes visible — stops blinking immediately, regardless of which conversation is shown or how much unread remains; lands on Unread (static) if any unread remains elsewhere, Idle if that was the only unread |
-| Unread (blinking or static) → Idle | unread count returns to 0 while the window is still hidden (e.g. read on the owner's phone) — badge clears and blink stops in the same step |
-| Unread (blinking) → Unread (static) | `blinkOnUnread` turned off, or `notificationsMuted` turned on, while blinking is active |
-| Unread (static) → Unread (blinking) | a **new** message arrives while unread > 0, `blinkOnUnread` on, not muted — resumes **regardless of window-open history**, including when the earlier stop was caused by opening the window without viewing the still-unread conversation that triggered it |
+| Idle → Unread (blinking) | new message arrives **while the main window is not focused**, the blink setting on, not muted |
+| Idle → Unread (static) | new message arrives, AND (`notificationsMuted` OR the blink setting off) — or the window is focused |
+| Unread (blinking) → Unread (static or Idle) | the main window **gains OS input focus** — stops both immediately, regardless of which conversation is shown or how much unread remains; being shown or restored without focus does **not** stop them; lands on Unread (static) if any unread remains elsewhere, Idle if that was the only unread |
+| Unread (blinking or static) → Idle | unread count returns to 0 while the window is still not focused (e.g. read on the owner's phone) — badge clears and both indicators stop in the same step |
+| Unread (blinking) → Unread (static) | the blink setting turned off, or `notificationsMuted` turned on, while active |
+| Unread (static) → Unread (blinking) | a **new** message arrives while unread > 0 and the window is not focused, the blink setting on, not muted — resumes **regardless of window-focus history**, including when the earlier stop was caused by focusing the window without viewing the still-unread conversation that triggered it |
 
 **Why no fourth axis is needed:** an earlier revision of this table flagged that representing
 resume-after-stop might require tracking "has the window been opened since blinking last stopped" as

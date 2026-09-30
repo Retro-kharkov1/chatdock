@@ -20,6 +20,16 @@ criteria cited inline in the Accessibility section.
 </overview>
 
 <architecture>
+> **Status after the 2026-09-30 requirements change (FR-14 amended, FR-16 added).** This spec is otherwise
+> unchanged, but it predates two approved decisions and is corrected only where it contradicts them:
+> (1) the "blink" control now governs **both the tray blink and the taskbar flash** (owner-approved
+> default), and both start on "the main window is **not focused**" and stop when it **gains focus**
+> (not "hidden" / "becomes visible"); (2) mute also suppresses the flash (a working assumption in FR-14,
+> not an owner decision). **Marked REDESIGN NEEDED (ux-ui-designer, not done here):** the row label and
+> helper text of the blink control (section 3, wireframes A, B, D), because "Blink tray icon on unread"
+> no longer describes what the control does. The Meet call window and screen-share picker are drawn
+> separately; nothing in this document covers them.
+
 ## 1. What the surface is
 
 A **dedicated native Electron `BrowserWindow`** — plain HTML/CSS/JS owned entirely by this app, not a
@@ -124,12 +134,12 @@ in (login behavior once, notification behavior grouped together).
 |---|---|---|---|---|---|
 | 2 | **Notification sound** | switch | on | `settings.json → soundEnabled` | immediately |
 | 3 | **Mute notifications** | switch | off | `settings.json → notificationsMuted` | immediately |
-| 4 | **Blink tray icon on unread** *(new)* | switch | on | `settings.json → blinkOnUnread` | immediately |
+| 4 | **Blink tray icon on unread** *(new)* — **REDESIGN NEEDED: the label must say it also flashes the taskbar button (FR-14/FR-15; approved default: one setting for both)** | switch | on | `settings.json → blinkOnUnread` | immediately |
 
 ### Footer (read-only, not a control)
 | # | Element | Content |
 |---|---|---|
-| — | **About line** | Same string as the tray menu's FR-13 diagnostic line, generated from `build-info.json` (produced by GitVersion at build time) in the form `<version> (<shortSha>, <ci\|local>)`, e.g. `0.0.1-19 (0ce64f7, local)`. Read-only, not clickable, small/muted type. Included here in addition to the tray menu (not instead of) because it is exactly where a user goes when something needs troubleshooting — see Rationale §5. |
+| — | **About line** | **Corrected 2026-09-30 to FR-15 (ratified), which is authoritative:** the app name and the **version number only**, e.g. `0.0.1-19`; no build timestamp, no SHA, no packaged/source word. It is **not** the tray menu's FR-13 diagnostic string (that line has its own content, see [tray-lifecycle.md](../architecture/tray-lifecycle.md)). Read-only, not clickable, small/muted type. |
 
 Every switch label is a short, literal description of what the control does (per Windows guidance:
 *"label it with one or two words... that describe the functionality it controls"*) — no jargon, no
@@ -151,8 +161,9 @@ restated On/Off text; the switch's position communicates state, the label names 
   broadcasts the new value to whichever surface didn't originate the change (tray → settings window,
   if open; settings window → tray checkbox). No independent "settings-window mute" and "tray mute" —
   one boolean, two views, always consistent within one IPC round-trip.
-- **Blink pauses, doesn't grey out, while muted.** When `notificationsMuted` is true, the "Blink tray
-  icon on unread" switch stays interactive (the user's preference for *when unmuted* is still worth
+- **Blink pauses, doesn't grey out, while muted.** When `notificationsMuted` is true, the blink switch
+  (label under redesign, see section 3; mute also suppresses the taskbar flash, FR-14 working assumption)
+  stays interactive (the user's preference for *when unmuted* is still worth
   recording) but shows an inline status note under the label: "Paused — notifications are muted." This
   is a text state, not a color-only cue (WCAG 1.4.1). See §6 and the Wireframes' "Muted" state.
 - **Keyboard**: Tab moves through controls top-to-bottom (Start at login → Notification sound → Mute
@@ -165,7 +176,7 @@ restated On/Off text; the switch's position communicates state, the label names 
 | State | Trigger | What's shown |
 |---|---|---|
 | **Loading** | Window just opened, before the main process has returned live OS state (Start at login) and `settings.json` contents. Sub-200ms in the common case (local disk read), but must be designed, not assumed instant. | Switch rows render in a disabled, low-emphasis "skeleton" appearance (no flicker of a wrong default value); see Wireframe E. |
-| **Default / ready** | Normal state once data has loaded. | All four switches reflect live values; About line shows the build string. |
+| **Default / ready** | Normal state once data has loaded. | All four switches reflect live values; About line shows the app name and version number. |
 | **Toggling** | Between click and main-process acknowledgment. | Switch shows its new (optimistic) position immediately — no separate spinner for the common, fast, local-disk-write case (sound/mute/blink). Start at login's OS call is the one case worth a brief (≤1s) inline "Applying…" caption under that row, since it is the one control that can genuinely fail (see next row). |
 | **Unavailable / error (Start at login only)** | **Resolved (was contradictory before this revision — see below): the OS-level call throws, OR a read-back verification after a non-throwing call shows the change did not take.** Windows: `setLoginItemSettings` throws; or, immediately after a non-throwing call, `getLoginItemSettings().openAtLogin` is read back and disagrees with what was just requested. Linux: writing the XDG `.desktop` file throws (e.g. `~/.config/autostart/` isn't writable); or, immediately after a non-throwing write, the file's existence/target is re-read and disagrees with what was just written. | Switch reverts to its prior (usually off) state; an inline message appears under the row: a warning glyph + text, e.g. "Couldn't enable Start at login — couldn't write to the autostart folder." plus a "Try again" text link. Never a silently-dead toggle. See Wireframe C. |
 | **Muted (Blink note)** | `notificationsMuted = true`. | Blink tray icon on unread switch unchanged, but shows the "Paused — notifications are muted." note described above. See Wireframe D. |
@@ -262,7 +273,9 @@ to manage; it mirrors the OS, consistent with it being a small native utility wi
   content*; a native OS tray icon is not a web-content artifact and cannot be "WCAG conformant" in the
   formal sense. This spec nonetheless uses the same 3-flashes-per-second threshold as a sensible
   design heuristic for the blinking tray icon (§9), which alternates at ~1Hz — well under that
-  threshold — and the "Blink tray icon on unread" switch itself is the built-in opt-out for anyone
+  threshold. (The taskbar flash added by FR-14 is drawn by the OS at a rate the app does not control, so
+  no rate claim is made for it.) The blink switch itself (which now also switches off the flash) is the
+  built-in opt-out for anyone
   sensitive to the flashing; no separate "reduce motion" control is needed because disabling this one
   feature *is* the reduce-motion path (see Rationale §5 for why a second control was rejected as
   redundant). This bullet is retained under "Accessibility conformance" because it documents a real
@@ -276,55 +289,44 @@ to manage; it mirrors the OS, consistent with it being a small native utility wi
   `<input type="checkbox">` is used under the hood rather than a hand-rolled div-based switch, so
   keyboard operability and AT semantics are inherited, not reimplemented.
 
-## 9. Tray icon blink — state machine (FR-05/FR-12/FR-14 interaction) — settled
+## 9. Attention indicators — state machine (FR-05/FR-12/FR-14 interaction) — settled, corrected 2026-09-30
 
 Prose + inline arrows, not a diagram tool, per this project's wireframe/diagram notation convention.
 
-**Resolved by `business-analyst` as FR-14, adopting this design's own recommendation from a prior
-revision (see Rationale §6) — the re-entry gap the skeptic gate previously flagged is closed, not
-still open.** Three independent triggers govern the blink; none of them depends on window-open
-history, so the machine below is memoryless with respect to any earlier open/close of the window:
+**FR-14 is the authority** (`requirements.md`); this section restates it as a state machine and was
+corrected where the earlier "hidden / becomes visible, tray only" version contradicted the approved
+requirement. Both indicators, the **tray blink** and the **taskbar flash** (Windows; best-effort on Linux),
+are governed by the one blink setting (approved default). "Not focused" means the main Chat window is
+hidden to tray, minimized, or visible without OS input focus; Settings and the Meet call window having focus
+does not make the main window focused. The machine is memoryless with respect to earlier window-focus
+history:
 
-Idle (unread = 0) → a new message arrives (FR-05) → unread count becomes >0 →
-  if `notificationsMuted` is true → tray icon shows the **static** unread badge (existing FR-05
-    behavior), no blinking, regardless of `blinkOnUnread`.
-  else if `blinkOnUnread` is false → tray icon shows the **static** unread badge, no blinking.
-  else (`blinkOnUnread` true and not muted) → tray icon **blinks**: alternates between the plain icon
-    and the badged icon on a fixed ~1s interval (a deliberate, small, event-gated timer — only runs
-    while unread > 0, not a continuous poll, so it does not reopen the NFR-02 "no busy-polling"
-    concern).
+Idle (unread = 0) → a new message arrives (FR-05) **while the main window is not focused** →
+  if `notificationsMuted` is true → tray shows the **static** unread badge (FR-05), no blink, no flash,
+    regardless of the blink setting.
+  else if the blink setting is off → static badge only, no blink, no flash.
+  else → **Attention active**: the tray icon alternates plain ↔ badged at ~1s per phase **and** the
+    taskbar button flashes.
+A new message arriving while the main window **is** focused starts nothing.
 
-From **Unread (blinking)**, three triggers each stop the blink, independently of each other:
+From **Attention active**, three triggers each stop both indicators, independently of each other:
 
-1. **Trigger — window becomes visible.** The user shows/focuses the main window — not a timer, not
-   "unread reaches 0" — and blinking **stops immediately**, regardless of which conversation is shown
-   when the window becomes visible and regardless of whether other unread remains elsewhere. The
-   static badge (if any unread remains) continues per the existing FR-05 clearing rule (cleared
-   per-conversation as the user actually views it) → state becomes **Unread (static)**, or **Idle** if
-   that was the only unread conversation.
-2. **Trigger — unread returns to zero while the window is still hidden.** E.g. the owner reads the
-   conversation somewhere else (their phone) without ever opening this app's window. Blinking stops
-   and the badge clears in the same step → **Idle** directly, with no intermediate static-badge state.
-   This is a new trigger, added specifically because an icon still flashing for messages that no
-   longer exist is wrong — it did not exist in the pre-FR-14 draft of this spec.
-3. **Trigger — the setting itself changes.** `blinkOnUnread` is turned off, or `notificationsMuted`
-   becomes true, while blinking is active → blinking stops immediately; the badge stays if unread > 0
-   (→ **Unread (static)**) or the icon returns to **Idle** if unread is already 0.
+1. **The main window gains OS input focus.** Being shown or restored *without* focus does not stop them.
+   Once focused they stop regardless of which conversation is shown and regardless of unread remaining
+   elsewhere. The static badge continues per FR-05 → **Unread (static)**, or **Idle** if nothing is unread.
+2. **Unread returns to zero while the window is still not focused** (for example read on another device).
+   Both stop and the badge clears in the same step → **Idle**.
+3. **A setting changes.** The blink setting turned off, or `notificationsMuted` turned on, stops both
+   immediately; the badge stays if unread > 0 → **Unread (static)**, otherwise **Idle**. (Muting stopping
+   the **blink** is an owner decision; muting also stopping the **flash** is only a working assumption in
+   FR-14, pending the owner.)
 
-**Resume — settled, memoryless with respect to window-open history:** once in **Unread (static)**
-(reached via trigger 1 or 3 above, with unread > 0 still remaining), **any new** message arrival —
-while the window is hidden, `blinkOnUnread` is on, and not muted — (re)starts blinking. This holds
-**even when the still-unread conversation that caused the earlier stop was never actually opened or
-viewed** — i.e. blinking resumes for the new arrival regardless of whether an earlier window-open
-already silenced blinking for a different, still-unread conversation. Reasoning (business-analyst's
-accepted rationale): the blink is a per-event notification affordance ("something new just happened"),
-not a persistent "you have unread" state indicator — that job belongs to the static badge, which
-already persists correctly per FR-05. Gating a genuinely new event on an unrelated earlier window-open
-would make the blink under-notify exactly when it's supposed to catch attention.
+**Resume — memoryless:** in **Unread (static)** any **new** arrival while the window is not focused, the
+blink setting is on and not muted restarts both indicators, even if the still-unread conversation that
+caused the earlier stop was never viewed (the attention indicators are a per-event affordance; the static
+badge is the persistent unread indicator). Turning mute off, or the blink setting back on, with unread
+pending does **not** start them by itself; they start on the next arrival (FR-14 working assumption).
 
-This matches the two behaviors the owner already fixed before design started (blink stops on window
-open, not on a timer; muted suppresses blink but keeps the static unread indicator), plus the two
-additions FR-14 settles: memoryless resume on any new arrival, and stop-on-zero-while-hidden.
 </architecture>
 
 <topics>
