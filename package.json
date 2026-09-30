@@ -18,10 +18,8 @@
     "start": "electron .",
     "test": "node --test",
     "generate-build-info": "node scripts/generate-build-info.js",
-    "prepack": "npm run generate-build-info",
-    "predist": "npm run generate-build-info",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "pack": "node scripts/build.js --dir",
+    "dist": "node scripts/build.js"
   },
   "devDependencies": {
     "electron": "44.4.3",
@@ -30,6 +28,7 @@
   "build": {
     "appId": "dev.retro-kharkov1.google-chat-desktop",
     "productName": "Google Chat Desktop",
+    "beforePack": "scripts/beforePack.js",
     "directories": {
       "output": "release"
     },
