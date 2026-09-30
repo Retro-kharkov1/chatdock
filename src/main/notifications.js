@@ -96,6 +96,7 @@ function buildNotificationBridgeScript(soundEnabled, muted) {
     (() => {
       if (window.__gcdNotifyPatched) return;
       window.__gcdNotifyPatched = true;
+      const bridge = () => window.__gcdBridge;
       const Original = window.Notification;
       window.Notification = function (title, options) {
         if (window.__gcdMuted) {
@@ -106,12 +107,47 @@ function buildNotificationBridgeScript(soundEnabled, muted) {
           silent: Boolean(options && options.silent) || !window.__gcdSoundEnabled,
         });
         n.addEventListener('click', () => {
-          window.__gcdBridge && window.__gcdBridge.notificationClicked();
+          bridge() && bridge().notificationClicked();
         });
+        // The page made its own native toast; only tell main a message arrived (FR-14 trigger).
+        try { bridge() && bridge().notificationArrived && bridge().notificationArrived(); } catch (e) {}
         return n;
       };
       window.Notification.permission = Original.permission;
       window.Notification.requestPermission = Original.requestPermission.bind(Original);
+
+      // BUG-01-B, page-initiated service-worker notifications. POLICY (same as the service-worker
+      // preload, see nativeToast.js): Electron shows NO toast for
+      // ServiceWorkerRegistration.showNotification (verified on 44.4.3 / Windows), so the request
+      // is forwarded to the main process, which raises the real toast and applies sound (FR-11) on
+      // its side, and the ORIGINAL is NOT called - it would only double up if Electron ever fixed
+      // it. The original is the fallback when forwarding is impossible, so nothing is lost.
+      // Calls made by Chat's own service worker never pass through this page realm; those are
+      // covered by the service-worker preload (preload/serviceWorkerPreload.js).
+      const SWR = window.ServiceWorkerRegistration;
+      if (SWR && SWR.prototype && typeof SWR.prototype.showNotification === 'function') {
+        const originalShow = SWR.prototype.showNotification;
+        SWR.prototype.showNotification = function (title, options) {
+          if (window.__gcdMuted) return Promise.resolve(); // FR-12: suppressed entirely.
+          const opts = options || {};
+          const silent = Boolean(opts.silent) || !window.__gcdSoundEnabled;
+          const b = bridge();
+          if (b && typeof b.notificationShow === 'function') {
+            try {
+              b.notificationShow({
+                title: String(title),
+                body: typeof opts.body === 'string' ? opts.body : '',
+                silent,
+                tag: typeof opts.tag === 'string' ? opts.tag : '',
+              });
+              return Promise.resolve();
+            } catch (e) {
+              // fall through to the original
+            }
+          }
+          return originalShow.call(this, title, { ...options, silent });
+        };
+      }
     })();
   `;
 }
