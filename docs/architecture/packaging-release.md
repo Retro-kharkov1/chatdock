@@ -30,10 +30,32 @@ the recurring Apple Developer Program cost).
     "target": ["AppImage", "deb"],
     "icon": "assets/icons/icon.png",
     "category": "Network",
-    "maintainer": "95210642+Retro-kharkov1@users.noreply.github.com"
-  }
+    "maintainer": "95210642+Retro-kharkov1@users.noreply.github.com",
+    "executableName": "google-chat-desktop",
+    "desktop": { "entry": { "Name": "Google Chat Desktop", "StartupWMClass": "Google Chat Desktop" } }
+  },
+  "deb": { "depends": ["libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6",
+                       "xdg-utils", "libatspi2.0-0", "libuuid1", "libsecret-1-0",
+                       "libasound2t64 | libasound2"] },
+  "appImage": { "artifactName": "Google-Chat-Desktop-${version}.${ext}" }
 }
 ```
+`package.json` `"build"` is the authority; this listing mirrors it as of 2026-09-30 except that it omits
+`build-info.json` from `files` (which `package.json` includes). The Linux CI leg additionally passes `-c.productName=GoogleChatDesktop`
+so the `.deb` installs to `/opt/GoogleChatDesktop/` (no space); the Windows build does not.
+
+**NFR-08 (Linux install path, executable name, audio dependency) is already implemented and documented
+in [build-linux-in-docker.md](../development/build-linux-in-docker.md), "Install path and names"; that file
+is its single home and this one does not repeat it.** What this document adds is what remains **unverified**
+against NFR-08's scenarios:
+- The **AppImage artifact name** has no spaces (`Google-Chat-Desktop-<version>.AppImage`); the
+  directory a user puts it in and the product name in launchers are out of NFR-08's scope.
+- The **autostart entry's `Exec` path** for both artifacts (the AppImage case is an open item, see
+  [tray-lifecycle.md](tray-lifecycle.md) "Start at login").
+- The **install-and-launch on a clean Debian/Ubuntu system** and the **audible sound** scenarios are
+  environment checks: the Linux leg has never run outside Docker or CI (see the untested-leg note below),
+  and `test/packaging-config.test.js` guards configuration, not the installed result. Which package supplies
+  the audio dependency is stated by the implementer (currently `libasound2t64 | libasound2`).
 No `mac` key — macOS is not a build target (ADR-0003). No `win.certificateFile` entry yet — per
 ADR-0003, Windows ships unsigned for the initial release. Adding a certificate later is additive
 (see ADR-0003's "Revisit trigger"). If macOS is ever reconsidered, re-read ADR-0003's Revision 1
@@ -82,8 +104,8 @@ not be assumed verified before the first tagged release completes.
 
 | Platform | Artifact | Signing status | What the user sees on first run | Does FR-05 (notifications) work? |
 |---|---|---|---|---|
-| Windows | NSIS `.exe` | Unsigned | SmartScreen "Windows protected your PC" — user clicks "More info" → "Run anyway". | Yes — no signing dependency on this platform. |
-| Linux | `.AppImage` and `.deb` | N/A — no signing concept for either format | AppImage runs directly once marked executable (`chmod +x`); some distros show a first-run "untrusted executable" dialog depending on the desktop environment. `.deb` installs via the distro's normal package manager (`apt install ./*.deb` or a GUI installer) with no first-run warning at all. Neither is an electron-builder concern. | Yes — no signing dependency on this platform, for either artifact. |
+| Windows | NSIS `.exe` | Unsigned | SmartScreen "Windows protected your PC" — user clicks "More info" → "Run anyway". | No signing dependency on this platform, but FR-05a delivery is **currently failing** here (BUG-01, ADR-0004 Spike A); "works" is not claimed until a real toast is observed. |
+| Linux | `.AppImage` and `.deb` | N/A — no signing concept for either format | AppImage runs directly once marked executable (`chmod +x`); some distros show a first-run "untrusted executable" dialog depending on the desktop environment. `.deb` installs via the distro's normal package manager (`apt install ./*.deb` or a GUI installer) with no first-run warning at all. Neither is an electron-builder concern. | No signing dependency for either artifact. Real delivery (libnotify) has never been verified in this repo. |
 
 macOS is not built — see [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md) for why
 (code signing is required for macOS notifications to function at all; the owner doesn't use macOS,
@@ -92,4 +114,16 @@ so paying for it was not justified).
 Every release's notes state this table's rows explicitly, per the space's
 `installers-are-part-of-done` rule — never let the owner discover the SmartScreen warning by
 surprise.
+
+### Release notes must also state (2026-09-30 requirements)
+
+- **Meet (FR-16):** whether the `[manual-only]` Meet scenarios (login carry-over, camera and microphone,
+  screen share, device release on close) were re-run for this release and on which platform. Meet in an
+  embedded browser is unsupported by Google and can break on a user-agent or embedding change, so "not
+  re-verified" must be written, not omitted.
+- **Notifications (FR-05):** which platform the real-toast and real-click checks were run on. A Windows pass
+  does not cover Linux.
+- **Windows toast identity:** the toast header and per-app notification settings depend on the AppUserModelID
+  (see [notifications.md](notifications.md) §4); a change to `appId` or the runtime AUMID must be called out
+  because it can orphan the user's notification settings.
 </architecture>
