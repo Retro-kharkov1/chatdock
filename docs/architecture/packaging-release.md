@@ -104,7 +104,7 @@ not be assumed verified before the first tagged release completes.
 
 | Platform | Artifact | Signing status | What the user sees on first run | Does FR-05 (notifications) work? |
 |---|---|---|---|---|
-| Windows | NSIS `.exe` | Unsigned | SmartScreen "Windows protected your PC" — user clicks "More info" → "Run anyway". | No signing dependency on this platform, but FR-05a delivery is **currently failing** here (BUG-01, ADR-0004 Spike A); "works" is not claimed until a real toast is observed. |
+| Windows | NSIS `.exe` | Unsigned | SmartScreen "Windows protected your PC" — user clicks "More info" → "Run anyway". | No signing dependency on this platform. FR-05a delivery: the BUG-01 fix (main-process re-raise of Chat's notifications) is implemented and verified in a harness on Windows 11; **not yet confirmed against a real signed-in Chat**, so "works" is not claimed for a release until a real toast from real Chat is observed. |
 | Linux | `.AppImage` and `.deb` | N/A — no signing concept for either format | AppImage runs directly once marked executable (`chmod +x`); some distros show a first-run "untrusted executable" dialog depending on the desktop environment. `.deb` installs via the distro's normal package manager (`apt install ./*.deb` or a GUI installer) with no first-run warning at all. Neither is an electron-builder concern. | No signing dependency for either artifact. Real delivery (libnotify) has never been verified in this repo. |
 
 macOS is not built — see [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md) for why
@@ -124,6 +124,24 @@ surprise.
 - **Notifications (FR-05):** which platform the real-toast and real-click checks were run on. A Windows pass
   does not cover Linux.
 - **Windows toast identity:** the toast header and per-app notification settings depend on the AppUserModelID
-  (see [notifications.md](notifications.md) §4); a change to `appId` or the runtime AUMID must be called out
+  (see "Windows toast identity" below); a change to `appId` or the runtime AUMID must be called out
   because it can orphan the user's notification settings.
+
+## Windows toast identity (AppUserModelID) and the dev seam
+
+- **Packaged AUMID = `build.appId`**, `dev.retro-kharkov1.google-chat-desktop`, unchanged for installed
+  users. **A dev (unpackaged) run uses the same string plus `.dev`**, so it cannot impersonate the installed
+  app (shared Action Center grouping, header "Electron"). Implemented in `src/main/appIdentity.js`.
+- **The id is a string literal in `appIdentity.js` and is never read from `package.json` at runtime:**
+  electron-builder **strips the `build` block** from the `package.json` it ships inside `app.asar`, so
+  `require('../../package.json').build.appId` throws in a packaged build (found by running the packaged
+  app). `package.json` `build.appId` remains the single source of truth; `test/appIdentity.test.js` fails if
+  the two ever differ. Any code that needs a `build`-block value at runtime must not read it from the
+  packaged `package.json`.
+- **Do not change the packaged value**: renaming an AUMID orphans the per-app notification settings of
+  installed users.
+- **Dev-only test seam `GCD_DEV_START_URL`** (`src/main/origins.js`): honoured only when `app.isPackaged` is
+  false, only for a loopback `http` URL (`localhost` or `127.0.0.1`) with no userinfo; it points the window at
+  a local harness page and adds that origin to the navigation and notification allowlists. Never active in a
+  packaged build, so it adds nothing to the released artifact's attack surface.
 </architecture>
