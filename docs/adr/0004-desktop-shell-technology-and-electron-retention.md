@@ -20,16 +20,19 @@ state, app identity, page state) rather than a fixed defect. This ADR does not a
 fault, and does not assume it is not.
 
 New asks:
-- **Meet in-app**: Google Meet calls inside the app with camera, mic and screen share. Not yet in
-  `docs/business/requirements.md`; needs a FR from `business-analyst`.
+- **Meet in-app**: Google Meet calls inside the app with camera, mic and screen share. Now
+  [FR-16 and NFR-07](../business/requirements.md) (owner-approved 2026-09-30; the space rule
+  `electron-security-baseline` carries the matching single exception). Design:
+  [meet-call-window.md](../architecture/meet-call-window.md).
 - **Notification content and deep link**: the notification shows the chat name, and clicking it opens
-  that chat. This is already FR-05's second click outcome; it is analysed here because the evidence
-  below undercuts ADR-0002's design for it.
+  that chat. Now FR-05b and FR-05c step 2 (conditional on Spike C and an owner decision); FR-05a (a toast
+  appears at all) is unconditional. Analysed here because the evidence below undercuts ADR-0002's design
+  for it. Design candidates: [notifications.md](../architecture/notifications.md).
 
-Standing requirements: [requirements.md](../business/requirements.md) FR-01..FR-15, NFR-01..NFR-06;
+Standing requirements: [requirements.md](../business/requirements.md) FR-01..FR-16, NFR-01..NFR-08;
 Windows + Linux installers (ADR-0003); the space rule `wrapper-not-a-rewrite`.
 
-### Facts about the current code (verified in the repo, 2026-09-30)
+### Facts about the current code (verified in the repo, 2026-09-30; an **input** that dates quickly: the code is being changed, e.g. new attention and app-identity modules, so re-check before relying on any line below)
 
 - `src/main/session.js:46-48` — the only permission handler grants `notifications` and denies every
   other permission; there is no `setPermissionCheckHandler`. Camera and mic are refused today.
@@ -231,9 +234,10 @@ API-level claims are marked OK only where a primary doc backs them; delivery cla
    not separate Electron config from an Electron limitation, because a PWA toast uses Edge's own
    identity and path, not ours. It does not gate any work.
 3. **Meet in-app is feasible in principle on Electron, subject to a spike.** Handler design,
-   origin scoping and popup routing belong to the Meet FR and the tech design, not to this ADR. Any
-   change to the space rule that external links open in the system browser is the owner's decision
-   and is raised separately.
+   origin scoping and popup routing belong to the Meet FR and the tech design, not to this ADR. The
+   space-rule change (Meet links as the single exception to "external links open in the system
+   browser") has since been decided by the owner (2026-09-30, UI-01); see FR-16, NFR-07 and
+   [meet-call-window.md](../architecture/meet-call-window.md).
 4. **Escalation triggers** (replace ADR-0001's single Tauri trigger):
    - **T1, sign-in:** the block reproduces on the primary path and the cookie-import fallback both
      fail. Re-evaluate alternatives; Tauri's Meet-on-Linux status is then a spike question, not a
@@ -257,7 +261,12 @@ in total**; an unfinished spike is reported as such, not extended silently.
 
 - **A, BUG-01 diagnosis** (already under way): the candidate causes above, including whether a
   service-worker notification reaches the OS from our window and why toasts appeared after
-  diagnostic activity.
+  diagnostic activity. Leads from the earlier investigation, **reproduced in harnesses but not
+  confirmed against a real signed-in Chat**: `ServiceWorkerRegistration.showNotification()` shows no
+  toast in Electron 44.4.3 on Windows; the bridge wraps only `window.Notification`; dev and packaged
+  builds share one AUMID and the toast header reads "Electron"; a synthetic toast click produced `close`,
+  not `click`. Spike A must therefore also use a **real** click on a real toast, and must say whether
+  `flashFrame` has any visible effect on a window hidden to tray (the taskbar button may not exist).
 - **B, Meet in Electron:** a real call with camera, mic and screen share on Windows and on Linux.
   Meet in a wrapper is an unsupported configuration, so this is **re-verified on every release**,
   as sign-in is under ADR-0001.
@@ -266,6 +275,19 @@ in total**; an unfinished spike is reported as such, not extended silently.
     obviously better; realistic options are B1 Meet opens in the system browser (on Linux or
     everywhere), B2 the owner accepts a Windows-only in-app Meet, or B3 accept the limitation.
     tech-lead brings the spike evidence to the owner.
+  - **Linux screen-share picker (owner default 4, now in the space rule):** on Linux only, the OS's own
+    picker may replace the app's picker **if B shows it works**; the user always chooses explicitly and a
+    silent or pre-selected source is never allowed on any platform. `useSystemPicker` is documented as
+    experimental and macOS 15+ only, so it is not the mechanism; Electron documents that
+    `desktopCapturer.getSources` "only returns a single source on Linux when using Pipewire". B must show, on
+    a real Wayland/PipeWire desktop, that the OS dialog appears on every share start (no remembered choice
+    skips it), cancel denies, the app shows no picker and pre-selects nothing, and the source Meet receives
+    is the user's choice; and what an X11 session does (design position: app picker). Conditions in full:
+    [meet-call-window.md](../architecture/meet-call-window.md) §5. If they fail, the app picker is used.
+  - **Call-window arrangement:** B also checks that a `BrowserWindow` can host the app-owned child
+    `WebContentsView` of [meet-call-window.md](../architecture/meet-call-window.md) §3a on Electron 44.4.3
+    (the `BrowserWindow` docs page does not itself document `contentView`), and that closing the window
+    releases camera, microphone and capture.
   - **Linux availability:** no Linux machine is known to be available for B. The two-day time-box
     **assumes one** (a VM or a spare machine with a desktop session and a camera or virtual camera).
     If none exists, the Linux half of B is reported as "not run", the Windows half proceeds, and
