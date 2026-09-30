@@ -113,64 +113,7 @@ test('each tick calls onTick and alternates the badge flag, cleared+nulled toget
   });
 });
 
-// --- setTrayUnread's blink gate (tray.js's createUnreadBlinkGate) ---------------------------
-// docs/architecture/tray-lifecycle.md's "NFR-06 as a checkable property" section also names this
-// coverage explicitly: setTrayUnread(1) while hidden starts blinking; setTrayUnread(0) while still
-// hidden (trigger 2) stops blinking even though the window never became visible; setTrayUnread(0)
-// when nothing was blinking is a no-op. Factored into `createUnreadBlinkGate` (tray.js) as a small,
-// dependency-injected function per the plan's "Electron-API dependencies passed in" convention, so
-// it is testable here without a running Electron process.
-const { createUnreadBlinkGate } = require('../src/main/tray.js');
-
-function makeGate({ visible = false, blinkOnUnread = true, muted = false } = {}) {
-  let started = 0;
-  let stopped = 0;
-  const updateBlink = createUnreadBlinkGate({
-    isWindowVisible: () => visible,
-    getBlinkOnUnread: () => blinkOnUnread,
-    getNotificationsMuted: () => muted,
-    startBlinking: () => { started += 1; },
-    stopBlinking: () => { stopped += 1; },
-  });
-  return { updateBlink, getStarted: () => started, getStopped: () => stopped };
-}
-
-test('setTrayUnread(1) while hidden, blink on, not muted -> starts blinking', () => {
-  const gate = makeGate({ visible: false, blinkOnUnread: true, muted: false });
-  gate.updateBlink(1);
-  assert.equal(gate.getStarted(), 1);
-  assert.equal(gate.getStopped(), 0);
-});
-
-test('setTrayUnread(0) while still hidden stops blinking even though the window never became visible (trigger 2)', () => {
-  const gate = makeGate({ visible: false, blinkOnUnread: true, muted: false });
-  gate.updateBlink(1);
-  gate.updateBlink(0);
-  assert.equal(gate.getStarted(), 1);
-  assert.equal(gate.getStopped(), 1);
-});
-
-test('setTrayUnread(0) when nothing was blinking is a no-op that still safely calls stopBlinking (idempotent)', () => {
-  const gate = makeGate({ visible: false, blinkOnUnread: true, muted: false });
-  gate.updateBlink(0);
-  assert.equal(gate.getStarted(), 0);
-  assert.equal(gate.getStopped(), 1);
-});
-
-test('setTrayUnread(1) while the window is visible does not start blinking', () => {
-  const gate = makeGate({ visible: true, blinkOnUnread: true, muted: false });
-  gate.updateBlink(1);
-  assert.equal(gate.getStarted(), 0);
-});
-
-test('setTrayUnread(1) while muted does not start blinking', () => {
-  const gate = makeGate({ visible: false, blinkOnUnread: true, muted: true });
-  gate.updateBlink(1);
-  assert.equal(gate.getStarted(), 0);
-});
-
-test('setTrayUnread(1) while blinkOnUnread is off does not start blinking', () => {
-  const gate = makeGate({ visible: false, blinkOnUnread: false, muted: false });
-  gate.updateBlink(1);
-  assert.equal(gate.getStarted(), 0);
-});
+// The setTrayUnread gate (createUnreadBlinkGate in tray.js) was replaced by the attention
+// controller (src/main/attention.js, test/attention.test.js) when BUG-01 landed: "hidden -> starts",
+// "unread 0 -> stops", "muted -> no start" and "blinking off -> no start" are covered there, and
+// "visible does not start" is deliberately gone (FR-14: only focus matters).

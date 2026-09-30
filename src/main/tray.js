@@ -31,16 +31,18 @@ function overlayIconPath(size) {
 }
 
 /**
- * resolveIconState(unreadCount, muted) — precedence rule for which single glyph represents two
- * independent pieces of state at once: muted takes precedence over unread in the glyph itself,
- * since it is the more consequential thing for the owner to notice at a glance. This does NOT
- * affect the unread *count* itself (FR-12: "muting silences notifications, it does not hide that
- * messages arrived") — the count keeps updating and still drives the Windows overlay badge
- * independent of this glyph choice.
+ * resolveIconState(unreadCount, muted) - which single glyph represents unread + mute.
+ *
+ * FR-05a / FR-12: the static unread indicator is visible whenever anything is unread, independent
+ * of mute and of window focus - "muting silences notifications, it does not hide that messages
+ * arrived". So unread wins over muted; the muted glyph shows only when nothing is unread. (This
+ * reverses the earlier muted-first precedence, which hid unread messages on Linux where the tray
+ * glyph is the only unread signal.) Blinking alternates 'unread'/'normal' and is never active
+ * while muted, so there is no conflict with the mute glyph.
  */
 function resolveIconState(unreadCount, muted) {
-  if (muted) return 'muted';
   if (unreadCount > 0) return 'unread';
+  if (muted) return 'muted';
   return 'normal';
 }
 
@@ -136,51 +138,10 @@ function setUnreadOverlay(win, unreadCount) {
   }
 }
 
-/**
- * createUnreadBlinkGate(deps)
- *
- * FR-14's start/resume trigger and its second stop trigger (docs/architecture/tray-lifecycle.md
- * "Start/resume trigger" and "Stop triggers"), factored into a small, dependency-injected pure
- * function — Electron APIs (window visibility, settings reads, the blink timer's own start/stop)
- * are all passed in rather than called directly — so it is unit-testable without a running
- * Electron process, per the plan's "Structural constraint carried by task 0" convention. This is
- * the piece `setTrayUnread(n)` (index.js) calls on every unread-count change; the first stop
- * trigger (window `'show'`/`'restore'`) is wired directly to `trayBlink.stopBlinking` in index.js
- * and does not go through this gate at all.
- *
- * @param {object} deps
- * @param {() => boolean} deps.isWindowVisible
- * @param {() => boolean} deps.getBlinkOnUnread
- * @param {() => boolean} deps.getNotificationsMuted
- * @param {() => void} deps.startBlinking
- * @param {() => void} deps.stopBlinking
- * @returns {(unreadCount: number) => void} `updateBlink` — call with the latest unread count on
- *   every change. `unreadCount > 0` while hidden, blink-on-unread enabled, and not muted starts or
- *   resumes blinking (`startBlinking` is itself a no-op if already running, so "resume" is just
- *   another call here); `unreadCount === 0` always calls `stopBlinking` (FR-14 trigger 2 — safe to
- *   call unconditionally since `stopBlinking` is itself a no-op when nothing is blinking).
- */
-function createUnreadBlinkGate({
-  isWindowVisible,
-  getBlinkOnUnread,
-  getNotificationsMuted,
-  startBlinking,
-  stopBlinking,
-}) {
-  return function updateBlink(unreadCount) {
-    if (unreadCount > 0 && !isWindowVisible() && getBlinkOnUnread() && !getNotificationsMuted()) {
-      startBlinking();
-    } else if (unreadCount === 0) {
-      stopBlinking();
-    }
-  };
-}
-
 module.exports = {
   createAppTray,
   trayIconPath,
   overlayIconPath,
   resolveIconState,
   setUnreadOverlay,
-  createUnreadBlinkGate,
 };
