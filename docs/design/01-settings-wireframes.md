@@ -179,7 +179,7 @@ here. "Not focused" = hidden to tray, minimized, or visible without OS input foc
 | State | Condition | Visual |
 |---|---|---|
 | Idle | unread = 0 | plain icon, no badge |
-| Unread (static) | unread > 0, AND (`notificationsMuted` OR the blink setting off OR the indicators have been stopped by one of the transitions below and no qualifying new message has arrived since) | plain icon + badge overlay (Windows: `setOverlayIcon`; Linux: badged icon variant — see [notifications.md](../architecture/notifications.md) §5, which also records that the current muted glyph hides this state on Linux) |
+| Unread (static) | unread > 0, AND (`notificationsMuted` OR the blink setting off OR the indicators have been stopped by one of the transitions below and no qualifying new message has arrived since) | plain icon + badge overlay (Windows: `setOverlayIcon`; Linux: badged icon variant — see [notifications.md](../architecture/notifications.md) §4; the unread glyph now wins over the muted glyph, so this state stays visible while muted on Linux too) |
 | Unread (blinking) | unread > 0, the blink setting on, NOT muted, the main window not focused, and the indicators currently active | tray alternates plain ↔ badged icon every ~1s **and** the taskbar button flashes (see spec §9) |
 
 **Transitions (all settled, spec §9):**
