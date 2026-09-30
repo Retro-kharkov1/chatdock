@@ -577,8 +577,8 @@ surfaces at once:
 hidden to the tray; minimized; or visible but without OS input focus (behind other windows, or another
 application has focus). "Focused" means the main Chat window has OS input focus. The Settings window
 and the Meet call window (FR-16) are separate windows: having focus in one of them does **not** make
-the main Chat window focused, so a new message still triggers the indicator (working assumption — see
-the open question at the end of this section).
+the main Chat window focused, so a new message still triggers the indicator (owner decision,
+2026-09-30).
 
 **Start/resume condition:** both indicators (re)start on **every new-message-arrival event** that
 occurs while the main window is not focused, not only the first message that takes unread from 0 to ≥1.
@@ -652,8 +652,8 @@ unaffected either way. The same applies when "Icon blinking" is turned back on.
 off independently of the underlying unread indicator (not optional — FR-05 always requires *some*
 unread signal). When off, unread messages still show the static unread icon; the tray alternation
 stops **and the taskbar button does not flash** (turning it off mid-flash stops the flash — stop
-trigger 3). **Working assumption, pending the owner:** "Icon blinking" governs **both** the tray blink
-and the taskbar flash; a separate flash setting is not provided.
+trigger 3). **Owner decision (2026-09-30):** the one "Icon blinking" setting governs **both** the tray
+blink and the taskbar flash; a separate flash setting is not provided.
 
 ```gherkin
 Feature: Attention indicator on unread (tray blink and taskbar flash)
@@ -758,7 +758,7 @@ Feature: Attention indicator on unread (tray blink and taskbar flash)
     And there are unread messages while the window is not focused
     Then the tray icon shows the static unread indicator
     And the tray icon does not alternate
-    And the taskbar button does not flash [working assumption: one setting governs both]
+    And the taskbar button does not flash [owner decision: one setting governs both]
 
   Scenario: [automatable] Turning "Icon blinking" off while the indicators are active stops both
     Given both indicators are active
@@ -785,11 +785,12 @@ is best-effort and its real behaviour is verified on a real Linux desktop, not a
 **Scope note:** this requirement extends FR-05's existing unread indicator; it does not change when a
 message counts as "unread" or how that indicator clears — those rules are FR-05's, unchanged.
 
-**Working assumptions pending the owner (not decisions):** (1) "Icon blinking" governs both the tray
-blink and the taskbar flash; (2) mute also suppresses the flash; (3) turning mute or blinking back on
-does not start the indicators until the next arrival; (4) while the user is in the Meet call window
-(FR-16) or the Settings window, a new chat message still triggers the indicators, because the main
-Chat window is not focused. The owner may instead want the flash independently switchable.
+**Owner decisions (2026-09-30):** (1) "Icon blinking" governs both the tray blink and the taskbar
+flash; (2) while the user is in the Meet call window (FR-16) or the Settings window, a new chat message
+still triggers the indicators (and notifications, FR-05a), because the main Chat window is not focused.
+
+**Working assumptions pending the owner (not decisions):** (a) mute also suppresses the flash; (b)
+turning mute or blinking back on does not start the indicators until the next arrival.
 
 ### FR-15 — Settings window
 A dedicated Settings window consolidates preference management in one place, replacing the
@@ -799,10 +800,10 @@ added icon-blinking preference (FR-14) somewhere to live without growing the tra
 **Covers, at minimum:** Start at login (FR-10), Notification sound (FR-11), Mute notifications
 (FR-12), Icon blinking (FR-14).
 
-**Open question (owner), from FR-14:** if the "Icon blinking" setting also governs the taskbar flash
-(working assumption), its label must say so, because "Icon blinking" no longer describes what it does;
-if the flash gets its own setting, this window gains a control and needs a wireframe from
-`ux-ui-designer`. Not decided here; FR-15 is otherwise unchanged.
+**Owner decision (2026-09-30), from FR-14:** the "Icon blinking" setting also governs the taskbar
+flash, so its label must say so, because "Icon blinking" no longer describes what it does. The
+exact label wording is for `ux-ui-designer` to propose; no separate flash control is added. FR-15 is
+otherwise unchanged.
 
 **Tray menu vs. Settings window — decided by the owner directly (supersedes the earlier draft):**
 an earlier draft of this document kept all three existing tray checkboxes (Start at login,
@@ -1009,23 +1010,28 @@ meeting cards rendered by Chat — whether the page opens it as a new window or 
 to it (the main-frame case is intercepted, see NFR-07). Out of scope: a Meet link opened from outside
 the application (another app, the OS, a browser); those are not the app's to route.
 
-**Working defaults, pending the owner (assumptions, not decisions — the owner has not answered yet):**
+**Owner decisions (2026-09-30, approved by the owner's reply "делай" to a question listing them):**
 - **One call window at a time.** Activating a second Meet link while a call window is open focuses the
   existing call window and does **not** open a second one or navigate the existing call away
   unprompted. **The user is told**, by a native OS notification reading "A call is already open. The
   new link was not opened." It is shown **regardless of mute**, because it is app status, not a chat
   message. Clicking it focuses the existing call window. It reuses the notification surface, so it
   adds no new UI and needs no extra wireframe. The action is never silent.
-- **Linux with PipeWire:** the application relies on the operating system's own screen-share picker
-  and does **not** show the app picker there (a second picker would be redundant); it still never
-  chooses a source automatically. On Windows the app picker is always used. **This departs from the
-  owner's stated decision that screen share uses "the app's own picker"**, so it is tied to Spike B:
-  Spike B must verify that `setDisplayMediaRequestHandler` can defer to the portal picker without the
-  app auto-choosing a source. If it cannot, the owner's original decision (the app's own picker on
-  Linux too) stands and the wireframe must cover it.
+- **Linux screen share may use the operating system's picker, if Spike B shows it works there.** The
+  application may then rely on the OS's own screen-share picker (on Linux with PipeWire, the portal
+  picker) instead of showing the app picker (a second picker would be redundant). Either way **the
+  user always chooses the source explicitly; the application never selects a source, and never
+  pre-selects one, silently.** On Windows the app picker is always used. This departs from the earlier
+  decision that screen share uses "the app's own picker", so it is tied to Spike B: Spike B must
+  verify that `setDisplayMediaRequestHandler` can defer to the portal picker without the app
+  auto-choosing a source. If it cannot, the app's own picker is used on Linux too and the wireframe
+  must cover it.
+- **New-message notifications and attention indicators keep arriving while the user is inside the call
+  window** (FR-14 and FR-05a still fire, because the main Chat window is not focused).
+
+**Working default, pending the owner (an assumption, not a decision):**
 - **Tray "Show/Hide Google Chat" acts on the main window only** while a call is open, and never
   hides or closes the call window.
-- Attention indicators (FR-14) still fire while the user is inside the call window.
 
 Each scenario is tagged **[automatable]** (unit/integration test, with real Meet replaced by a stub
 page or stubbed handlers) or **[manual-only]** (needs a real Meet call, real devices and a real desktop).
@@ -1076,11 +1082,11 @@ Feature: Google Meet calls in an app-owned call window
     When the user picks a real screen or window in the app's picker
     Then that source is shared in the call
 
-  Scenario: [manual-only] Linux with PipeWire uses the OS picker
+  Scenario: [manual-only] [applies only if Spike B shows the OS picker works] Linux with PipeWire uses the OS picker
     Given a Linux desktop using PipeWire
     When the user starts a screen share
     Then the operating system's picker is shown and the app's picker is not
-    And no source is chosen without a user action
+    And no source is chosen or pre-selected without a user action
 
   Scenario: [automatable] Closing the call window destroys it and does not quit the app
     Given the call window is open and the main Chat window is hidden to tray
@@ -1096,7 +1102,7 @@ Feature: Google Meet calls in an app-owned call window
     Then the camera indicator turns off and no capture indicator remains
     And the call has ended for this participant
 
-  Scenario: [automatable] A second Meet link focuses the existing call window (working default)
+  Scenario: [automatable] A second Meet link focuses the existing call window
     Given a call window is open
     When the user activates another Meet link
     Then the existing call window is focused
@@ -1126,9 +1132,9 @@ Feature: Google Meet calls in an app-owned call window
 **Requires a wireframe.** The screen-share source picker is a **new UI surface** (what it lists, how a
 source is previewed and chosen, cancel, empty and error states). It needs a wireframe from
 `ux-ui-designer` before any implementation; this document does not design it and states only the
-behavioural rules above. (Under the Linux/PipeWire working default the app picker is not shown there,
-which the wireframe need not cover unless the owner reverses that default or Spike B shows the
-portal picker cannot be deferred to.)
+behavioural rules above. (Where the OS picker is used on Linux/PipeWire (owner decision, conditional on Spike B) the app
+picker is not shown there, which the wireframe need not cover unless Spike B shows the portal
+picker cannot be deferred to.)
 
 **Verification — every release.** Real Meet inside Electron is unverified today (ADR-0004 Spike B:
 a real call with camera, microphone and screen share, on Windows and on Linux) and is not a
@@ -1142,12 +1148,11 @@ ADR-0001). A release that has not re-verified it must say so in its release note
   system browser (Linux only, or everywhere), a Windows-only in-app Meet, or accepting the limitation.
 - Does a Linux machine (or VM with a desktop session and a camera or virtual camera) exist for the
   Linux half of Spike B? If not, Linux Meet stays unverified.
-- Please confirm or change the four working defaults above (one call window, with the native
-  "call already open" notification, shown regardless of mute, on a second link; OS picker on Linux/PipeWire; tray Show/Hide acts on the main window only; indicators
-  fire during a call).
+- Please confirm or change the one remaining working default above: tray Show/Hide acts on the main
+  window only while a call is open.
 - **Spike B (Linux picker):** verify that `setDisplayMediaRequestHandler` can defer to the portal
-  picker without the app choosing a source automatically. If not, does the owner accept the app's own
-  picker on Linux (the original decision)?
+  picker without the app choosing a source automatically. If it cannot, the app's own picker is used
+  on Linux too (per the owner decision above).
 
 ## Non-Functional Requirements
 
@@ -1280,6 +1285,13 @@ module) that is the sole reference to the running interval:
   (the target is itself a wrapper), an unparseable `q`, and a wrapper whose target is `http` or any
   other host all go to the system browser. A wrapper-shaped URL on any other host is **not**
   unwrapped.
+- **Duplicated `q` parameter — refused (added 2026-09-30 by `tech-lead`; a narrowing of this
+  requirement, pending owner acknowledgement).** A `https://www.google.com/url` wrapper that carries
+  **more than one** `q` parameter is not unwrapped and goes to the system browser, because two parsers
+  could pick different values (first vs. last) and one could validate a Meet target while another
+  follows a different one. This narrows the bullet above: it refuses a shape the earlier wording did
+  not mention. Until the owner acknowledges it, it is a proposed tightening, not a ratified decision;
+  it is stricter than the owner's stated rule, so it cannot let a non-Meet link into the call window.
 - **Call window hardening**, checked on the `webPreferences` the call window is **created with** (and
   on its live web contents where the test can reach them): `contextIsolation` on, `nodeIntegration`
   off, `sandbox` on; it shares the main session (so the login carries over); it denies its own popups;
@@ -1295,7 +1307,8 @@ module) that is the sole reference to the running interval:
   window's own), `http://meet.google.com`, and a Meet frame embedded inside a page that is not Meet.
   The existing notifications permission for the main window is unchanged.
 - **Screen share is never automatic** — it always goes through the app's own source picker (FR-16),
-  except where the operating system's picker is relied on (Linux/PipeWire working default in FR-16).
+  except where the operating system's picker is relied on (Linux/PipeWire, owner decision in FR-16,
+  conditional on Spike B). The user always chooses the source explicitly in either case.
 - **Closing the call window never quits the app** (FR-06/FR-07).
 - **Everything else is unchanged:** every other URL still goes to the system browser; the main window's
   NFR-04 baseline is untouched; session cookies and credentials are never logged, persisted or
@@ -1328,6 +1341,7 @@ Feature: Meet call window security
       | https://google.com/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij        | system browser |
       | https://www.google.com/url?q=http%3A%2F%2Fmeet.google.com%2Fabc-defg-hij     | system browser |
       | https://www.google.com/url?q=https%3A%2F%2Fwww.google.com%2Furl%3Fq%3Dhttps%253A%252F%252Fmeet.google.com%252Fabc | system browser |
+      | https://www.google.com/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij&q=https%3A%2F%2Fevil.example%2F | system browser (duplicated q; narrowing pending owner acknowledgement) |
       | https://www.google.com/url?q=%%%not-a-url                                    | system browser |
       | https://www.google.com/url?q=https%3A%2F%2Fevil.example%2F                   | system browser |
       | https://evil.example/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij      | system browser |
@@ -1545,8 +1559,8 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
 | FR-09 | Must | Prose and Linux scenario now reference NFR-08 | NFR-08, NFR-05 |
 | FR-10 | Must | Linux autostart `Exec` path must be the space-free executable path (checked under NFR-08); FR-10 text itself unchanged | NFR-08 |
 | FR-14 | Must | Amended: taskbar flash added; condition "hidden" becomes "not focused"; stop on focus; degraded trigger stated; working assumptions on flash, mute and the setting | ADR-0004 (S2: `flashFrame` unimplemented), FR-05a, FR-12, FR-15, NFR-06 |
-| FR-16 | Must (conditional on Spike B) | New: Meet in app-owned call window, own screen-share picker | ADR-0004 Spike B; space rule `electron-security-baseline`; NFR-07; wireframe from `ux-ui-designer` still to be produced; four working defaults pending the owner |
-| NFR-07 | Must | New: exact-origin match, hardened call window, permissions scoped to Meet | Space rule `electron-security-baseline` (amended 2026-09-30, UI-01); NFR-04 |
+| FR-16 | Must (conditional on Spike B) | New: Meet in app-owned call window, own screen-share picker | ADR-0004 Spike B; space rule `electron-security-baseline`; NFR-07; wireframe from `ux-ui-designer` still to be produced; three defaults approved by the owner 2026-09-30 (one call window, Linux OS picker if Spike B allows, notifications/indicators during a call); tray Show/Hide main-only remains a working default |
+| NFR-07 | Must | New: exact-origin match, hardened call window, permissions scoped to Meet; duplicated-`q` wrapper refused (narrowing, pending owner acknowledgement) | Space rule `electron-security-baseline` (amended 2026-09-30, UI-01); NFR-04 |
 | NFR-08 | Must | New: no spaces in Linux install path/executable name; deb declares audio dependency | FR-09, FR-10, NFR-05 |
 
 ## Change log
@@ -1578,6 +1592,17 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
   rule stated as the space rule's, without hedge. Design docs added to the superseded list; FR-15 gained
   the label question; FR-09 and FR-10 added to the changes table.
 
+- **2026-09-30 (owner decisions recorded)** — The owner approved four defaults (reply "делай"):
+  (1) the one "Icon blinking" setting governs both the tray blink and the taskbar flash (FR-14, FR-15
+  label must say so); (2) new-message notifications and indicators keep arriving during a Meet call
+  (FR-14, FR-16); (3) one call window at a time, with the "call already open" notification (FR-16);
+  (4) on Linux the OS screen-share picker may replace the app picker if Spike B shows it works, the
+  user always choosing explicitly (FR-16, NFR-07). Still working assumptions, not approved: mute also
+  suppresses the taskbar flash; mute or blinking turned back on does not start indicators until the
+  next arrival; tray Show/Hide acts on the main window only during a call. NFR-07 gained a
+  duplicated-`q` wrapper refusal proposed by `tech-lead`, marked a narrowing pending owner
+  acknowledgement.
+
 ### Downstream docs superseded
 
 These documents still describe rules this requirements document has changed. They are **not
@@ -1591,10 +1616,9 @@ document.
   parts, the service-worker finding, conditional content and click).
 - [00-settings-surface-spec.md](../design/00-settings-surface-spec.md) — the "Blink tray icon on
   unread" label (lines 127, 154, 171), the §9 tray-only blink state machine (hidden/visible triggers,
-  no taskbar flash) and the mute note now conflict with FR-14. **Owner decision needed:** if the
-  "Icon blinking" setting also governs the taskbar flash (working assumption), its label in FR-15 and
-  the Settings window must change to say so (for example "Flash and blink on new message"); if the
-  flash gets its own setting, FR-15 gains a control and needs a wireframe.
+  no taskbar flash) and the mute note now conflict with FR-14. **Owner decided (2026-09-30):** the
+  "Icon blinking" setting also governs the taskbar flash, so its label in FR-15 and the Settings
+  window must change to say so (for example "Flash and blink on new message").
 - [01-settings-wireframes.md](../design/01-settings-wireframes.md) — repeats the same label
   (lines 36, 76, 116, 138), the same "Blinks on a new message; stops…" helper text, and a state table
   whose stop trigger is "window becomes visible"; both conflict with FR-14. `02-rationale.md` cites
