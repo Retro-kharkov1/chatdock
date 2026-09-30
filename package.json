@@ -62,7 +62,31 @@
       ],
       "icon": "assets/icons/icon.png",
       "category": "Network",
-      "maintainer": "95210642+Retro-kharkov1@users.noreply.github.com"
+      "maintainer": "95210642+Retro-kharkov1@users.noreply.github.com",
+      "executableName": "google-chat-desktop",
+      "desktop": {
+        "entry": {
+          "Name": "Google Chat Desktop",
+          "StartupWMClass": "Google Chat Desktop"
+        }
+      }
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "libasound2t64 | libasound2"
+      ]
+    },
+    "appImage": {
+      "artifactName": "Google-Chat-Desktop-${version}.${ext}"
     }
   }
 }

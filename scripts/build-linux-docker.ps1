@@ -51,7 +51,7 @@ $inner = @(
   'npm ci --no-audit --no-fund',
   'npm test',
   'npm run generate-build-info',
-  "npx electron-builder --linux --x64 --publish never $versionArg",
+  "npx electron-builder --linux --x64 -c.productName=GoogleChatDesktop --publish never $versionArg",
   'rm -rf /out/*',
   'cp -v release/*.AppImage release/*.deb release/latest-linux.yml /out/ 2>/dev/null || cp -v release/*.AppImage release/*.deb /out/'
 ) -join "`n"

@@ -38,7 +38,7 @@ jobs:
           - os: windows-latest
             build-flag: --win
           - os: ubuntu-latest
-            build-flag: --linux
+            build-flag: --linux -c.productName=GoogleChatDesktop
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
