@@ -439,8 +439,29 @@ forced open) when the user logs into the OS. Toggled from the Settings window's 
 checkbox (see FR-15 — this control lives in Settings only, not the tray menu), which reflects the
 actual current OS-level state (not just an in-app preference that could drift from reality).
 
+**Default — on (owner decision 2026-09-30).** After a fresh installation, the first run enables Start
+at login, so the application launches hidden into the tray at every subsequent login without the user
+visiting Settings. This default is applied **once, on the first run of a fresh install, and only when
+no stored choice exists**. It never overrides a choice the user already made: a stored "off", or a
+startup entry the user disabled outside the application (for example in the Windows Task Manager
+"Startup apps" list), is respected, and the application does not re-enable it on later launches or
+after an update. The full set of first-run defaults is in FR-15.
+
 ```gherkin
 Feature: Start at login
+  Scenario: First run of a fresh install enables start at login
+    Given the application has just been installed and has never been run (no stored preferences)
+    When the application runs for the first time
+    Then the OS is configured to launch the application automatically at login, into the tray
+    And the Settings window shows "Start at login" as checked
+
+  Scenario: An existing user choice is preserved
+    Given the user previously turned "Start at login" off in Settings
+    Or the user disabled the application's startup entry in the Windows Task Manager
+    When the application is launched again, including after an update or reinstall over the same data
+    Then the application does not re-enable Start at login
+    And the OS startup state and the Settings checkbox are unchanged
+
   Scenario: Enable start at login
     Given the Settings window is open and "Start at login" is currently unchecked
     When the user checks "Start at login" in the Settings window
@@ -895,13 +916,17 @@ deliberately narrow:
   with it — they are independent, sourced from the same `app.getVersion()`-equivalent value but
   serving different purposes.
 
-**First run, no saved preferences:** the Settings window (and the tray menu's Mute checkbox) show
-these defaults, matching the defaults FR-10/11/12 already establish plus the new FR-14 default:
-- Start at login: off
+**First run, no saved preferences — everything is on except mute (owner decision 2026-09-30):** the
+Settings window (and the tray menu's Mute checkbox) show these defaults:
+- Start at login: on (launching hidden into the tray; FR-10)
 - Notification sound: on
-- Mute notifications: off
+- Mute notifications: off (quiet mode stays off)
 - Icon blinking: on (the feature exists specifically to be seen; defaulting it off would mean most
   users never discover it)
+
+These defaults apply only on the first run of a fresh install, when no stored choice exists for the
+setting. They never override a choice the user already made, including a startup entry disabled in the
+Windows Task Manager; such a choice is respected on every later launch.
 
 **A setting the app cannot honour on the current platform:** this is not hypothetical — FR-10
 already implements Start-at-login differently per platform (native OS API on Windows, a
@@ -958,8 +983,16 @@ Feature: Settings window
   Scenario: First run with no saved preferences
     Given the application has never been run on this machine (no persisted settings exist)
     When the user opens the Settings window for the first time
-    Then Start at login is off, Notification sound is on, Mute notifications is off, and Icon
+    Then Start at login is on, Notification sound is on, Mute notifications is off, and Icon
       blinking is on
+    And the OS is configured to launch the application at login, into the tray
+
+  Scenario: Existing user choices are not overridden by the first-run defaults
+    Given stored preferences exist with Start at login off, Notification sound off and Icon blinking
+      off
+    When the application is launched again
+    Then the Settings window shows those same stored values
+    And no default is re-applied over them
 
   Scenario: Settings persist across restarts
     Given the user changed one or more settings in the Settings window in a previous session
@@ -1557,13 +1590,21 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
 | FR-05c | Must (step 1 unconditional, step 2 conditional) | Click brings window forward from tray/minimized; step 2 opens that conversation under (a) only; degraded outcome logged | ADR-0004 Spike C; open question in FR-05 |
 | FR-06, FR-07 | Must | Scoped: close-to-tray and tray Show/Hide act on the main window only | FR-16 |
 | FR-09 | Must | Prose and Linux scenario now reference NFR-08 | NFR-08, NFR-05 |
-| FR-10 | Must | Linux autostart `Exec` path must be the space-free executable path (checked under NFR-08); FR-10 text itself unchanged | NFR-08 |
+| FR-10 | Must | Linux autostart `Exec` path must be the space-free executable path (checked under NFR-08); first-run default changed to on, see the last row of this table | NFR-08, FR-15 |
+| FR-10, FR-15 | Must | Amended: first-run defaults all on (Start at login, sound, blinking), mute off; applied once on a fresh install, never over an existing user choice | Owner decision 2026-09-30 |
 | FR-14 | Must | Amended: taskbar flash added; condition "hidden" becomes "not focused"; stop on focus; degraded trigger stated; working assumptions on flash, mute and the setting | ADR-0004 (S2: `flashFrame` unimplemented), FR-05a, FR-12, FR-15, NFR-06 |
 | FR-16 | Must (conditional on Spike B) | New: Meet in app-owned call window, own screen-share picker | ADR-0004 Spike B; space rule `electron-security-baseline`; NFR-07; wireframe from `ux-ui-designer` still to be produced; three defaults approved by the owner 2026-09-30 (one call window, Linux OS picker if Spike B allows, notifications/indicators during a call); tray Show/Hide main-only remains a working default |
 | NFR-07 | Must | New: exact-origin match, hardened call window, permissions scoped to Meet; duplicated-`q` wrapper refused (narrowing, pending owner acknowledgement) | Space rule `electron-security-baseline` (amended 2026-09-30, UI-01); NFR-04 |
 | NFR-08 | Must | New: no spaces in Linux install path/executable name; deb declares audio dependency | FR-09, FR-10, NFR-05 |
 
 ## Change log
+
+- **2026-09-30 (first-run defaults)** — Owner decision: after installation everything is on by
+  default: Start at login (previously off; launches hidden into the tray), notification sound and icon
+  blinking (both already on); Mute stays off. Defaults apply only on the first run of a fresh install
+  and never override an existing user choice, including a startup entry disabled in the Windows Task
+  Manager. FR-10 and FR-15 amended, scenarios added for first-run defaults and for preserved user
+  choices. Nothing else changed.
 
 - **2026-09-30** — Owner decisions folded in. FR-05 sharpened (notification title/body content; click
   from tray or minimized opens that conversation) and marked doubtful in mechanism after the
