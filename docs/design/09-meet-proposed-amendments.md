@@ -64,8 +64,10 @@ application's picker, conditional on Spike B showing it works and on the user st
   Scenario: [automatable] The override applies only to app-initiated closes
     Given the call window's page objects to being unloaded
     When the page itself navigates (a reload or a Meet-internal navigation)
-    Then the page's own "Leave site?" protection still applies
-    And the shell does not override the objection
+    Then the shell does not override the objection, so the navigation does not go through while the
+      page objects
+    # What the user sees (a prompt, or a silent block) is unverified and depends on the owner's choice
+    # among the fallbacks in OQ-18 once Spike B reports; this scenario asserts only "not overridden"
     When the user instead closes the window and chooses "Close window" in the confirmation
     Then the objection is overridden for that close only and the window is destroyed
 

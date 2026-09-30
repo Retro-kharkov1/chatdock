@@ -41,7 +41,7 @@ would leave the close doing nothing at all. These rules are the behaviour the de
 | I1 | **A close is never silently swallowed.** Every app-initiated close ends in exactly one of: the window destroyed; SC-2 shown and answered; or, while the source picker is open, the picker raised and flashed. This covers the title-bar X, Alt+F4 and taskbar close. The Exit probe in F6 is the one exception to the picker outcome: on Exit the picker is closed as part of exiting (its request is denied) and only the call-window probe applies, so Exit never ends in "picker raised". "Nothing happened" is not an allowed outcome |
 | I2 | **Live call.** If Meet's page objects to the close, the shell intercepts the objection and shows SC-2. **Close window** overrides the objection and destroys the window. **Keep window open** does nothing further; the window stays open and focused |
 | I3 | **Hung page.** A page that never answers the unload check within a timeout is treated as not live and the window is destroyed. Proposed timeout: **3 seconds** (owner may change it). Nothing is shown during the wait beyond the window staying as it is |
-| I4 | **The override applies only to app-initiated closes.** Navigations started by the page itself (a Meet reload, Meet-internal navigation, a link) keep Meet's own "Leave site?" protection; the shell never blanket-overrides objections |
+| I4 | **The override applies only to app-initiated closes.** Navigations started by the page itself (a Meet reload, Meet-internal navigation, a link) are **not** overridden: the shell never blanket-overrides objections. What the user sees then is **unverified**. A browser tab shows a "Leave site?" prompt; in Electron an unhandled objection may instead block the navigation silently. Which one happens is Spike B's question and the fallbacks are in [08](08-meet-open-questions.md), OQ-18 |
 | I5 | **Exit is a close attempt.** The Exit check (F6) closes the call window as its probe. It bypasses the picker block: if the source picker is open it is closed first as part of exiting (its display-capture request is denied, nothing is shared), and then only the call-window probe applies. A page that does not object is destroyed and Exit proceeds; a page that objects gets SC-2 and only then, if the user confirms Exit, is the objection overridden. "Cancel" leaves an objecting page untouched, which is the only case where there is anything to cancel |
 | I6 | **No user activation, no objection.** A browser engine honours a page's unload objection only after the user has interacted with the page. A user who joined but never clicked or typed in the window may not trigger it. That is the "signal missing" case: the close goes through without a dialog ([08](08-meet-open-questions.md), OQ-1) |
 
@@ -179,8 +179,8 @@ restored and focused.
    is missing) → the window is destroyed at once, no dialog. Same end state.
 4. **Page never answers** (hung) → after the timeout in I3 (proposed 3 seconds) it is treated as not
    live and the window is destroyed. Same end state.
-5. Meet's own reloads and navigations are not app-initiated closes and keep Meet's own "Leave site?"
-   protection (I4).
+5. Meet's own reloads and navigations are not app-initiated closes and are not overridden (I4). Whether
+   the user then sees a prompt or the navigation is blocked silently is unverified (OQ-18).
 
 The X is the **normal** way to finish after leaving through Meet's own Leave button (Meet's end page has
 no in-app close), which is exactly why the confirmation is keyed on the live call and not on "a meeting
