@@ -1,7 +1,7 @@
 # ADR-0001: Google sign-in strategy — plain BrowserWindow primary, system-browser cookie-import fallback
 
 **Date**: 2026-09-22
-**Status**: accepted
+**Status**: accepted (escalation clause in Risks amended by [ADR-0004](0004-desktop-shell-technology-and-electron-retention.md), proposed)
 **Deciders**: tech-lead
 
 ## Context
@@ -151,6 +151,9 @@ client involved (the app does not talk to Google's API directly, per the space's
   migrate to Tauri** (a native-webview framework, not another Electron-based option like a VS Code
   extension would have been) — this remains the documented escalation path, unchanged by the
   Electron-vs-VS-Code question above, which was about the *primary* choice, not this fallback.
+  *(Amended by [ADR-0004](0004-desktop-shell-technology-and-electron-retention.md), proposed: the
+  escalation is now defined by triggers T1/T2 there, and Tauri's Meet-on-Linux status is an open
+  question, not a settled fix.)*
   Escalating to Tauri is a scope decision for the owner, not something to improvise
   mid-implementation. If this happens, treat it as "the documented risk fully materialized," not a
   fresh crisis — and note precisely what would trigger it: Google's sign-in block reproducing on
