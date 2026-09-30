@@ -12,8 +12,10 @@
 > ([requirements.md](../business/requirements.md)); the open mechanism choice, and the wording of the fallback
 > as the FR-05a floor (M3), live in [notifications.md](../architecture/notifications.md) and
 > [ADR-0004](0004-desktop-shell-technology-and-electron-retention.md) (Spikes A and C). The fallback's
-> "adopt only if a regression is observed" trigger no longer applies as written: BUG-01 is such an observation
-> on Windows, so the fallback is now a live candidate. A superseding ADR will follow the spikes.
+> "adopt only if a regression is observed" trigger no longer applies as written: BUG-01 was such an observation
+> on Windows. The BUG-01 fix implemented service-worker interception as the primary route (M2) and this
+> fallback's unread-count idea as the documented floor (M3), with mute/sound and rate limits in the main
+> process; see [notifications.md](../architecture/notifications.md). A superseding ADR will follow Spike C.
 
 ## Context
 

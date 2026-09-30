@@ -32,16 +32,18 @@ New asks:
 Standing requirements: [requirements.md](../business/requirements.md) FR-01..FR-16, NFR-01..NFR-08;
 Windows + Linux installers (ADR-0003); the space rule `wrapper-not-a-rewrite`.
 
-### Facts about the current code (verified in the repo, 2026-09-30; an **input** that dates quickly: the code is being changed, e.g. new attention and app-identity modules, so re-check before relying on any line below)
+### Facts about the current code (as decided: the state BEFORE the BUG-01 fix, kept as the input to this decision)
 
-- `src/main/session.js:46-48` — the only permission handler grants `notifications` and denies every
-  other permission; there is no `setPermissionCheckHandler`. Camera and mic are refused today.
-- No `setDisplayMediaRequestHandler` in `src/main`; per Electron docs `getDisplayMedia` needs one.
-- `src/main/index.js:338-339` — every `window.open` goes to `shell.openExternal`.
-- No `flashFrame` call in `src/main`. The only attention signals are the FR-14 tray-image swap
-  (`trayBlink.js`) and the Windows overlay icon (`tray.js:133`). S2 is at least partly an
-  unimplemented feature, not proof of an Electron limit.
-- The notification bridge wraps `window.Notification` (ADR-0002 piece 2).
+These describe the code when this ADR was written (2026-09-30). The BUG-01 fix has since changed several of
+them; see "Progress since this ADR was written" below and the architecture docs for what the code does now.
+
+- The only permission handler granted `notifications` and denied every other permission, with no
+  `setPermissionCheckHandler`. Camera and mic were refused.
+- No `setDisplayMediaRequestHandler` in `src/main`; per Electron docs `getDisplayMedia` needs one (still true).
+- Every `window.open` went to `shell.openExternal` (still true; the Meet routing is design only).
+- No `flashFrame` call existed; the only attention signals were the FR-14 tray-image swap and the Windows
+  overlay icon. S2 was at least partly an unimplemented feature, not proof of an Electron limit.
+- The notification bridge wrapped `window.Notification` (ADR-0002 piece 2) only.
 
 ## Evidence, by candidate
 
@@ -295,6 +297,29 @@ in total**; an unfinished spike is reported as such, not extended silently.
 - **C, notification payload:** what Chat's notification carries (title, tag, data) and whether any
   conversation identifier is reachable without scraping. Feeds the owner's decision on a second
   source.
+
+### Progress since this ADR was written (status stays Proposed)
+
+- **Spike A (BUG-01), Windows: substantially answered by the implementer** (Electron 44.4.3, Windows 11,
+  verified by reading the OS toast store; harness only, **not confirmed against a real signed-in Chat**):
+  the page `new Notification()` produces a real toast; `ServiceWorkerRegistration.showNotification()`, from
+  the page or from Chat's own service worker, produces **none**. The cause is therefore in the
+  service-worker notification path, not in OS suppression or app identity alone. Dev and packaged builds
+  shared one AUMID; that is fixed.
+- **Mechanism M2 is feasible on 44.4.3 and implemented:** a service-worker preload
+  (`session.registerPreloadScript({ type: 'service-worker' })`) patches the worker's `showNotification`
+  through `contextBridge.executeInMainWorld`, forwards it over `ServiceWorkerMain.ipc` (validated by the
+  worker's scope origin, chat only), and the main process re-raises it as an Electron `Notification`. The
+  page-side call is forwarded the same way, and an unread-count fallback (M3) covers the unmatched case. So
+  **trigger T2 has not fired**: BUG-01 was not an Electron limitation, and the ADR-0002 fallback was not
+  needed as the only route. Electron is retained.
+- **Trade-off accepted for now:** the original `showNotification` is not called, so Chat's worker
+  `notificationclick` handler and `getNotifications()` never fire; a toast click only brings the window
+  forward (FR-05c step 1).
+- **Still open:** Spike C on a real Chat (what the payload carries; whether the chat name is in the title;
+  whether the `tag` names a sender or a conversation; what `(N)` counts), so FR-05b and FR-05c step 2 remain
+  the owner's decision; a real click on a real toast on real Chat; Spike B (Meet) not started; Linux delivery
+  never verified. Details: [notifications.md](../architecture/notifications.md).
 
 ## Alternatives considered
 

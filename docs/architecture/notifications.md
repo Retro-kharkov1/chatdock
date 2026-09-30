@@ -2,184 +2,189 @@
 
 <overview>
 The implementation surface for FR-05, which [requirements.md](../business/requirements.md) splits into
-three parts of different certainty: **FR-05a** (a native notification appears while the window is
-hidden, minimized or unfocused; unconditional), **FR-05b** (title = chat name, body = message; conditional)
-and **FR-05c** (click brings the window forward, unconditional; click opens *that* conversation,
-conditional). The decision record is [ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md)
+three parts of different certainty: **FR-05a** (a native notification appears while the window is hidden,
+minimized or unfocused; unconditional), **FR-05b** (title = chat name, body = message; conditional) and
+**FR-05c** (click brings the window forward, unconditional; click opens *that* conversation, conditional).
+The decision record is [ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md)
 (Spikes A and C); [ADR-0002](../adr/0002-notification-delivery-mechanism.md) is the history of the
 page-`Notification` design and of the `backgroundThrottling` incident.
 
-**Status: the delivery mechanism is not decided.** Everything under "Candidate delivery mechanisms" is a
-design to be chosen between once Spikes A and C report; nothing there is a claim about how Google Chat
-or Electron actually behave. Statements tagged **[U]** are unverified. Statements about the current code
-cite `file:line` as of 2026-09-30 and must be re-checked when the code moves.
+**Status.** The BUG-01 fix is implemented: Chat's service-worker and page-initiated
+`showNotification()` calls are intercepted and re-raised as main-process Electron toasts (mechanism **M2**),
+with an unread-count fallback (**M3**). What is **not** delivered: the specific-conversation click
+(FR-05c step 2) and any claim that the chat name is in the title (FR-05b), both still Spike C and an owner
+decision. Section 1 describes what the code does and cites the files; it is a description of the code as
+verified on 2026-09-30 after the fix, so re-read the named file before relying on a detail. Statements
+tagged **[U]** are unverified.
 </overview>
 
 <architecture>
-## 1. What the code does today (input as of commit d7f69e1, 2026-09-30; not a durable description: an implementer is concurrently adding `src/main/attention.js` and `src/main/appIdentity.js`, so re-read the code before relying on a row)
+## 1. What the code does (verified in `src/`, 2026-09-30, after the BUG-01 fix)
 
-| Piece | Where | Behaviour |
+### Delivery paths
+
+| Path | Files | Behaviour |
 |---|---|---|
-| Page-`Notification` bridge | `src/main/notifications.js:90-117` (`buildNotificationBridgeScript`), injected by `src/main/index.js:209-223` on `dom-ready`, `did-finish-load` and every sound/mute toggle | Wraps **`window.Notification`** in the page's main world: mute returns a stub, sound-off forces `silent`, and adds a `click` listener that calls `window.__gcdBridge.notificationClicked()`. It does **not** touch `ServiceWorkerRegistration.showNotification`. |
-| Click handling | `src/main/index.js:430-439`, `src/preload/preload.js:12-14` | `notification:clicked` (sender origin checked) then `focusMainWindow()` (restore if minimized, show, focus). Nothing resolves a conversation. |
-| Permission | `src/main/session.js:46-48` | Request handler grants only `notifications`; there is no permission *check* handler. |
-| Unread indicator | `src/main/index.js:363-368`, `src/main/notifications.js:130-134` | `page-title-updated` is parsed for a `(N)` prefix; drives the Windows overlay badge (`tray.js:129-137`), the tray glyph and the blink gate. Event-driven, no polling. |
-| Toast identity | `src/main/index.js:121-125` | `app.setAppUserModelId('dev.retro-kharkov1.google-chat-desktop')` is called unconditionally, and `package.json` `build.appId` is the same string, so a dev run and a packaged build share one AppUserModelID. |
-| Persistent log | none | The only diagnostics are `console.error` calls (`index.js:216, 433`). There is **no persistent application log** (needed by FR-05c, see section 6). |
+| **Service-worker interception (M2)** | `src/preload/serviceWorkerPreload.js`, `src/main/serviceWorkerNotifications.js` | `session.registerPreloadScript({ type: 'service-worker' })`. The preload runs in the worker's **isolated** world, so it uses `contextBridge.executeInMainWorld` to patch the worker's `ServiceWorkerRegistration.prototype.showNotification`, and sends `{ title, body, silent, tag }` over IPC channel `notification:sw-show` (`ipcRenderer.send`). Main receives it on `ServiceWorkerMain.ipc` and accepts it **only** if the worker's **scope origin** is in the notification allowlist (chat origin only, not the sign-in origin). |
+| **Page-initiated `showNotification` (M2, page side)** | `src/main/notifications.js` (injected script) | The same patch on the page realm's `ServiceWorkerRegistration.prototype.showNotification`, forwarded over `notification:show`. Calls made inside Chat's own worker never pass through the page realm, hence the worker path above. |
+| **Page `window.Notification` (M1)** | `src/main/notifications.js` | Still wraps the page constructor: mute returns a stub, sound-off forces `silent`, adds a click listener (`notification:clicked`) and now also sends `notification:arrived` so the attention controller sees the arrival. Chat's own click handling on that object is untouched. |
+| **Unread-count fallback (M3)** | `src/main/nativeToast.js`, `src/main/unreadTracker.js` | See "Fallback" below. The documented floor. |
 
-### Reported diagnosis (earlier `electron-developer` investigation, reproduced in harnesses, **not confirmed against a real signed-in Chat**)
+**Policy on both interception paths: the original `showNotification` is NOT called.** In Electron 44.4.3
+it shows no toast (reported by the implementer, verified by reading the Windows toast store; not re-run
+here), and calling both would double up if Electron ever fixed it. The original is called **only** as a
+fallback when the bridge is missing or throws, so a notification is never silently lost.
 
-| Report | Consequence for the design |
-|---|---|
-| `ServiceWorkerRegistration.showNotification()` shows no toast in Electron 44.4.3 on Windows | If Chat notifies through the service worker (the 2026-09-30 finding in FR-05's history), the bridge above never sees it and Chromium may not show it either. Candidate cause of BUG-01. [U] |
-| The bridge only wraps `window.Notification` | Confirmed by reading the code (table above). |
-| Dev and packaged builds share one AUMID; the toast header shows "Electron" | Confirmed for the AUMID (table above). The header text is a report. [U] |
-| A synthetic toast click produced `close`, not `click` | If real clicks behave the same, no click-based design (FR-05c) works. Spike A must click a **real** toast. [U] |
+**Recorded trade-off:** because the browser never owns the notification, Chat's worker
+`notificationclick` handler and `registration.getNotifications()` **never fire**. A native toast click only
+brings the window forward (FR-05c step 1). Opening the conversation (step 2) and any behaviour that relies
+on the worker's click handler are **not** delivered by this path. If Spike C shows Chat's own click routing
+would have worked, this trade-off is what made it unreachable (mechanism M0 above is therefore closed for
+this build).
 
-None of these is a settled root cause. The owner also observed that toasts started appearing after
-diagnostic activity, so the failure may be state-dependent (Focus Assist, per-app notification settings,
-AUMID/shortcut registration) rather than a code defect. The design below does not assume either.
+### Main-process toast service (`src/main/nativeToast.js`)
 
-## 2. Page Visibility dependency (kept; still load-bearing for any page-level path)
+Everything Electron-shaped is injected. Rules, in the order they are applied to an intercepted request:
+- **Sanitising:** title and body are `slice` (to 2x the cap), markup-stripped, then `slice` again to the
+  cap (title 200, body 1000); any remaining `<` or `>` is replaced by a look-alike so a Linux notification
+  server cannot render markup. Capping first keeps the regex linear on hostile input. No usable title means
+  no toast.
+- **Tag:** forwarded, capped at 100 characters; a **same-tag toast replaces** (closes) the previous one
+  (at most 50 tags tracked).
+- **De-dup:** an identical title+body within **200 ms** is treated as double delivery and dropped.
+- **Rate limit:** at most **3 toasts per second**; the excess is coalesced into one summary toast
+  ("N more notifications"), which is itself mute-aware.
+- **Mute (FR-12):** a muted request creates no toast but still counts as an arrival (the attention
+  controller applies mute itself). **Sound (FR-11):** `silent` is forced when sound is off.
+- **Click:** the toast's `click` calls `focusMainWindow()` (restore, show, focus): FR-05c step 1 only.
+  Live toast objects are held until closed so they are not garbage-collected before a click.
+- **No toast for the conversation being viewed (FR-05a):** the shell only surfaces calls Chat chose to
+  make on this path, so Chat's own suppression stays in force. The fallback applies its own coarser rule.
+
+### Fallback (M3) and the shared unread baseline
+
+`src/main/unreadTracker.js` is **one** baseline shared by the attention controller and the toast service, so
+they cannot disagree about whether a title change was an arrival. Raw `(N)` counts go in; only two events
+come out: `onIncrease(n)` (a real rise) and `onObserve(n)` (the baseline, a decrease, a confirmed zero;
+never starts anything). Rules:
+- `onPageLoaded` seeds the baseline from the count already in the title at `did-finish-load`.
+- The first non-zero count after a load is the baseline (pre-existing unread), not an arrival.
+- A rise within **4 s** of the baseline being set raises the baseline instead of counting as an increase
+  (Chat ramps the count while spaces load); a genuine message in that window is covered by the arrival events.
+- A zero counts only after it persists **1 s** (a transient title without `(N)` parses as 0).
+- Only zeros for **20 s** after load makes the baseline 0, so a later 0 to N is an increase.
+
+On a real increase the toast service matches it to an arrival: one arrival matches one increase (an arrival
+up to **5 s before** it, or one within **2.5 s after**). Only an **unmatched** increase raises a **generic**
+toast, and only if the main window is not focused and the count is non-zero. That toast currently reads
+"1 unread message" / "N unread messages". **Delta from this doc's earlier rule:** whether `(N)` counts
+messages or conversations is unknown [U], so a wording that claims a message count may be false; the safe
+wording is "New message in Google Chat". Left for the implementer to confirm or change (open question 3).
+Content is generic by necessity: this path meets FR-05a but not FR-05b.
+
+### Permissions
+
+`src/main/session.js` grants the `notifications` permission **only to the notification origins** (the chat
+origin, plus a loopback origin in a dev run) in **both** the request handler and the (new) check handler;
+**every other permission is denied**. That includes camera, microphone and display capture (the Meet gate is
+still design, see [meet-call-window.md](meet-call-window.md)) and **clipboard writes**, which were already
+denied before this change; that is tracked as **BUG-02**, pending the owner's confirmation. A dev run only:
+`GCD_DEV_START_URL` (unpackaged builds, loopback `http`, no userinfo; `src/main/origins.js`) points the
+window at a local harness page and adds its origin to both lists.
+
+### Toast identity (Windows)
+
+`src/main/appIdentity.js`: a packaged build uses the literal `dev.retro-kharkov1.google-chat-desktop`; a dev
+run appends `.dev`, so a dev run cannot impersonate the installed app. See
+[packaging-release.md](packaging-release.md) for why the id is a literal and must not change.
+
+## 2. Page Visibility dependency (kept; load-bearing for any page-level path)
 
 Google Chat decides whether to raise a **page-level** notification by reading `document.visibilityState`.
 If the page believes it is `"visible"` it does not alert. That is why `backgroundThrottling` must stay at
 Electron's default and why the hidden-autostart path forces a real `showInactive()` then `hide()` (see
 [tray-lifecycle.md](tray-lifecycle.md)); the full incident is ADR-0002 Revision 3. Any change that could
 distort `visibilityState` (a throttling flag, an overlay window) must be verified by hiding the window and
-receiving a real message, not by reasoning (space rule `hidden-window-must-stay-live`).
+receiving a real message, not by reasoning (space rule `hidden-window-must-stay-live`). Whether the
+service-worker path also consults visibility is unknown [U] (Spike C).
 
-This dependency governs **only the page-level path**. Whether the service-worker path also consults
-visibility is unknown [U] (Spike C).
+## 3. Mechanism status (against the earlier candidates)
 
-## 3. Candidate delivery mechanisms (choose after Spikes A and C)
+| ID | Mechanism | Status |
+|---|---|---|
+| M0 | Chromium shows Chat's own notification natively | **Closed for this build**: the toast does not appear in Electron 44.4.3 / Windows (implementer's finding), and the shipped policy no longer calls the original. |
+| M1 | Page `Notification` bridge | Implemented, extended with the arrival signal. |
+| **M2** | Intercept `showNotification`, re-raise as a main-process `Notification` | **Feasible on 44.4.3 and implemented** on both the worker and page paths. The Experimental `ServiceWorkerMain` API works for this. It yields **FR-05a, and FR-05c step 1**; the chat name in the title (FR-05b) depends on whether Chat's payload carries it, which is Spike C and **not yet established**. |
+| M3 | Generic toast from an unmatched unread increase | Implemented as the floor. |
 
-The requirement (FR-05a) is a native toast in three "not focused" states. Four mechanisms can deliver it;
-they are ordered by how little they add.
+**M2 does not deliver FR-05c step 2** (opening *that* conversation). That needs a further mechanism, for
+example driving Chat's router from an identifier, which is **not designed** here, touches the space rule
+`wrapper-not-a-rewrite`, and is a separate owner decision (FR-05's open question) and a separate design.
 
-| ID | Mechanism | Content (FR-05b) | Click (FR-05c) | What must be true | Status |
-|---|---|---|---|---|---|
-| **M0** | Chromium shows Chat's own notification natively; the shell only fixes the environment (toast identity, permissions, OS state) | Chat's own | Chat's own service-worker `notificationclick` handler | The toast fails today for an environmental reason, not a missing bridge (Spike A). The click reaches the handler and it routes to the conversation. | Zero code if it holds. [U] |
-| **M1** | The current page-`Notification` bridge | Chat's own | Focus only, plus whatever Chat's page does | Chat calls the page `Notification`, not the service worker. | Implemented; reported not to cover the service-worker path. |
-| **M2** | Observe Chat's service-worker `showNotification` call and re-raise it as a **main-process** Electron `Notification` | Title and body from the payload (FR-05b, if the payload carries the chat name) | Native `notification.on('click')` in main: **step 1 only** (window forward). Step 2 (open that conversation) is **not** delivered by M2 | Electron can run script in the service-worker context (`session.registerPreloadScript` documents `service-worker` contexts; `ServiceWorkerMain` exposes `ipc`, `send`, `scope`, `scriptURL`, and is marked Experimental; the fetched docs do not say notification events are supported). The payload carries the chat name. [U] | Candidate. |
-| **M3** | The ADR-0002 Revision 3 fallback: a main-process `Notification` raised when the `page-title-updated` unread count **increases** | Generic, worded so it stays true whatever the count means: "New message in Google Chat" (never "N new messages": see §5 on what `(N)` counts) | Focus only (native click) | Only that the title carries a count. | Documented floor: satisfies FR-05a and FR-05c step 1, not FR-05b or FR-05c step 2. |
+**One path per message.** The de-dup and the arrival-matching above are how a message avoids a second toast
+from the fallback; the page-created `window.Notification` toast is the browser's own and is never also
+re-raised.
 
-Decision rule, so the choice is mechanical once evidence exists:
+## 4. Tray unread indicator
 
-1. If Spike A shows M0 works end to end (real toast, real click), stop: fix the environment, add no bridge.
-2. Else if Spike C shows a usable payload and the owner picks answer **(a)** in FR-05's open question, build
-   M2. **Be plain about what M2 buys: at best FR-05b (chat name in the title) and FR-05c step 1 (window
-   forward).** FR-05c step 2 (open *that* conversation) needs a further mechanism, for example driving
-   Chat's router from an identifier, which is **not designed** here and touches the space rule
-   `wrapper-not-a-rewrite`; it is a separate owner decision and a separate design. Building M2 does not make
-   step 2 available.
-3. Else build M3 (owner answer **(b)**, or M2 proves infeasible). M3 is the guaranteed floor for FR-05a.
+`page-title-updated` remains the unread-count source: it drives the Windows overlay badge, the tray glyph and
+the shared tracker. The tray glyph precedence is now **unread wins over muted** (`resolveIconState` in
+`src/main/tray.js`): the static unread indicator is visible whenever anything is unread, independent of mute
+and focus, as FR-05a and FR-12 require; the muted glyph shows only when nothing is unread. (The earlier
+muted-first precedence hid unread on Linux.)
 
-**One path per message.** Two paths active for the same message would show two toasts. Whatever is built
-must name which path is authoritative and suppress the others (for example M2 or M3 active means the M1
-bridge stays installed for mute/sound but must not raise a second toast). The de-duplication key is
-undecided [U] and is an implementation question for Spike C.
+## 5. Application log (still required, not yet built)
 
-### Rules that hold for every mechanism
+FR-05c's degraded outcome requires a **warning-level entry in a persistent application log**. The code still
+only calls `console.error` (for example `index.js` bridge-injection failure, rejected origins, toast
+`failed`, service-worker hook failures), so there is **no persistent log** and the FR-05c requirement is
+unmet. Minimum contract, unchanged: a size-bounded, rotated file under `app.getPath('userData')`; at least
+`warn` and `error`; **never** message text, sender or chat names, cookies, tokens or credentials (space rule
+`electron-security-baseline`); a click-resolution warning records only that resolution failed, the mechanism
+in use and a timestamp. The service-worker console lines (`[gcd-sw]`) are already filtered by the worker's
+scope before being logged, so web-controlled text from other scopes is never surfaced.
 
-- **Mute (FR-12) and sound (FR-11):** mute means no toast is created; sound-off creates it with
-  `silent: true`. Under M1 that is the injected wrapper; under M2/M3 it is the main-process code that
-  creates the `Notification`, reading `settingsStore` directly. Muting never affects the unread indicator.
-- **No toast for the conversation being viewed (FR-05a).** Under M0/M1/M2 that decision stays with Chat,
-  because the shell only surfaces calls Chat chose to make. Under M3 Chat's decision is invisible, so the
-  shell applies a coarser rule: **no toast while the main window is focused**. That is a superset of the
-  requirement (a focused window showing a *different* conversation also gets no toast); it is the closest
-  M3 can get without the conversation id, and it is stated here so it is not mistaken for full parity.
-- **Unread indicator (FR-05a):** global, independent of focus, stays until the unread count is zero. The
-  source is the `page-title-updated` count (section 5).
-- **Click, step 1 (unconditional):** `focusMainWindow()` (restore, show, focus). This already exists
-  (`index.js:165-170`) and covers hidden-to-tray and minimized.
-- **Click, step 2 (conditional, answer (a) only):** show the conversation the notification was for. How is
-  Spike C's output and needs an owner decision because reaching a conversation from a payload id means
-  driving Chat's router, which touches the space rule `wrapper-not-a-rewrite`. Not designed here.
+## 6. Failure modes to log, not swallow
 
-## 4. Windows toast identity (proposal for Spike A to validate)
+- Page-bridge `executeJavaScript` injection failure (logged distinctly).
+- A service-worker preload or hook failure: logged; the page bridge and the unread fallback remain, so a
+  broken worker path degrades to generic toasts rather than to nothing.
+- A worker request from a disallowed scope, or a page channel from a disallowed origin: rejected and logged.
+- A click that cannot be resolved to a conversation (FR-05c): warning, window still comes forward (once the
+  log exists).
+- Stale toast clicked after the app fully exited: no live process to receive it; a known limit.
 
-Toasts on Windows are attributed to an AppUserModelID that must match a Start Menu shortcut carrying it
-(Electron notifications tutorial, cited in ADR-0004). Today dev and packaged share one AUMID
-(`index.js:124`). Proposal, **not yet validated**: derive the AUMID from `app.isPackaged` (the packaged
-value stays the `appId`; a dev run gets a distinct suffix) so a dev run cannot register or shadow the
-identity a packaged install owns. Open point: whether the NSIS installer's shortcut carries the AUMID
-that the runtime call sets [U]. Spike A owns the answer; until then do not change the packaged value,
-because renaming an AUMID can orphan the user's per-app notification settings.
+## 7. Verification (space rule `verify-on-a-real-desktop`)
 
-## 5. Tray unread indicator and the arrival event
-
-`page-title-updated` remains the unread-count source, whichever delivery mechanism is chosen. Two facts
-that FR-14 (attention indicators, see [tray-lifecycle.md](tray-lifecycle.md)) depends on:
-
-- **What `(N)` counts is unknown [U].** The title prefix may be the number of unread **conversations**, not
-  messages, so a second message in an already-unread conversation might not change it (an arrival missed by
-  the count-increase trigger) and "N new messages" would be false. Treat it as a Spike A/C observation: type
-  several messages into one conversation and one into another, and record how the title moves. Until then no
-  user-visible text may claim a message count.
-- Today the only signal is a count, so a "new message arrived" event can be derived only as **the count
-  increased** (FR-14's stated degraded trigger). M2 and M3 produce a real arrival event (the moment the
-  main-process `Notification` is created); the attention code should accept either source through one
-  function so the implementation states which trigger it uses, as FR-14 requires.
-- **Delta from the requirement, tray glyph precedence** (`src/main/tray.js:41-45`): `resolveIconState`
-  returns `'muted'` before `'unread'`, so on Linux, where the tray glyph is the only unread signal, an
-  unread message while muted is **not visible**. FR-05a and FR-12 both require the indicator to stay
-  visible while muted. Windows is unaffected because the overlay badge (`tray.js:129-137`) is set
-  independently. Options: a combined muted+unread glyph (new icon art, an owner call) or keeping the
-  unread glyph and expressing mute in the tooltip. Open question 4 below.
-
-## 6. Application log (new component required by FR-05c)
-
-FR-05c's degraded outcome requires a **warning-level entry in a persistent application log**. No such log
-exists (section 1). Minimum contract:
-
-- A file under `app.getPath('userData')` (for example `logs/`), size-bounded with rotation, so a long-lived
-  tray process cannot grow it without limit.
-- Levels at least `warn` and `error`; `console.*` output is not a substitute.
-- **Never** message text, sender names, chat names, cookies, tokens or any credential (space rule
-  `electron-security-baseline`). A click-resolution warning records only that resolution failed, the
-  mechanism in use and a timestamp.
-- The existing `console.error` degradation messages (`index.js:216, 433`) move onto it so they survive
-  a packaged run with no console.
-
-## 7. Failure modes to log, not swallow
-
-- `executeJavaScript` injection failure (already logged distinctly, `index.js:215-222`); with the log in
-  section 6 it becomes persistent.
-- The wrapper never invoked because Chat redefines `Notification` after both lifecycle events.
-- A service-worker preload (M2) that fails to register or receives no events: the app must log that the
-  service-worker path is not observing, or a silent M2 failure looks identical to "no messages".
-- A click that cannot be resolved to a conversation (FR-05c): warning, window still comes forward.
-- Stale toast clicked after the app fully exited: the click cannot reach a live process; this is a known
-  limit, not fixable without native toast-activation relaunch (out of scope, unchanged from ADR-0002).
-
-## 8. Verification (space rule `verify-on-a-real-desktop`)
-
-Every FR-05 scenario tagged `[manual-only]` needs a real toast on a real desktop, and the report must
-state which platform was tested. Windows verification does not establish Linux (libnotify) behaviour, which
-has never been run in this repo. The `[automatable]` scenarios use a stubbed notification source and stubbed
-handlers; a stub cannot prove a real toast appears or a real click is delivered (the reported synthetic-click
-result is exactly that gap).
+Every FR-05 scenario tagged `[manual-only]` needs a real toast on a real desktop, and the report must state
+which platform was tested. Windows verification does not establish Linux (libnotify) behaviour, which has
+never been run in this repo. The `[automatable]` scenarios use stubs; a stub cannot prove a real toast
+appears or a real click is delivered. **Not yet confirmed against a real signed-in Google Chat** (only a
+harness): what Chat's payload carries (title, tag, data), whether the worker path fires in real use, and
+what `(N)` counts.
 
 ## Open questions and assumptions
 
-1. **Owner:** FR-05 answer (a) or (b) (bounded second source, or generic content and focus-only click).
-   Blocks M2 versus M3.
-2. **Spike A:** does a real (not synthetic) click on a real toast raise `click`? If not, FR-05c is not
-   satisfiable by any of M1-M3 on Windows without a different activation route.
-3. **Spike C:** does the payload carry the chat name, and does Chat's service-worker `notificationclick`
-   route to the conversation when the click is delivered to it (M0)?
-4. **Owner/UX:** tray glyph precedence while muted with unread (section 5).
-5. **Assumption:** M3's coarser suppression rule (no toast while focused) is acceptable as the degraded
-   behaviour.
-6. **Assumption:** the AUMID split (section 4) is safe; needs Spike A evidence.
+1. **Owner:** FR-05 answer (a) or (b) for FR-05b and step 2 (bounded second source, or generic content and
+   focus-only click). M2 is in place either way.
+2. **Spike C (real Chat):** does the payload carry the chat name; is the worker actually the source; does the
+   payload's `tag` name the sender or the conversation?
+3. **`(N)` semantics [U] and the fallback wording:** conversations or messages; change the fallback text to
+   "New message in Google Chat" if it cannot be settled.
+4. **Version-id caveat:** the worker `running-status-changed` details reported `versionId` 0 in the
+   implementer's probe, so the hook is keyed on the wrapper object, not the id; a second worker reporting 0 is
+   indistinguishable through this API and is flagged for the real-Chat check.
+5. **The trade-off above** (worker click handler and `getNotifications()` never fire) is accepted for now;
+   revisit if Spike C finds Chat needs them.
+6. **BUG-02 (clipboard writes denied):** pending the owner.
+7. **Application log** (section 5) is a required, unbuilt component.
 </architecture>
 
 <topics>
 - [ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md) — Spikes A, B, C and escalation triggers.
 - [ADR-0002](../adr/0002-notification-delivery-mechanism.md) — history of the page-`Notification` design.
 - [Tray & Lifecycle](tray-lifecycle.md) — FR-14 attention indicators that consume the arrival event.
-- [IPC Contract](ipc-contract.md) — `notification:clicked` and the provisional service-worker channel.
+- [IPC Contract](ipc-contract.md) — the notification channels and the worker channel.
+- [Packaging & Release](packaging-release.md) — the AppUserModelID.
 - [Requirements FR-05](../business/requirements.md) — the authority.
 </topics>
