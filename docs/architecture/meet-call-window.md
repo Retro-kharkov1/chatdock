@@ -6,7 +6,9 @@ The requirements are [FR-16 and NFR-07](../business/requirements.md); the decisi
 [ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md) Spike B. **Delivery is
 conditional on Spike B**: real Meet inside Electron is not a documented, supported configuration and is
 unverified. Statements tagged **[U]** are unverified; nothing here has been run. `file:line` citations of
-current code are inputs as of commit d7f69e1 and will move.
+current code name a file or symbol rather than a line, because the code moves. Nothing in this document is
+implemented yet; the BUG-01 change touched the notification, session-permission and attention code, not the
+Meet path.
 
 This is the **single exception** to "external links open in the system browser". Its authority is the
 space rule `electron-security-baseline`; if this document and that rule ever differ, the rule wins.
@@ -67,7 +69,7 @@ Nothing in this design injects script into Meet or the call window (space rule `
 | App view (`callUiView`) | child `WebContentsView` of the call window, local HTML, own preload | new (section 3a) | The app-drawn loading, load-error, crashed and status-strip UI. Never shows Meet. |
 | Permission handlers | `src/main/session.js` | changed | Replace "grant `notifications`, deny the rest" with origin-aware request **and** check handlers. |
 | Display-media handler + picker | main + small local renderer | new | Screen-share source choice. |
-| `setWindowOpenHandler`, `will-navigate` on the main window | `src/main/index.js:338-357` | changed | Route through `classifyExternalUrl`. |
+| `setWindowOpenHandler`, `will-navigate` on the main window | `createWindow` in `src/main/index.js` | changed | Route through `classifyExternalUrl`. |
 
 ## 2. URL classification contract
 
@@ -98,7 +100,7 @@ only `will-navigate` in scope, so a redirect chain into Meet is an open question
 ## 3. Call window
 
 - `new BrowserWindow` with `webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true,
-  partition: PARTITION }` (`src/main/session.js:14`, the main window's session, so the Google login
+  partition: PARTITION }` (`PARTITION` in `src/main/session.js`, the main window's session, so the Google login
   carries over). **The Meet web contents has no preload and no bridge**: nothing is exposed to Meet. The
   app-drawn UI lives in a separate view (section 3a). Automated tests assert the options each web contents
   is **created with** (NFR-07), not only the live contents.
@@ -308,7 +310,7 @@ neither signals a live call reliably. The only signal is the page's own objectio
 ### Rules for any of P1 and P2
 
 1. **A confirm must never block OS shutdown or `before-quit`.** `before-quit` sets `isQuitting`
-   (`src/main/index.js:418-421`, as of d7f69e1) and is also what an OS shutdown reaches [U on Windows and
+   (the `before-quit` handler in `src/main/index.js`) and is also what an OS shutdown reaches [U on Windows and
    Linux]. It never calls `preventDefault()` and never shows a dialog. Confirms are **asynchronous**
    dialogs, never a synchronous event-loop-blocking one.
 2. **Intercept, then destroy; never hide.** Answering "close" **destroys** the window; there is no path
@@ -446,8 +448,10 @@ and must decide by origin, not by window.
   the top-level page origin equal `https://meet.google.com` exactly. Refuse: `http://meet.google.com`, any
   other origin including `https://chat.google.com`, a Meet frame embedded in a non-Meet page, and a
   non-Meet frame embedded in a Meet page.
-- **Both handlers.** `setPermissionRequestHandler` and a **new** `setPermissionCheckHandler` (none exists
-  today; `src/main/session.js:46-48` only has the request handler). Electron notes that most web APIs do a
+- **Both handlers.** `configurePersistentSession` in `src/main/session.js` **already installs both** a
+  request and a check handler (added by the BUG-01 change), and both currently grant only `notifications`,
+  and only to the chat origin (plus a dev loopback origin), denying every other permission. The Meet media
+  gate below **extends** those two handlers; it does not add a check handler. Electron notes that most web APIs do a
   check and then a request if the check is denied, so a request-only policy is incomplete.
 - **Inputs available** (Electron session docs, fetched 2026-09-30): the check handler receives
   `webContents` (which **may be null**), the permission name, `requestingOrigin` and a `details` object that
@@ -465,11 +469,12 @@ and must decide by origin, not by window.
   `getDisplayMedia` is served by that handler (section 5), so the permission handlers'
   `display-capture` rule is defence in depth and must not be relied on as the only barrier. Both are
   origin-gated, and the display-media handler is tested on its own.
-- **Notifications unchanged (NFR-07).** Today the request handler grants `notifications` to any origin and
-  there is no check handler. Adding a check handler can change what the page observes in
-  `Notification.permission`. The implementer must preserve the current observable behaviour (test:
-  `Notification.permission` and a notification still work in the main window after the change) rather than
-  assume a default.
+- **Notifications unchanged (NFR-07).** The main window's notifications permission is now granted to the
+  chat origin only, in both handlers; the Meet gate must leave that behaviour exactly as it is (test:
+  `Notification.permission` and a notification still work in the main window after the change).
+- **Clipboard writes are denied today** (the handlers deny everything but notifications, and did before the
+  BUG-01 change). That is tracked as **BUG-02**, pending the owner's confirmation. Adding the Meet media
+  grant must not widen anything else, and any clipboard decision is a separate call.
 
 ## 5. Screen share and the source picker
 
@@ -531,7 +536,7 @@ Linux Meet stays unverified (ADR-0004 Spike B).
    `will-navigate`? NFR-07 does not require it. Assumption: not required now; revisit if Chat is observed
    to redirect.
 4. **Non-web schemes (owner and `security-engineer`):** the current handler passes **every** other URL to
-   `shell.openExternal` (`index.js:338-340, 353-356`), including non-web schemes. FR-16 and the space rule
+   `shell.openExternal` (the `setWindowOpenHandler` and `will-navigate` handlers in `index.js`), including non-web schemes. FR-16 and the space rule
    say "every other URL still goes to the system browser", so this document does not restrict it.
    **Recommendation: allow-list `http`, `https` and `mailto` and drop everything else**, because an
    unrestricted `openExternal` on a page-supplied URL can launch arbitrary registered handlers. It is a

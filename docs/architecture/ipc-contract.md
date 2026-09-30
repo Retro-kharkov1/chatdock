@@ -1,61 +1,60 @@
 # IPC Contract
 
 <overview>
-The complete, narrow surface `src/preload/preload.js` exposes via `contextBridge`, plus the one
-main-world injection used by the notification-click bridge (a different mechanism — see
-[Notifications](notifications.md)), plus the separate, smaller surface the Settings window's own
-preload exposes (see [Tray & Lifecycle](tray-lifecycle.md)'s "Settings window (FR-15)"), plus two
-**provisional** surfaces added by the 2026-09-30 requirements (the Meet contents has none; the call
-window's app view, the screen-share picker and an optional service-worker channel are sketched). This is the contract the
-implementer and the tests both cite; nothing beyond this list is exposed to the renderer(s).
+The complete, narrow surface `src/preload/preload.js` exposes via `contextBridge` (three fire-and-forget
+senders), the service-worker preload's one bridge and channel (`src/preload/serviceWorkerPreload.js`), plus
+the one main-world injection used by the notification bridge (a different mechanism, see
+[Notifications](notifications.md)), plus the separate, smaller surface the Settings window's own preload
+exposes (see [Tray & Lifecycle](tray-lifecycle.md)'s "Settings window (FR-15)"), plus two **provisional**
+surfaces added by the 2026-09-30 requirements (the Meet contents has none; the call window's app view and
+the screen-share picker are sketched, not built). This is the contract the implementer and the tests both
+cite; nothing beyond this list is exposed to the renderer(s).
 </overview>
 
 <architecture>
 ## Main window — `contextBridge.exposeInMainWorld('__gcdBridge', { ... })`
 
 Exposed at `window.__gcdBridge` inside the renderer's **isolated world** (i.e. reachable from the
-preload's own code, and from the main-world injection in `notifications.md` via the page's global
+preload's own code, and from the main-world injection in `notifications.js` via the page's global
 `window` object once the preload has run — `contextBridge`-exposed APIs are visible on the page's
 `window` object by design, that is the whole point of `exposeInMainWorld`).
 
 | Exposed function (`window.__gcdBridge.<name>`) | Wire IPC channel | Direction | Payload | Purpose |
 |---|---|---|---|---|
-| `notificationClicked()` | `'notification:clicked'` | renderer → main, `ipcRenderer.send` (fire-and-forget) | none | Sent by the injected page-`Notification` click wrapper (mechanism M1 in [notifications.md](notifications.md)). Main responds by showing/focusing the window (FR-05c step 1). No response value. **Mechanism-dependent:** if M0, M2 or M3 is chosen, the click is delivered by the OS notification to main (or to Chat's own service worker) and this channel may become unused; remove it then rather than leave an unused bridge. It carries no conversation id, so it cannot serve FR-05c step 2. |
+| `notificationClicked()` | `'notification:clicked'` | renderer → main, `ipcRenderer.send` (fire-and-forget) | none | Sent by the injected page-`Notification` click wrapper (mechanism M1). Main shows/focuses the window (FR-05c step 1). It carries no conversation id, so it cannot serve step 2. |
+| `notificationArrived()` | `'notification:arrived'` | renderer → main, `send` | none | The page created its own native toast (`window.Notification`). An **arrival signal only**: feeds the attention controller and the toast service's arrival matching. |
+| `notificationShow(payload)` | `'notification:show'` | renderer → main, `send` | `{ title: string, body: string, silent: boolean, tag: string }` | A page-initiated `ServiceWorkerRegistration.showNotification`, which Electron does not display. Main sanitises it (title 200, body 1000, tag 100, markup stripped) and re-raises a native toast (mechanism M2). The original is not called unless this send throws. |
 
 The two names are deliberately different: `notificationClicked` is the JS function exposed on
-`window.__gcdBridge` (renderer-facing API surface, camelCase per JS convention); `'notification:clicked'`
-is the underlying wire channel name passed to `ipcRenderer.send`/`ipcMain.on` (colon-namespaced per
-`electron-desktop.md`'s IPC channel-naming convention). The preload implements the former by calling
-`ipcRenderer.send('notification:clicked')` internally — the renderer code and tests never see the
-wire channel name directly, only `window.__gcdBridge.notificationClicked()`. Every other reference
-to this bridge in this doc set (notifications.md's code snippets, this file's own "Sender
-validation" section) uses the wire channel name `'notification:clicked'`, since those are all
-main-process-side concerns.
+`window.__gcdBridge` (camelCase per JS convention); `'notification:clicked'` is the underlying wire
+channel (colon-namespaced per `electron-desktop.md`'s naming convention). The preload implements the former
+by calling `ipcRenderer.send(<channel>)` internally; the renderer code and tests only see
+`window.__gcdBridge.<name>()`. Every other reference to these channels in this doc set uses the wire name,
+since those are main-process-side concerns.
 
-That is the **entire** exposed surface. No `invoke`/`handle` channels exist because nothing in this
-wrapper needs a request/response round trip from the renderer — window state, session, tray, and
-packaging are all main-process-only concerns with no renderer-side trigger.
+That is the **entire** exposed surface: **three fire-and-forget senders**. No `invoke`/`handle` channels exist
+because nothing in this wrapper needs a request/response round trip from the renderer.
 
 ## What is deliberately NOT exposed to the main window
 
 - No filesystem access.
-- No `ipcRenderer` object itself (only the one named function above) — per
-  `electron-desktop.md` §2's mandatory pattern, never expose `ipcRenderer` directly to a renderer
-  loading third-party content.
-- No read access back into main-process state (e.g. no "get window state" call) — nothing in this
-  app's UI needs to read that back into the page.
-- **No settings read/write API of any kind** — see "Settings window" below for exactly why this
-  surface is deliberately kept separate from the one above, not merged into it.
+- No `ipcRenderer` object itself (only the three named functions above) — per `electron-desktop.md` §2's
+  mandatory pattern, never expose `ipcRenderer` directly to a renderer loading third-party content.
+- No read access back into main-process state (no "get window state" call).
+- **No settings read/write API of any kind** — see "Settings window" below for why that surface is kept
+  separate, not merged into this one.
 
-## Sender validation (main window only)
+## Sender validation (main window)
 
-Because the main window loads exactly one, fixed, never-user-navigable-elsewhere origin
-(`chat.google.com`, with `accounts.google.com` allowed only during the sign-in redirect — see
-`will-navigate` allowlist in [Overview](overview.md)), `ipcMain.on('notification:clicked', ...)`
-additionally checks `event.senderFrame`'s origin against that same allowlist before acting, per
-`electron-desktop.md` §2's sender-validation guidance for any handler reachable once the app loads
-remote content. This check applies **only** to the main window's channel — see below for why the
-Settings window's channels do not carry the same requirement.
+Two origin lists exist (`src/main/origins.js`): **navigation origins** (chat, plus the Google sign-in origin
+`accounts.google.com`, provisional per [Overview](overview.md)) and **notification origins** (**chat only**,
+plus a dev loopback origin in an unpackaged dev run). Checks are exact, case-sensitive string equality
+(`src/main/originCheck.js`), never prefix or substring.
+- `notification:clicked` is checked against the **navigation** origins.
+- `notification:arrived` and `notification:show` are checked against the **notification** origins: the
+  sign-in origin has no business raising notifications. A rejected message is logged with its origin.
+This applies **only** to the main window's channels; the Settings window's channels carry no such check (see
+below).
 
 ## Settings window — `contextBridge.exposeInMainWorld('__gcdSettingsBridge', { ... })`
 
@@ -129,15 +128,23 @@ picker replaces it **only if Spike B shows the conditions in [Meet Call Window](
 (the user chooses explicitly; a silent or pre-selected source is never allowed on any platform). If Spike B
 shows they do not, this window is used there too. The OS-picker path adds no channel.
 
-## Service-worker context — PROVISIONAL, only if mechanism M2 is chosen
+## Service-worker context (implemented, mechanism M2)
 
-If [Notifications](notifications.md) mechanism **M2** is built, a service-worker preload script forwards
-Chat's `showNotification` payload to main over the service-worker IPC that Electron's `ServiceWorkerMain`
-exposes (`ipc`, `send`; Experimental, [U]). Contract if built: a single fire-and-forget channel from the
-service-worker context to main carrying only `{ title, body, tag, icon }` (fields Chat supplied; no cookies,
-no page state). Main must validate that the sender's `scope`/`scriptURL` origin is exactly
-`https://chat.google.com` before acting, the same rule as the sender validation above. Not built, not
-chosen: it exists so the surface is reviewed before code, not after.
+`src/preload/serviceWorkerPreload.js` is registered with `session.registerPreloadScript({ type:
+'service-worker' })`. It runs in the worker's **isolated** world, exposes `__gcdSwBridge.show(payload)`, and
+uses `contextBridge.executeInMainWorld` to patch the worker's `showNotification`. Electron's
+`ServiceWorkerMain` API is marked Experimental; it works for this on 44.4.3 (the implementer's finding).
+
+| Channel | Direction | Payload | Purpose |
+|---|---|---|---|
+| `'notification:sw-show'` | service-worker context → main, `ipcRenderer.send`, received on `ServiceWorkerMain.ipc` | `{ title: string, body: string, silent: boolean, tag: string }` | Chat's own worker called `showNotification`; main re-raises a native toast (see [Notifications](notifications.md)). No cookies, no page state. |
+
+Validation: main accepts a message **only** when the worker's **scope origin** (`event.serviceWorker.scope`)
+is in the notification origins (chat only); anything else is rejected and logged. Payloads are sanitised
+downstream. Hooking is per `ServiceWorkerMain` wrapper object (a `WeakSet`), **not** per version id, because
+the running-status events reported `versionId` 0 in the probe; workers already running at startup are
+enumerated with `getAllRunning`. The worker's console is web-controlled text: only `[gcd-sw]`-prefixed lines
+from a worker whose scope is an allowed origin are surfaced in the app log.
 
 ## What is deliberately NOT exposed to the Settings window
 

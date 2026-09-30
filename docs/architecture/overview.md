@@ -61,9 +61,11 @@ call to `shell.openExternal()` instead of opening it inside the app (per
 opened in the app-owned call window instead. `will-navigate` is validated against an allowlist starting
 with `chat.google.com`/`accounts.google.com` origins; anything else is prevented and handed to the
 system browser the same way, except that the main window navigating itself to a Meet URL is prevented and
-routed to the call window. The permission handlers on this shared session are origin-aware for camera,
-microphone and display capture (Meet origin only); they no longer amount to "grant notifications, deny the
-rest" (see [Meet Call Window](meet-call-window.md) §4).
+routed to the call window (the Meet routing is design, not yet built). **Today** the session's permission
+handlers (request **and** check, `src/main/session.js`) grant only `notifications`, and only to the chat
+origin (plus a dev loopback origin); everything else is denied, including clipboard writes (BUG-02, pending
+the owner). The Meet design extends them with an origin gate for camera, microphone and display capture
+(see [Meet Call Window](meet-call-window.md) §4).
 
 **This allowlist is provisional, not settled.** Google's sign-in flow — especially 2-factor/
 security-challenge steps (prompt approval, backup codes, security-key/WebAuthn challenges) — can
