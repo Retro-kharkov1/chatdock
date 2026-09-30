@@ -9,11 +9,24 @@ container. The only host requirement is Docker (Docker Desktop with the WSL2 bac
 powershell -File scripts/build-linux-docker.ps1
 ```
 
-Optional: `-Version 0.2.0` overrides the artifact version (same `-c.extraMetadata.version`
-mechanism as `.github/workflows/release.yml`); `-Image` selects another builder image.
+Optional: `-Image` selects another builder image. There is no version parameter: the version always
+comes from GitVersion (see "Version" below).
 
-Output goes to `release/` (git-ignored): `Google-Chat-Desktop-<version>.AppImage`,
-`google-chat-desktop_<version>_amd64.deb`, `latest-linux.yml`.
+Host requirements: Docker, Node.js and the .NET SDK (the last only to run GitVersion on the host).
+
+Output goes to `release/` (git-ignored; the script first removes only previous Linux artifacts - `*.AppImage`, `*.deb`, `latest-linux.yml`, `linux-unpacked` - and leaves other platforms' files such as the Windows installer): `Google-Chat-Desktop-<version>.AppImage`,
+`google-chat-desktop_<version>_amd64.deb`, `latest-linux.yml`. For example
+`Google-Chat-Desktop-0.0.1-61.AppImage` and `google-chat-desktop_0.0.1-61_amd64.deb`.
+
+## Version
+
+The same GitVersion configuration as CI (`GitVersion.yml`; tool pinned in `dotnet-tools.json`) runs on
+the **host**, because the container has neither `.git` nor the .NET SDK. The script runs
+`node scripts/generate-build-info.js`, which writes `build-info.json`; that file is copied into the
+container and `node scripts/build.js --from-build-info` stamps its `version` into the artifact names,
+`latest-linux.yml` and `app.getVersion()`, then fails the build if any produced name or manifest lacks it.
+If GitVersion cannot run, the script stops before Docker starts. Full flow:
+[packaging-release.md](../architecture/packaging-release.md), "Version flow".
 
 ## How it works
 
@@ -23,13 +36,11 @@ Output goes to `release/` (git-ignored): `Google-Chat-Desktop-<version>.AppImage
 - Image: `electronuserland/builder:24`, per
   <https://www.electron.build/docs/features/multi-platform-build/>.
 - The repo is mounted read-only and copied into the container without `node_modules/`,
-  `release/`, `.git/` and `build-info.json`. Dependencies are installed in the container
+  `release/` and `.git/` (`build-info.json` is copied on purpose, see "Version"). Dependencies are installed in the container
   (`npm ci`), so Windows-built `node_modules` are never reused and CRLF/permission issues of the
   bind mount do not affect the build. `npm test` runs before packaging.
 - Electron and electron-builder downloads are cached in the named volumes
   `gcd-electron-cache`, `gcd-electron-builder-cache` and `gcd-npm-cache`.
-- Because `.git` is excluded, `build-info.json` reports `unknown` branch/sha and version
-  `0.0.0-local`. Use the GitHub Actions workflow for release-identity builds.
 
 ## Release notes: unsigned artifacts
 

@@ -76,6 +76,39 @@ not decoration**, and omitting them breaks the deb build:
 - `maintainer` — required by Debian packaging metadata (the `Maintainer:` control-file field);
   electron-builder refuses to produce a `.deb` without it.
 
+## Version flow
+
+**One version, from GitVersion only, on every build path.** `GitVersion.yml` (workflow `GitHubFlow/v1`)
+is the single configuration. `package.json` `version` (`0.1.0`) is a placeholder that is never
+shipped: it is overridden at pack time. There is **no fallback** (no `git describe`, no commit count, no
+`0.0.0-local`); if GitVersion cannot run, the build fails with the reason.
+
+| Path | How GitVersion runs | Entry point |
+|---|---|---|
+| Windows, local | `dotnet tool run dotnet-gitversion`, tool pinned in `dotnet-tools.json` (6.8.2; CI uses `6.8.x`). Needs the .NET SDK on PATH and a full checkout. `dotnet tool restore` is run automatically. | `npm run dist` / `npm run pack` |
+| Linux, Docker | On the **host** (the container has no `.git` and no .NET SDK), then `build-info.json` is copied in and validated, not re-derived. | `scripts/build-linux-docker.ps1` |
+| CI | `gittools/actions/gitversion/execute` exports `GitVersion_*`; the script reads them. | `node scripts/build.js` in `release.yml` |
+
+Why a local .NET tool rather than GitVersion's Docker image: Windows `npm run dist` would then need
+Docker, and the pin in a committed manifest is what makes local and CI versions comparable.
+
+`scripts/build.js` does three things: (1) writes `build-info.json` (`scripts/generate-build-info.js`);
+(2) runs electron-builder with `-c.extraMetadata.version=<SemVer>`; (3) fails the build if any produced
+`.exe`/`.AppImage`/`.deb` name or `latest*.yml` `version:` lacks that version. A `beforePack` hook
+(`scripts/beforePack.js`) also refuses to package when the version differs from `build-info.json`, which
+catches a bare `npx electron-builder` that would otherwise ship the placeholder.
+
+The stamped value is GitVersion's `SemVer`. It appears in: the installer/deb/AppImage file names,
+`latest*.yml`, the Windows exe File/Product version, `app.getVersion()`, `build-info.json` `version` and
+the tray line (FR-13, `<version> (<shortSha>, <ci|local>)`). The field contract is in the header of
+`scripts/generate-build-info.js`.
+
+Numbers: with no tag, the version is `0.0.1-<commits since start>` (e.g. `0.0.1-61`), which rises with
+every commit on `main`. Tag `v0.1.0` and that commit builds as `0.1.0`; later commits become
+`0.1.1-<n>`. Two builds of the **same commit** get the same version (uncommitted edits do not change it);
+`build-info.json` `builtAt` and the short SHA still tell them apart. Shallow clones break GitVersion, so
+CI keeps `fetch-depth: 0`.
+
 ## GitHub Actions release matrix
 
 Follow `~/.claude/skills/electron-desktop.md` §8's matrix shape (one job per OS, each building
@@ -91,7 +124,7 @@ There is no dedicated third-party "electron-builder" GitHub Action pinned in thi
 first-party guidance at `electron.build/docs/features/github-actions/` (checked 2026-09-22) is to
 run electron-builder directly — `npx electron-builder <platform-flag> --publish always` on a tag
 push, `--publish never` otherwise — rather than depend on a third-party Action whose name/ownership
-could move. `.github/workflows/release.yml` follows that pattern for both matrix legs.
+could move. `.github/workflows/release.yml` runs `node scripts/build.js` (which calls electron-builder, see "Version flow") for both matrix legs.
 
 **The Linux leg cannot be built on this repo's Windows development machine.** AppImage packaging
 needs Linux-native tooling (`mksquashfs`); a real local build attempt on Windows fails with
