@@ -62,9 +62,10 @@ opened in the app-owned call window instead. `will-navigate` is validated agains
 with `chat.google.com`/`accounts.google.com` origins; anything else is prevented and handed to the
 system browser the same way, except that the main window navigating itself to a Meet URL is prevented and
 routed to the call window (the Meet routing is design, not yet built). **Today** the session's permission
-handlers (request **and** check, `src/main/session.js`) grant only `notifications`, and only to the chat
-origin (plus a dev loopback origin); everything else is denied, including clipboard writes (BUG-02, pending
-the owner). The Meet design extends them with an origin gate for camera, microphone and display capture
+handlers (request **and** check, `src/main/session.js`) grant only `notifications` (the chat origin, plus a
+dev loopback origin) and `clipboard-sanitized-write` (the chat origin only, BUG-02, from a separate
+`clipboardOrigins` allowlist so the dev loopback origin gets no clipboard write); everything else is denied,
+including `clipboard-read`, `clipboard-write`, `clipboard` and `clipboard-sanitized-read`. The Meet design extends them with an origin gate for camera, microphone and display capture
 (see [Meet Call Window](meet-call-window.md) §4).
 
 **This allowlist is provisional, not settled.** Google's sign-in flow — especially 2-factor/

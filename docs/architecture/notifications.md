@@ -85,10 +85,13 @@ Content is generic by necessity: this path meets FR-05a but not FR-05b.
 ### Permissions
 
 `src/main/session.js` grants the `notifications` permission **only to the notification origins** (the chat
-origin, plus a loopback origin in a dev run) in **both** the request handler and the (new) check handler;
-**every other permission is denied**. That includes camera, microphone and display capture (the Meet gate is
-still design, see [meet-call-window.md](meet-call-window.md)) and **clipboard writes**, which were already
-denied before this change; that is tracked as **BUG-02**, pending the owner's confirmation. A dev run only:
+origin, plus a loopback origin in a dev run) in **both** the request handler and the (new) check handler.
+It also grants `clipboard-sanitized-write` (what `navigator.clipboard.writeText` needs, BUG-02) to the chat
+origin **only**, from a separate `clipboardOrigins` allowlist (default `[CHAT_ORIGIN]`), so the dev loopback
+origin gets no clipboard write. **Every other permission is denied**, including camera, microphone and
+display capture (the Meet gate is still design, see [meet-call-window.md](meet-call-window.md)) and the
+other clipboard permissions (`clipboard-read`, `clipboard-write`, `clipboard`, `clipboard-sanitized-read`).
+A dev run only:
 `GCD_DEV_START_URL` (unpackaged builds, loopback `http`, no userinfo; `src/main/origins.js`) points the
 window at a local harness page and adds its origin to both lists.
 
@@ -176,7 +179,8 @@ what `(N)` counts.
    indistinguishable through this API and is flagged for the real-Chat check.
 5. **The trade-off above** (worker click handler and `getNotifications()` never fire) is accepted for now;
    revisit if Spike C finds Chat needs them.
-6. **BUG-02 (clipboard writes denied):** pending the owner.
+6. **BUG-02 (clipboard writes): fixed.** `clipboard-sanitized-write` is granted to the chat origin only
+   (see section above); covered by `test/sessionPermissions.test.js`.
 7. **Application log** (section 5) is a required, unbuilt component.
 </architecture>
 

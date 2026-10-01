@@ -449,8 +449,9 @@ and must decide by origin, not by window.
   other origin including `https://chat.google.com`, a Meet frame embedded in a non-Meet page, and a
   non-Meet frame embedded in a Meet page.
 - **Both handlers.** `configurePersistentSession` in `src/main/session.js` **already installs both** a
-  request and a check handler (added by the BUG-01 change), and both currently grant only `notifications`,
-  and only to the chat origin (plus a dev loopback origin), denying every other permission. The Meet media
+  request and a check handler (added by the BUG-01 change), and both currently grant only `notifications`
+  (chat origin, plus a dev loopback origin) and `clipboard-sanitized-write` (chat origin only, BUG-02),
+  denying every other permission. The Meet media
   gate below **extends** those two handlers; it does not add a check handler. Electron notes that most web APIs do a
   check and then a request if the check is denied, so a request-only policy is incomplete.
 - **Inputs available** (Electron session docs, fetched 2026-09-30): the check handler receives
@@ -472,9 +473,9 @@ and must decide by origin, not by window.
 - **Notifications unchanged (NFR-07).** The main window's notifications permission is now granted to the
   chat origin only, in both handlers; the Meet gate must leave that behaviour exactly as it is (test:
   `Notification.permission` and a notification still work in the main window after the change).
-- **Clipboard writes are denied today** (the handlers deny everything but notifications, and did before the
-  BUG-01 change). That is tracked as **BUG-02**, pending the owner's confirmation. Adding the Meet media
-  grant must not widen anything else, and any clipboard decision is a separate call.
+- **Clipboard (BUG-02, fixed).** The handlers grant `clipboard-sanitized-write` to the chat origin only
+  (separate `clipboardOrigins` allowlist); all other clipboard permissions stay denied. Adding the Meet media
+  grant must not widen any of this.
 
 ## 5. Screen share and the source picker
 
