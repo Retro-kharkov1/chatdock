@@ -35,7 +35,7 @@ criteria cited inline in the Accessibility section.
 A **dedicated native Electron `BrowserWindow`** — plain HTML/CSS/JS owned entirely by this app, not a
 panel injected into the Google Chat page. This is a hard constraint, not a style preference: the main
 window renders `chat.google.com`, a third-party page this app does not control and — per the
-project's own `wrapper-not-a-rewrite` posture (see [overview.md](../architecture/overview.md) and
+project's own the *Wrapper, not a rewrite* project rule posture (see [overview.md](../architecture/overview.md) and
 [notifications.md](../architecture/notifications.md)) — must not have UI injected into its DOM.
 Building settings as an overlay/panel drawn on top of Google's page would mean fighting that page's
 own layout and z-index on every Google-side redesign, for no benefit; a second, independent
@@ -47,8 +47,8 @@ this app's control for theming, accessibility, and layout stability.
   reflow, and a fixed size avoids building responsive layout for content that never changes shape.
 - **Window chrome**: standard OS title bar with a close (X) control only — no minimize, no maximize
   (`resizable: false, minimizable: false, maximizable: false`). It does **not** affect `isQuitting` and
-  does **not** quit the app — quitting stays exclusively a tray "Exit" action per the space's
-  `quit-only-from-tray` rule and FR-07 ("no in-page Exit control").
+  does **not** quit the app — quitting stays exclusively a tray "Exit" action per the
+  *Quit only from the tray* project rule and FR-07 ("no in-page Exit control").
 - **Closing the window destroys it (`win.destroy()`/lets the default `close` → GC'd `BrowserWindow`
   happen — not `hide()`), decided and committed here, not left as a destroys/hides fork.** Rationale:
   this app is resident in the tray for multi-day uptimes, and the Settings window is opened
@@ -96,7 +96,7 @@ number of steps, and a native application menu is the single surface most likely
 second quit path — Electron's default app-menu role and its `role: 'quit'`/`role: 'close'` template
 items call `app.quit()` or close the focused `BrowserWindow` directly, bypassing the `isQuitting`-gated
 `close` handler entirely (see [tray-lifecycle.md](../architecture/tray-lifecycle.md)), which is exactly
-the failure mode `quit-only-from-tray` exists to prevent. A carefully hand-written custom template with
+the failure mode the *Quit only from the tray* project rule exists to prevent. A carefully hand-written custom template with
 no quit role, as the earlier revision proposed, is a weaker guarantee than the surface not existing at
 all — every future edit to that menu is a fresh chance to reintroduce a quit-capable item by mistake.
 Not adding an unrequested feature that carries the project's highest-consequence risk is the safer

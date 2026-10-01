@@ -118,7 +118,7 @@ FR-14/FR-15 — `blinkOnUnread` has no toggle to test against until the Settings
 ### 0. Testable-surface unit-test net (coverage-first, before dependent tasks)
 **Satisfies**: supports FR-02, FR-05, FR-07/10/11/12, NFR-04 — routed to `qa-automation`.
 **Why this task exists**: every other task's done-criteria in this plan is hand-verification on a
-real desktop, which is correct and required (space's `verify-on-a-real-desktop` rule) for anything
+real desktop, which is correct and required (the *Verify on a real desktop* project rule) for anything
 touching actual OS/window/notification behavior — but it is not a substitute for a GREEN automated
 net over the pieces that are pure, deterministic logic with no UI or OS dependency. This task
 identifies and covers exactly that subset; it does not pad coverage onto code that has no
@@ -159,7 +159,7 @@ to satisfy it), not written retroactively to match whatever got built.
 ### 1. Project scaffold + single window loading Google Chat
 **Satisfies**: FR-01, part of NFR-04 (security baseline).
 **Done when**: `npm start` opens one resizable `BrowserWindow` at the FR-01 default size, loading
-`https://chat.google.com/app/chat/SPACE_ID`, with `contextIsolation: true`, `nodeIntegration:
+`https://chat.google.com/`, with `contextIsolation: true`, `nodeIntegration:
 false`, `sandbox: true`, no `<webview>` anywhere in the codebase, `setWindowOpenHandler` denying
 popups by default, and `will-navigate` allowlisted per [overview.md](../architecture/overview.md)
 (that allowlist is provisional — see task 2).
@@ -270,7 +270,7 @@ plumbing already in place).
   design spec §4.
 - FR-10's three gherkin scenarios pass by hand on **both** Windows and Linux separately, triggered
   from the Settings window now (state plainly which platform(s) were actually checked, per the
-  space's `verify-on-a-real-desktop` rule).
+  the *Verify on a real desktop* project rule).
 - FR-11's gherkin scenario passes by hand (sound off, toggled from Settings → next notification is
   silent).
 - The read-only About line (version/build info, per the design spec) renders correctly for both a
@@ -309,7 +309,7 @@ builds, extending it rather than adding a second handler).
   the window ever becoming visible; toggling Mute on mid-blink (from either tray or Settings) stops
   blinking immediately but leaves the static unread badge showing; toggling "Blink tray icon on
   unread" off in Settings mid-blink stops it immediately too. State plainly which platform(s) this
-  ran on, per the space's `verify-on-a-real-desktop` rule — NFR-06's "20 rapid open/hide cycles while
+  ran on, per the *Verify on a real desktop* project rule — NFR-06's "20 rapid open/hide cycles while
   unread stays above 0" manual pass (tray-lifecycle.md) is part of this task's own hand-verification,
   not deferred to task 8.
 
@@ -335,8 +335,8 @@ named the Windows `hide()` bug (`electron/electron#31016`) as the thing to spike
 
 **What genuinely remains unverified, and is the actual done-criterion for this task**: a real
 inbound message from another person, arriving while the window is hidden to tray, producing a real
-OS notification with sender + preview — the owner's own check, per the space's
-`hidden-window-must-stay-live` rule ("verified by actually hiding the window and observing a real
+OS notification with sender + preview — the owner's own check, per the
+*Hidden window must stay live* project rule ("verified by actually hiding the window and observing a real
 incoming message produce a real OS notification — never by reading the code and reasoning that it
 should work"). This is not a code-reasoning question and nobody but the owner (or someone with a
 second Google account to message the owner's test account) can run it. **Done when**: window hidden
@@ -400,15 +400,15 @@ polling loop but the FR-14 blink mechanism itself, already covered by task 4e's 
 any *other* `setInterval`/`setTimeout` found here is a real finding, not this one); memory footprint
 is in line with one Chromium tab of Google Chat; time from launch to signed-in view is comparable to
 opening an already-authenticated site in a new browser tab, on each of Windows/Linux the implementer
-has access to (state plainly which platforms were actually checked, per the space's
-`verify-on-a-real-desktop` rule).
+has access to (state plainly which platforms were actually checked, per the
+*Verify on a real desktop* project rule).
 
 ### 9. Packaging + CI release matrix
 **Satisfies**: FR-09, NFR-05.
 **Done when**: `.github/workflows/release.yml` produces an NSIS `.exe`, an `.AppImage`, and a `.deb`
 from one tagged run (Windows + Linux only, per ADR-0003), each artifact matches the signing status
 documented in [packaging-release.md](../architecture/packaging-release.md), and the release notes
-explicitly state the Windows SmartScreen warning per the space's `installers-are-part-of-done` rule.
+explicitly state the Windows SmartScreen warning per the *Installers are part of done* project rule.
 Note: the Linux leg cannot be built locally on a Windows dev machine (AppImage packaging needs
 Linux-native `mksquashfs`) — it is produced and verified only by the `ubuntu-latest` matrix job, and
 is untested until that workflow has actually run once end-to-end.
@@ -429,7 +429,7 @@ page despite the suppressed application menu (see
 [tray-lifecycle.md](../architecture/tray-lifecycle.md)'s "Application menu suppression" `before-input-event`
 wiring) — this is exactly the kind of regression that looks fine in a dev run and only shows up in a
 packaged build. State plainly which platform(s) this actually ran on; do not claim cross-platform
-coverage from a single-platform check (space's `verify-on-a-real-desktop` rule).
+coverage from a single-platform check (the *Verify on a real desktop* project rule).
 
 ## Open questions this plan resolved as design decisions of its own
 

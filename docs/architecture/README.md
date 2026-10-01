@@ -7,4 +7,5 @@
 - [Meet Call Window](meet-call-window.md) — FR-16/NFR-07: Meet routing, the hardened call window, media permissions, screen-share picker; conditional on Spike B.
 - [IPC Contract](ipc-contract.md) — the exact preload surface, channel by channel (including the provisional picker channels).
 - [Packaging & Release](packaging-release.md) — electron-builder targets, Linux packaging (NFR-08) and the GitHub Actions release matrix (FR-09/NFR-05); see also [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md).
+- [Project Rules](project-rules.md) — the standing rules other documents cite (wrapper not a rewrite, security baseline, quit only from the tray, and others).
 </topics>

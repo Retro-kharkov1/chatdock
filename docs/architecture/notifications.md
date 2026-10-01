@@ -108,7 +108,7 @@ If the page believes it is `"visible"` it does not alert. That is why `backgroun
 Electron's default and why the hidden-autostart path forces a real `showInactive()` then `hide()` (see
 [tray-lifecycle.md](tray-lifecycle.md)); the full incident is ADR-0002 Revision 3. Any change that could
 distort `visibilityState` (a throttling flag, an overlay window) must be verified by hiding the window and
-receiving a real message, not by reasoning (space rule `hidden-window-must-stay-live`). Whether the
+receiving a real message, not by reasoning (the *Hidden window must stay live* project rule). Whether the
 service-worker path also consults visibility is unknown [U] (Spike C).
 
 ## 3. Mechanism status (against the earlier candidates)
@@ -121,8 +121,8 @@ service-worker path also consults visibility is unknown [U] (Spike C).
 | M3 | Generic toast from an unmatched unread increase | Implemented as the floor. |
 
 **M2 does not deliver FR-05c step 2** (opening *that* conversation). That needs a further mechanism, for
-example driving Chat's router from an identifier, which is **not designed** here, touches the space rule
-`wrapper-not-a-rewrite`, and is a separate owner decision (FR-05's open question) and a separate design.
+example driving Chat's router from an identifier, which is **not designed** here, touches the
+*Wrapper, not a rewrite* project rule, and is a separate owner decision (FR-05's open question) and a separate design.
 
 **One path per message.** The de-dup and the arrival-matching above are how a message avoids a second toast
 from the fallback; the page-created `window.Notification` toast is the browser's own and is never also
@@ -142,8 +142,8 @@ FR-05c's degraded outcome requires a **warning-level entry in a persistent appli
 only calls `console.error` (for example `index.js` bridge-injection failure, rejected origins, toast
 `failed`, service-worker hook failures), so there is **no persistent log** and the FR-05c requirement is
 unmet. Minimum contract, unchanged: a size-bounded, rotated file under `app.getPath('userData')`; at least
-`warn` and `error`; **never** message text, sender or chat names, cookies, tokens or credentials (space rule
-`electron-security-baseline`); a click-resolution warning records only that resolution failed, the mechanism
+`warn` and `error`; **never** message text, sender or chat names, cookies, tokens or credentials (the
+*Electron security baseline* project rule); a click-resolution warning records only that resolution failed, the mechanism
 in use and a timestamp. The service-worker console lines (`[gcd-sw]`) are already filtered by the worker's
 scope before being logged, so web-controlled text from other scopes is never surfaced.
 
@@ -157,7 +157,7 @@ scope before being logged, so web-controlled text from other scopes is never sur
   log exists).
 - Stale toast clicked after the app fully exited: no live process to receive it; a known limit.
 
-## 7. Verification (space rule `verify-on-a-real-desktop`)
+## 7. Verification (the *Verify on a real desktop* project rule)
 
 Every FR-05 scenario tagged `[manual-only]` needs a real toast on a real desktop, and the report must state
 which platform was tested. Windows verification does not establish Linux (libnotify) behaviour, which has

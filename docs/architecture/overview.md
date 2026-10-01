@@ -1,10 +1,11 @@
 # Process & Window Model, Session, Window-State Persistence
 
 <overview>
-Implements FR-01, FR-02, FR-03, FR-04, and carries the window model that FR-15 and FR-16 extend. Grounded in `~/.claude/skills/electron-desktop.md` §1, §4
+Implements FR-01, FR-02, FR-03, FR-04, and carries the window model that FR-15 and FR-16 extend. Grounded in standard Electron desktop practice (security defaults, session persistence, OAuth embedded-browser block)
 (process architecture and session/UA mechanics — not restated in full here) and
 [ADR-0001](../adr/0001-google-sign-in-strategy.md) (sign-in strategy — read that ADR before this
-doc for the *why*; this doc covers the concrete configuration).
+doc for the *why*; this doc covers the concrete configuration). Rules cited as *Italic Name* project rule are defined in
+[Project Rules](project-rules.md).
 </overview>
 
 <architecture>
@@ -19,11 +20,10 @@ doc for the *why*; this doc covers the concrete configuration).
   Meet page with no preload, plus a small app-owned local view for loading/error/crash UI; see
   [Meet Call Window](meet-call-window.md)). At most one of each exists.
 - **Main renderer**: the main `BrowserWindow`, loading
-  `https://chat.google.com/app/chat/SPACE_ID` (FR-01) directly — never an Electron `<webview>`
-  tag (per ADR-0001 and the space's `electron-security-baseline` rule). Treated as untrusted
+  `https://chat.google.com/` (FR-01) directly — never an Electron `<webview>`
+  tag (per ADR-0001 and the *Electron security baseline* project rule). Treated as untrusted
   third-party content: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`,
-  `webSecurity: true` (Electron's own current defaults — not weakened; see
-  `electron-desktop.md` §3).
+  `webSecurity: true` (Electron's own current defaults — not weakened).
 - **Preload** (`src/preload/preload.js`): the narrow contextBridge surface — see
   [IPC Contract](ipc-contract.md). Also the injection point for the notification-click bridge (see
   [Notifications](notifications.md)); that injection runs in the page's own **main world** via
@@ -43,7 +43,7 @@ doc for the *why*; this doc covers the concrete configuration).
     nodeIntegration: false,
     sandbox: true,
     // `backgroundThrottling` is deliberately left UNSET (Electron's default, `true`). It was
-    // tried as `false` to satisfy FR-05 / `hidden-window-must-stay-live`, then reverted: it broke
+    // tried as `false` to satisfy FR-05 / the *Hidden window must stay live* project rule, then reverted: it broke
     // notifications instead of protecting them, by pinning `document.visibilityState` at
     // `"visible"` while the window was actually hidden — Google Chat reads that value and
     // suppresses notifications for a "visible" tab. Do not re-add this flag without reading
@@ -56,12 +56,14 @@ doc for the *why*; this doc covers the concrete configuration).
 
 `setWindowOpenHandler()` denies every popup by default and hands any `target=_blank`/`window.open`
 call to `shell.openExternal()` instead of opening it inside the app (per
-`electron-security-baseline`), **with one exception**: a Google Meet link (exact match, see
-[Meet Call Window](meet-call-window.md) and the space rule's "Single exception") is denied as a popup and
+the *Electron security baseline* project rule), **with one exception**: a Google Meet link (exact match, see
+[Meet Call Window](meet-call-window.md) and the project rule's "Single exception") is denied as a popup and
 opened in the app-owned call window instead. `will-navigate` is validated against an allowlist starting
 with `chat.google.com`/`accounts.google.com` origins; anything else is prevented and handed to the
 system browser the same way, except that the main window navigating itself to a Meet URL is prevented and
-routed to the call window (the Meet routing is design, not yet built). **Today** the session's permission
+routed to the call window (the Meet routing is design, not yet built). **Owner decision 2026-10-01:** the
+system-browser hand-off applies only to `http`, `https` and `mailto`; any other scheme is not opened (see
+[Meet Call Window](meet-call-window.md) §2 rule 4; today's handlers still pass every URL on). **Today** the session's permission
 handlers (request **and** check, `src/main/session.js`) grant only `notifications` (the chat origin, plus a
 dev loopback origin) and `clipboard-sanitized-write` (the chat origin only, BUG-02, from a separate
 `clipboardOrigins` allowlist so the dev loopback origin gets no clipboard write); everything else is denied,
@@ -85,7 +87,7 @@ happened.
 - **Partition**: `session.fromPartition('persist:google-chat')`. The `persist:` prefix is required
   — a partition name without it is in-memory-only and forgets everything (including the login
   cookie) the moment the window closes, which would silently fail FR-04. (Confirmed:
-  `https://www.electronjs.org/docs/latest/api/session`, restated in `electron-desktop.md` §4.)
+  `https://www.electronjs.org/docs/latest/api/session`.)
 - **User agent**: `session.setUserAgent('<standard desktop Chrome UA string, matching the Chromium
   version Electron currently bundles>')` set once at startup, before the window loads. See
   ADR-0001 for why this specific configuration (not `<webview>`, not the unmodified Electron UA)
@@ -98,8 +100,7 @@ happened.
   empty partition — the user appears logged out with no error); changing the app's `appId`/product
   name in a way that changes `userData`'s resolved path; a user or cleanup tool clearing the
   `userData` folder; running a debug build with a different partition name than the packaged build
-  (a common "works in dev, logged out when packaged" trap — see `electron-desktop.md` §10's
-  dev-vs-packaged pitfalls list, same category of bug). Google revoking the session server-side is
+  (a common "works in dev, logged out when packaged" trap — the same category of dev-vs-packaged bug). Google revoking the session server-side is
   the one **expected** case (FR-04's third scenario) — the app must not treat that as a bug, it
   must just show the sign-in flow again.
 

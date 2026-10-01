@@ -41,7 +41,7 @@ git history.
 
 - **Build mechanism**: `electron-builder`, driven by a GitHub Actions matrix with one job per target
   OS (`windows-latest`, `ubuntu-latest`), each building natively on its own platform — per
-  `electron-desktop.md` §8, which already documents the matrix shape and the exact env vars
+  standard Electron CI practice, which documents the matrix shape and the exact env vars
   electron-builder reads for signing (`CSC_LINK`/`CSC_KEY_PASSWORD`) — not restated here.
 - **Windows**: NSIS installer target. **Unsigned** for the initial release (no code-signing
   certificate acquired) — functional, notifications work normally (no signing dependency on this

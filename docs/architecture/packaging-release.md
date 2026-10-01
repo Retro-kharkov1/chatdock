@@ -111,7 +111,7 @@ CI keeps `fetch-depth: 0`.
 
 ## GitHub Actions release matrix
 
-Follow `~/.claude/skills/electron-desktop.md` §8's matrix shape (one job per OS, each building
+Follow the standard Electron CI matrix shape (one job per OS, each building
 natively on its own runner), scoped to the two in-scope platforms: `windows-latest` and
 `ubuntu-latest`. No `macos-latest` job. This is a structural choice, not a shortcut: keeping the
 matrix as one-job-per-OS (rather than collapsing to a single combined job) means a `macos-latest`
@@ -144,8 +144,8 @@ macOS is not built — see [ADR-0003](../adr/0003-packaging-and-code-signing-app
 (code signing is required for macOS notifications to function at all; the owner doesn't use macOS,
 so paying for it was not justified).
 
-Every release's notes state this table's rows explicitly, per the space's
-`installers-are-part-of-done` rule — never let the owner discover the SmartScreen warning by
+Every release's notes state this table's rows explicitly, per the
+*Installers are part of done* project rule — never let the owner discover the SmartScreen warning by
 surprise.
 
 ### Release notes must also state (2026-09-30 requirements)

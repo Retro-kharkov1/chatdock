@@ -1,8 +1,8 @@
 # Tray & Lifecycle (FR-06, FR-07, FR-08, FR-10, FR-11, FR-12, FR-14, FR-15)
 
 <overview>
-Grounded in `~/.claude/skills/electron-desktop.md` §7 (tray, close-to-tray, single-instance,
-auto-launch mechanics — not restated here) plus the space's `quit-only-from-tray` rule, which is a
+Grounded in standard Electron desktop practice (tray, close-to-tray, single-instance,
+auto-launch mechanics — not restated here) plus the *Quit only from the tray* project rule, which is a
 hard constraint: the window's close button must never terminate the process, under any refactor.
 
 Three windows now exist: the **main Chat window** (close-to-tray, FR-06), the **Settings window**
@@ -29,7 +29,7 @@ mainWindow.on('close', (event) => {
 
 This hide-on-close handler is on the **main window only** (FR-06). The Settings window has none (it is
 destroyed on close). The call window has a **different** `close` handler (yield to `isQuitting`; block
-while the source picker is open; on a live call ask, if approved; otherwise destroy; see
+while the source picker is open; on a live call ask (owner-approved 2026-10-01); otherwise destroy; see
 [meet-call-window.md](meet-call-window.md) §3 and §3b), which never hides. Closing either must still never
 quit the process, which `window-all-closed` (below) guarantees while the main window exists hidden. Do not
 copy the hide handler onto them: a hidden call window would keep the camera and microphone live (FR-16).
@@ -42,11 +42,13 @@ every window first, a page whose `beforeunload` objection is not overridden woul
 while quitting, reset if a quit is cancelled) are in [meet-call-window.md](meet-call-window.md) §3b and
 apply to the main window's contents too. Any confirm in front of
 Exit or a window close is added *before* `app.quit()` or inside a `close` interception that yields to
-`isQuitting` (see [meet-call-window.md](meet-call-window.md) §3b). `window-all-closed` does **not** call
+`isQuitting` (see [meet-call-window.md](meet-call-window.md) §3b). Tray Exit is never silently ignored: while
+a close confirm is open it replaces that confirm with the Exit confirm (or focuses it if already open).
+`window-all-closed` does **not** call
 `app.quit()` (Electron's Linux/Windows default
 would otherwise quit the app when the last window closes — this must be overridden). The renderer
 process is never destroyed by hide — this is the same live-window requirement notifications depend
-on (space's `hidden-window-must-stay-live` rule; see [Notifications](notifications.md)).
+on (the *Hidden window must stay live* project rule; see [Notifications](notifications.md)).
 
 **This exact `win.hide()` call is the mechanism `electron/electron#31016` names** (a historical
 Windows-only freeze bug where `backgroundThrottling: false` did not reliably keep a hidden window's
@@ -78,7 +80,7 @@ Fix, in `src/main/index.js`'s `ready-to-show` handler: when `launchedHidden` is 
 no-focus-stolen, no-visible-flicker `visible → hidden` transition, so Chromium reports the correct
 `"hidden"` state from the first load, matching what the close-to-tray path already gets for free.
 
-## Application menu suppression is part of `quit-only-from-tray`, not a separate concern
+## Application menu suppression is part of the *Quit only from the tray* project rule, not a separate concern
 
 **This is the single highest-consequence line in this document.** The `isQuitting`/`close` handler
 above only guards the path through `mainWindow`'s own close handler. **Electron installs a default
@@ -91,7 +93,7 @@ of its own menu code. This is why [requirements.md](../business/requirements.md)
 application menu — decided") rejected `ux-ui-designer`'s proposed native `Settings…` menu entry
 outright rather than accepting a hand-built menu template that simply omits a Quit item: a template
 without Quit is still a menu, still one edit away from regaining one, and still adds a discoverable
-path this app does not want. The only guarantee strong enough to satisfy `quit-only-from-tray` is
+path this app does not want. The only guarantee strong enough to satisfy the *Quit only from the tray* project rule is
 the surface not existing at all.
 
 **Requirement, stated as code, called at the very top of `src/main/index.js`'s startup sequence**
@@ -150,22 +152,22 @@ Meet's own page behaviour [U: verify in Spike B].
 
 ## Tray icon and context menu (FR-07, FR-10, FR-11, FR-12)
 
-Created after `app.whenReady()` (per `electron-desktop.md` §7 — a `Tray` created earlier throws).
+Created after `app.whenReady()` (a `Tray` created earlier throws).
 Context menu, in order:
 
 | Entry | Type | Action | Why it earns its place |
 |---|---|---|---|
-| Show call window — **conditional, PENDING OWNER APPROVAL (design OQ-10, amendment A4)** | action, first entry | present only while a call window exists, **in every one of its states** (opening, error, crashed, sign-in, Meet page); restores, raises and focuses the **call window**, and **when the source picker is open focus goes to the picker**; never touches the main window. **No tooltip change** (dropped from the design). The menu is rebuilt (`refreshMenu`, event-driven, not from the blink tick) when the call window is created and destroyed. See [meet-call-window.md](meet-call-window.md) §3b. | Buried call windows are otherwise reachable only by the OS window switcher. Additive to FR-07's "at minimum" list; not yet recorded in requirements. |
-| Show/Hide Google Chat | action | toggles the **main window only** (`toggleShowHide` in `src/main/index.js`): `hide()` vs restore/`show()`/`focus()`. While a call window is open it never hides, closes or focuses the call (owner-approved default; see [meet-call-window.md](meet-call-window.md)). | FR-07's explicit requirement: close-to-tray removes the taskbar path back in on some platforms/configs, so the tray needs its own way in. |
+| Show call window — **conditional on a call window existing; owner-approved 2026-10-01 (P3, FR-07)** | action, first entry | present only while a call window exists, **in every one of its states** (opening, error, crashed, sign-in, Meet page); restores, raises and focuses the **call window**, and **when the source picker is open focus goes to the picker**; never touches the main window. **No tooltip change** (dropped from the design). The menu is rebuilt (`refreshMenu`, event-driven, not from the blink tick) when the call window is created and destroyed. See [meet-call-window.md](meet-call-window.md) §3b. | Buried call windows are otherwise reachable only by the OS window switcher. Additive to FR-07's "at minimum" list; recorded in FR-07. |
+| Show/Hide Google Chat | action | toggles the **main window only** (`toggleShowHide` in `src/main/index.js`): `hide()` vs restore/`show()`/`focus()`. While a call window is open it never hides, closes or focuses the call (recommended default, not an owner decision; see [meet-call-window.md](meet-call-window.md)). | FR-07's explicit requirement: close-to-tray removes the taskbar path back in on some platforms/configs, so the tray needs its own way in. |
 | Mute notifications | checkbox | see "Notification sound, mute, and icon blinking" below | Owner-requested (FR-12). The **only** preference checkbox still on the tray — Start at login and Notification sound moved to the Settings window (FR-15); see that section. |
 | Settings… | action | opens/focuses the Settings `BrowserWindow` — see "Settings window (FR-15)" below | New entry point for Start at login, Notification sound, and Icon blinking (the setting label is under redesign, see [design docs](../design/00-settings-surface-spec.md)), added so the tray menu stops growing with every new preference (FR-15). |
-| Exit | action | `app.quit()` (`isQuitting` is set by `before-quit`, see above). **Proposed, PENDING OWNER APPROVAL (design OQ-2):** if a call window exists, Exit first **probes it as a close attempt**; only if Meet's page objects (a live call) does an asynchronous native confirm "Exit Google Chat Desktop?" appear, and `app.quit()` then runs only on "Exit"; a non-objecting call window is destroyed and Exit proceeds with no dialog; see [meet-call-window.md](meet-call-window.md) §3b. | The **only** path that terminates the process — no in-page Exit control exists (space's `quit-only-from-tray` rule, FR-07). |
+| Exit | action | `app.quit()` (`isQuitting` is set by `before-quit`, see above). **Owner-approved 2026-10-01 (P2, FR-07):** if a call window exists, Exit first **probes it as a close attempt**; only if Meet's page objects (a live call) does an asynchronous native confirm "Exit Google Chat Desktop?" appear, and `app.quit()` then runs only on "Exit"; a non-objecting call window is destroyed and Exit proceeds with no dialog; see [meet-call-window.md](meet-call-window.md) §3b. | The **only** path that terminates the process — no in-page Exit control exists (the *Quit only from the tray* project rule, FR-07). |
 | *(separator)* — build/version label | disabled, non-clickable | none | Owner-requested mid-incident (2026-09-22), see "Build/version diagnostic line" below (FR-13). |
 
 **Amended per FR-15/Wireframe F** (supersedes the 7-item menu this table originally described):
 "Start at login" and "Notification sound" checkboxes are removed from this menu — they are now
 Settings-window-only controls (see "Settings window (FR-15)" below). This shrinks the menu from 7
-entries to 5 (6 while a call window exists, if "Show call window" is approved).
+entries to 5 (6 while a call window exists).
 
 Left-click/double-click on the tray icon mirrors the Show/Hide entry (Windows/Linux convention —
 macOS's different menu-bar convention is moot, out of scope per ADR-0003).

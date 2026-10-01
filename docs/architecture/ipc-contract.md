@@ -27,7 +27,7 @@ preload's own code, and from the main-world injection in `notifications.js` via 
 
 The two names are deliberately different: `notificationClicked` is the JS function exposed on
 `window.__gcdBridge` (camelCase per JS convention); `'notification:clicked'` is the underlying wire
-channel (colon-namespaced per `electron-desktop.md`'s naming convention). The preload implements the former
+channel (colon-namespaced per the usual Electron naming convention). The preload implements the former
 by calling `ipcRenderer.send(<channel>)` internally; the renderer code and tests only see
 `window.__gcdBridge.<name>()`. Every other reference to these channels in this doc set uses the wire name,
 since those are main-process-side concerns.
@@ -38,7 +38,7 @@ because nothing in this wrapper needs a request/response round trip from the ren
 ## What is deliberately NOT exposed to the main window
 
 - No filesystem access.
-- No `ipcRenderer` object itself (only the three named functions above) — per `electron-desktop.md` §2's
+- No `ipcRenderer` object itself (only the three named functions above) — per the standard Electron contextBridge pattern, which is the
   mandatory pattern, never expose `ipcRenderer` directly to a renderer loading third-party content.
 - No read access back into main-process state (no "get window state" call).
 - **No settings read/write API of any kind** — see "Settings window" below for why that surface is kept
@@ -86,12 +86,13 @@ renderer-side state (the switches) needs to reconcile against a main-process-con
 The call window holds two web contents (see [Meet Call Window](meet-call-window.md) §3a).
 
 **The Meet contents has no preload script and exposes nothing:** no `contextBridge` object, no IPC channel
-is reachable from Meet's page (space rule `electron-security-baseline`). Everything the app needs from it is
+is reachable from Meet's page (the *Electron security baseline* project rule). Everything the app needs from it is
 done from the main process (window events, `render-process-gone`, `did-fail-load`, permission and
 display-media handlers).
 
-**The app view** (a child `WebContentsView` that draws the loading, load-error and crashed panels and the
-status strip) loads only bundled local HTML, with its own preload exposing `window.__gcdCallUiBridge`. It is
+**The app view** (a child `WebContentsView` that draws the loading, load-error and crashed panels only;
+the status strip of the earlier design was removed 2026-10-01) loads only bundled local HTML, with its own
+preload exposing `window.__gcdCallUiBridge`. It is
 **provisional**: it follows the Meet design, which is under review, and the offline and back-online states
 are cut and have no channel. Security constraints (context isolation, sandbox, no Node, no navigation,
 non-persistent separate session, local content only) are in
@@ -99,15 +100,15 @@ non-persistent separate session, local content only) are in
 
 | Exposed function | Wire channel | Direction | Payload | Purpose |
 |---|---|---|---|---|
-| `onState(cb)` | `'callui:state'` | main → view, `webContents.send`; view subscribes via `ipcRenderer.on` | `{ state: 'opening' \| 'slow' \| 'load-error' \| 'crashed' \| 'ok', address: string, errorCode?: number, strip?: 'link-blocked' \| null }` | The complete UI state, replaced whole on every change (no partial updates to drift). `address` is a display string main builds (for example `meet.google.com/abc-defg-hij`), never a raw URL with query or fragment. `errorCode` is a number; the wording for each code is local to the view. `strip` is an enum; the view holds the text. **No string taken from the Meet page is ever sent.** |
-| `act(action)` | `'callui:action'` | view → main, `ipcRenderer.send` (fire-and-forget) | `{ action: 'retry' \| 'reload' \| 'close' \| 'dismiss-strip' }` | The user pressed a button. Main ignores any value outside the enum **and** any action illegal in the current state: `retry` only in `load-error`; `reload` only in `slow` or `crashed`; **`close` only in `slow`, `load-error` or `crashed`** (the states where the design offers a Close button and no live page can object; it destroys the window directly, with no probe or dialog; there is no in-view close in `opening` or `ok`); `dismiss-strip` only with a strip showing. |
+| `onState(cb)` | `'callui:state'` | main → view, `webContents.send`; view subscribes via `ipcRenderer.on` | `{ state: 'opening' \| 'slow' \| 'load-error' \| 'crashed' \| 'ok', address: string, errorCode?: number }` | The complete UI state, replaced whole on every change (no partial updates to drift). `address` is a display string main builds (for example `meet.google.com/abc-defg-hij`), never a raw URL with query or fragment. `errorCode` is a number; the wording for each code is local to the view. **No string taken from the Meet page is ever sent.** |
+| `act(action)` | `'callui:action'` | view → main, `ipcRenderer.send` (fire-and-forget) | `{ action: 'retry' \| 'reload' \| 'close' }` | The user pressed a button. Main ignores any value outside the enum **and** any action illegal in the current state: `retry` only in `load-error`; `reload` only in `slow` or `crashed`; **`close` only in `slow`, `load-error` or `crashed`** (the states where the design offers a Close button and no live page can object; it destroys the window directly, with no probe or dialog; there is no in-view close in `opening` or `ok`). |
 
 Sender validation: main accepts `'callui:action'` only when `event.sender` is the app view's own web
 contents (its stored id) and its frame URL is the bundled local file. Anything else is dropped and logged as
 a warning, without content. Nothing is invoked with a response (`send`, not `invoke`) because the view has
 no use for a return value; the next `callui:state` is the only feedback. The close and Exit confirms
-(design SC-2) are native OS dialogs, not channels (see [Meet Call Window](meet-call-window.md) §3b, pending
-owner approval).
+(design SC-2) are native OS dialogs, not channels (see [Meet Call Window](meet-call-window.md) §3b; owner-approved
+2026-10-01).
 
 ## Screen-share picker window — PROVISIONAL
 
@@ -148,7 +149,7 @@ from a worker whose scope is an allowed origin are surfaced in the app log.
 
 ## What is deliberately NOT exposed to the Settings window
 
-- No `ipcRenderer` object itself — same `electron-desktop.md` §2 pattern as the main window, even
+- No `ipcRenderer` object itself — same contextBridge pattern as the main window, even
   though this window loads only trusted local content; there is no need for the renderer to reach
   arbitrary main-process channels beyond the three named above.
 - No filesystem access, no direct access to `mainWindow`/main-window state beyond what `getAll()`

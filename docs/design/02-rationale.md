@@ -12,7 +12,7 @@ challenge any specific call rather than accept the design on faith.
 
 Rejected: injecting a panel into the Google Chat page's own DOM. The main window renders a real,
 uncontrolled third-party page; this project's own architecture docs already treat that page as
-something to wrap, never rewrite or inject UI into (`wrapper-not-a-rewrite`, see
+something to wrap, never rewrite or inject UI into (the *Wrapper, not a rewrite* project rule, see
 [notifications.md](../architecture/notifications.md)'s notification-click bridge, which goes out of
 its way to delegate to the page's own `Notification` object rather than replace its behavior). A
 settings panel drawn over Google's page would need to fight that page's own layout/z-index/keyboard
@@ -34,8 +34,7 @@ small, static HTML document.
 
 **This decision overrides existing tray UX the owner already uses, and that override was checked
 with the owner before being finalized — not asserted unilaterally.** The project carries a standing
-rule that UX the owner already uses is not removed without asking (see
-`feedback_ask_before_changing_liked_ux` in the space's working notes). Moving "Start at login" and
+rule that UX the owner already uses is not removed without asking. Moving "Start at login" and
 "Notification sound" out of the tray menu, where the owner currently reaches them today, is exactly
 that kind of removal — so this design did not silently apply its own "urgency" heuristic and treat
 that as sufficient license to override the rule. The proposal (below) was put to the owner directly,
@@ -128,7 +127,7 @@ one control that can genuinely fail per-platform.
   already controls.
 - **Save/Cancel buttons, a "Reset to defaults" button, a second Quit/Exit control inside Settings** —
   see §3 for Save/Cancel; a Reset button has no requested need and four independent toggles are cheap
-  to manually revert; a second Exit control would violate the standing `quit-only-from-tray`
+  to manually revert; a second Exit control would violate the standing the *Quit only from the tray* project rule
   architectural constraint (FR-07) that Exit is reachable *only* from the tray menu — Settings must
   not create a second quit path.
 
@@ -184,8 +183,8 @@ outcome, so it isn't silently re-added later:
   Electron's default app-menu template and its `role: 'quit'`/`role: 'close'` items call `app.quit()`
   or close the focused `BrowserWindow` directly, bypassing the `isQuitting`-gated `close` handler this
   project relies on entirely (see [tray-lifecycle.md](../architecture/tray-lifecycle.md)) — exactly
-  the failure mode `quit-only-from-tray` exists to prevent, and this project treats that rule as
-  absolute, alongside `wrapper-not-a-rewrite`.
+  the failure mode the *Quit only from the tray* project rule exists to prevent, and this project treats that rule as
+  absolute, alongside the *Wrapper, not a rewrite* project rule.
 - **A carefully-written custom template is a weaker guarantee than no surface at all.** The earlier
   revision's answer to the quit-path risk was "build a fully custom `Menu.buildFromTemplate` with no
   quit role" — that is real mitigation, but it only holds as long as every future edit to that menu

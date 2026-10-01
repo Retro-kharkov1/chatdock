@@ -11,8 +11,7 @@ requires the resulting session to survive restarts/reboots. Requirements.md's Ri
 this is achievable via a plain `BrowserWindow` (never `<webview>`) with a standard desktop Chrome
 user agent, citing `ankurk91/google-chat-electron` and `iWorkforces/GogChat` as working precedent.
 
-Independently, `~/.claude/skills/electron-desktop.md` (§4, "The Google OAuth embedded-browser
-block") concludes Google's block is a deliberate, hardening anti-phishing policy with **no
+Independently, common Electron desktop guidance on Google's embedded-browser OAuth block concludes Google's block is a deliberate, hardening anti-phishing policy with **no
 reliable Electron-side workaround**, citing a Google Account Community thread and two GitHub
 issues (`agentify-sh/desktop#11`, `firebase-js-sdk#2478`).
 
@@ -87,8 +86,8 @@ Two-tier strategy:
      of scope per ADR-0003.)
 
 This is a **cookie-import handoff**, not an OAuth authorization-code exchange — there is no OAuth
-client involved (the app does not talk to Google's API directly, per the space's
-`wrapper-not-a-rewrite` rule), only reuse of the session cookie a normal sign-in already produces.
+client involved (the app does not talk to Google's API directly, per the
+*Wrapper, not a rewrite* project rule), only reuse of the session cookie a normal sign-in already produces.
 
 ## Alternatives Considered
 
@@ -125,7 +124,7 @@ client involved (the app does not talk to Google's API directly, per the space's
 ### Negative
 - The fallback adds a real dependency (`chrome-cookies-secure`) and a code path that touches
   another application's (the OS browser's) protected cookie storage — must be implemented under the
-  space's `electron-security-baseline` rule: never log, persist elsewhere, or transmit the cookies;
+  the *Electron security baseline* project rule: never log, persist elsewhere, or transmit the cookies;
   they only ever move from the OS browser's store into this app's own OS-encrypted session
   partition, on-machine.
 - Only covers Chromium-based default browsers; a Firefox-default user is not covered by the
@@ -160,7 +159,7 @@ client involved (the app does not talk to Google's API directly, per the space's
   the *primary* `BrowserWindow` path **and** the cookie-import fallback also failing (e.g. because
   the owner's default browser sign-in itself gets blocked, or cookie import proves unreliable in
   practice) — not merely one tier being imperfect.
-- **Verification is mandatory, not optional**: per the space's `verify-on-a-real-desktop` rule, the
+- **Verification is mandatory, not optional**: per the *Verify on a real desktop* project rule, the
   implementer must perform a real sign-in (not a pre-seeded dev session) during initial build-out
   and again before each release — the conflicting evidence above means this cannot be assumed to
   keep working from one release to the next without re-checking.

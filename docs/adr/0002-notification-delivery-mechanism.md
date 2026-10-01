@@ -50,7 +50,7 @@ implements the standard Web Notifications API directly in the renderer (confirme
 `https://www.electronjs.org/docs/latest/tutorial/notifications` — `new Notification()` in a
 renderer produces a native OS notification with no main-process code, and this is the documented
 default when a wrapped page already calls the API itself, which Google Chat does for its own
-browser-tab notification support — see `electron-desktop.md` §5). The open risk was whether
+browser-tab notification support). The open risk was whether
 Chromium's background-tab throttling delays or drops this once the window has been hidden a long
 time. This was answered by reading Electron's own documentation, not by running the app — that
 distinction matters, so it is stated plainly rather than labeled "empirical": confirmed by
@@ -58,8 +58,7 @@ documentation at `https://www.electronjs.org/docs/latest/api/browser-window`:
 `webPreferences.backgroundThrottling` defaults to `true` (throttles timers/animations and the Page
 Visibility API once a window is hidden/backgrounded) and must be set `false` to keep a hidden
 window's script execution — and Google Chat's own message-arrival→Notification-call path — running
-at normal speed. This is also `electron-desktop.md` §6 and the space's own
-`hidden-window-must-stay-live` rule. **The actual empirical confirmation FR-05's Open Question
+at normal speed. This is also the *Hidden window must stay live* project rule. **The actual empirical confirmation FR-05's Open Question
 asked for has not happened yet — it happens at task 5's real-desktop verification** (see the plan),
 which is also where the Windows-specific `hide()` bug below (revision note) gets its real answer.
 Nothing in this ADR should be read as having already run and observed the behavior on a real
@@ -170,8 +169,8 @@ Two independent mechanisms, kept separate because they solve different halves of
    **not** reimplemented — Google Chat's own unmodified click handler still runs (because the
    wrapper delegates rather than replaces) and, in the expected case, already navigates its in-page
    router to the right conversation; the wrapper only adds the missing OS-window-focus step. This
-   keeps the "surface to the OS, don't rewrite the page" principle from the space's
-   `wrapper-not-a-rewrite` rule: the only added surface is a single write-only click signal. Full
+   keeps the "surface to the OS, don't rewrite the page" principle from the
+   *Wrapper, not a rewrite* project rule: the only added surface is a single write-only click signal. Full
    mechanics — the ordering guarantee, the two named edge cases, and the degraded fallback if Chat's
    page turns out not to navigate on its own — live in
    [notifications.md](../architecture/notifications.md) piece 2 and the plan's task 5b, since this
@@ -198,7 +197,7 @@ Two independent mechanisms, kept separate because they solve different halves of
 - **Pros**: full main-process control — click handling is a first-class main-process API
   (`notification.on('click', ...)`), no injection needed.
 - **Cons**: re-implements content Google Chat already produces correctly (a "rewrite," against the
-  space's `wrapper-not-a-rewrite` rule), fragile to Chat's DOM/title format changing, and a poll
+  the *Wrapper, not a rewrite* project rule), fragile to Chat's DOM/title format changing, and a poll
   loop risks violating NFR-02's "no busy-polling" unless strictly event-driven off
   `page-title-updated` rather than a timer.
 - **Why not** as primary: unnecessary complexity and rule violation when the native bridge already
@@ -254,7 +253,7 @@ Two independent mechanisms, kept separate because they solve different halves of
   had already shipped rather than before. A future ADR in this repo that proposes a preventive
   `webPreferences`/Electron-behavior override for a risk found only in documentation or an upstream
   issue tracker, not in this app's own measured behavior, should run that empirical check **before**
-  the override ships, not after — see also the `hidden-window-must-stay-live` rule this ADR already
+  the override ships, not after — see also the *Hidden window must stay live* project rule this ADR already
   cites: "verified by actually hiding the window and observing a real incoming message produce a
   real OS notification — never by reading the code and reasoning that it should work." That rule was
   right; this ADR just didn't fully follow it before the fact.

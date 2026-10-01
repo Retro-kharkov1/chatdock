@@ -3,7 +3,7 @@
 ## Purpose
 
 A personal-use Electron desktop application that wraps the existing Google Chat web app
-(`https://chat.google.com/app/chat/SPACE_ID`) so it behaves like a native desktop chat client:
+(`https://chat.google.com/`) so it behaves like a native desktop chat client:
 stays logged in, delivers OS-level notifications for new messages even when the window is
 closed/hidden, and lives in the system tray instead of quitting on close.
 
@@ -35,7 +35,10 @@ make a platform work that nobody will run was not justified.
 - Blinking tray icon and flashing taskbar button while there are unread messages and the window is
   not focused (FR-14).
 - Google Meet calls opened from Chat in an app-owned call window, with camera, microphone and screen
-  share (FR-16, NFR-07).
+  share (FR-16, NFR-07); confirmation before closing the window or exiting during a live call, and a tray
+  entry to bring the call window forward (FR-07, FR-16).
+- External links open in the system browser only for `http`, `https` and `mailto`; any other scheme is not
+  opened (FR-16, NFR-07).
 - A dedicated Settings window consolidating start-at-login, notification sound, mute, and icon
   blinking (FR-15).
 
@@ -59,7 +62,7 @@ make a platform work that nobody will run was not justified.
 
 ### FR-01 — Launch and initial window
 The application launches a single native window that loads
-`https://chat.google.com/app/chat/SPACE_ID` as its start URL. The window is resizable, has a
+`https://chat.google.com/` as its start URL. The window is resizable, has a
 sensible default size on first launch (e.g. 1200×800), and is not a fixed/fullscreen-only window.
 
 ```gherkin
@@ -68,7 +71,7 @@ Feature: Application launch
     Given the application has never been run on this machine
     When the user starts the application
     Then a single window opens
-    And the window loads https://chat.google.com/app/chat/SPACE_ID
+    And the window loads https://chat.google.com/
     And the window is resizable
 ```
 
@@ -288,7 +291,7 @@ Feature: System notifications
 states the choice the owner will face once Spike C reports (what Chat's notification actually carries,
 and whether a conversation identifier is reachable without scraping):
 - **(a)** accept a bounded second source for this one purpose (the document title / unread state, or
-  reading the page) — which touches the space rule `wrapper-not-a-rewrite`; or
+  reading the page) — which touches the *Wrapper, not a rewrite* project rule; or
 - **(b)** accept generic notification content and a click that only brings the window forward.
 
 Sub-questions: if only the sender is known and the message is in a group space, is a sender-only title
@@ -343,9 +346,16 @@ Feature: Close-to-tray
 ### FR-07 — Tray icon and context menu
 A tray icon is present whenever the application is running. Right-clicking it opens a context
 menu with, at minimum:
+- **Show call window** — present **only while a Meet call window (FR-16) exists, in any of its states**
+  (opening, error, crashed, Google sign-in, Meet page); first entry in the menu. Restores it if
+  minimized, raises and focuses it, and never touches the main Chat window. When the screen-share source
+  picker is open, focus goes to the picker (the window that can take input). Absent when no call window
+  exists, so the menu is unchanged then. (Owner decision 2026-10-01, P3.) It earns its place because a
+  call window buried behind other windows is otherwise reachable only through the OS window switcher,
+  and the tray is pointer-only.
 - **Show/Hide Google Chat** — toggles the **main Chat window's** visibility (mirrors double-click on
   the tray icon). While a Meet call window (FR-16) is open it acts on the main window only and never
-  hides or closes the call (working assumption, pending the owner — see FR-16). It earns its place
+  hides or closes the call (working default, not yet confirmed by the owner — see FR-16). It earns its place
   because close-to-tray (FR-06) removes the taskbar window as the way to bring it back on some
   platforms/configurations, so the tray needs its own explicit way back in.
 - **Mute notifications** — checkbox toggle; see FR-12. This is the **only** preference checkbox
@@ -353,7 +363,24 @@ menu with, at minimum:
   Start at login and Notification sound were moved to the Settings window instead.
 - **Settings…** — opens the Settings window (see FR-15), where Start at login, Notification sound,
   and Icon blinking (FR-14) are managed.
-- **Exit** — the only action that actually terminates the application process.
+- **Exit** — the only action that actually terminates the application process. **[conditional - applies
+  under Spike B]** **While a live call exists it first asks for confirmation** (owner decision
+  2026-10-01, P2; it can appear only if Spike B proves the live-call signal, otherwise Exit never
+  prompts): if a call window exists, Exit
+  first treats it as a close attempt; only when the call page objects to being closed (a *live call*, as
+  defined in FR-16) does the native confirmation "Exit Google Chat Desktop?" appear, with **Exit** and
+  **Cancel** (Cancel is the default and the Escape answer). With no call window, or a call page that does
+  not object, Exit terminates the application at once, as before. If the screen-share picker is open, it
+  is closed as part of exiting and its display-capture request is denied (nothing is shared).
+  If the screen-share picker was closed by Exit and the user then cancels the Exit confirmation, the
+  picker stays closed: the share request has already been denied and nothing is shared (Meet shows its
+  own "not presenting" state); the call window is otherwise unchanged.
+  **Exit is never silently ignored** (decided by the orchestrator as a default, to be confirmed by the
+  owner): if the close confirmation of the call window (P1, FR-16) is open when Exit is chosen, P1 is
+  dismissed (answered as "Keep window open") and the Exit confirmation (P2) is shown instead; if the
+  Exit confirmation (P2) is already open, choosing Exit again focuses it and does not open a second one.
+  Confirmation never blocks an operating-system shutdown, and it is the only added step: Exit is still
+  the only way to quit.
 
 The build/version diagnostic line (FR-13) is also part of this menu, placed last after a
 separator — it is not a preference control and is listed separately in FR-13.
@@ -383,6 +410,77 @@ Feature: Tray context menu
     When the user clicks the window's close (X) button
     Then the application process is still running (verifiable via OS process list)
     And selecting "Exit" from the tray menu is still required to terminate it
+
+  Scenario: [automatable] [conditional - applies under Spike B] Exit asks first while a live call exists (stubbed page that objects to unload)
+    Given a call window is open and its page objects to being closed
+    When the user selects "Exit" from the tray context menu
+    Then a confirmation "Exit Google Chat Desktop?" is shown with "Exit" and "Cancel"
+    And "Cancel" is the default and the Escape answer
+    When the user chooses "Exit"
+    Then the application process terminates and the tray icon disappears
+    When the user instead chooses "Cancel"
+    Then the application keeps running and the call window is unchanged
+
+  Scenario: [manual-only] [conditional - applies under Spike B] Exit asks first in a real live call
+    Given the call window is open on a real Meet call the user has joined and interacted with
+    When the user selects "Exit" from the tray context menu
+    Then the confirmation "Exit Google Chat Desktop?" is shown
+
+  Scenario: [manual-only] [conditional - applies under Spike B] Exit does not ask after Leave in a real call
+    Given the user has left a real Meet call with Meet's own Leave button and the call window shows
+      Meet's end page
+    When the user selects "Exit" from the tray context menu
+    Then the application terminates without a confirmation
+
+  Scenario: [automatable] [conditional - applies under Spike B] Exit while the close confirmation is open is never ignored
+    Given a call window is open, its page objects to being closed, and the close confirmation
+      "Close the call window?" is shown
+    When the user selects "Exit" from the tray context menu
+    Then the close confirmation is dismissed and the call window stays open
+    And the confirmation "Exit Google Chat Desktop?" is shown
+    When the user selects "Exit" from the tray context menu again while that confirmation is shown
+    Then the existing confirmation is focused and no second one is opened
+
+  Scenario: [automatable] Exit with the source picker open
+    Given a call window is open with the source picker open
+    When the user selects "Exit" from the tray context menu
+    Then the source picker is closed as part of exiting and its display-capture request is denied
+    And no source is shared
+    And the normal Exit rules apply: a live call gets the "Exit Google Chat Desktop?" confirmation,
+      otherwise the application terminates without one
+    And the picker is not raised or flashed instead of exiting
+
+  Scenario: [automatable] [conditional - applies under Spike B] Exit with the picker open, then the Exit confirmation is cancelled
+    Given a call window is open on a page that objects to being closed, with the source picker open
+    When the user selects "Exit" from the tray context menu
+    Then the source picker is closed and its display-capture request is denied
+    And the confirmation "Exit Google Chat Desktop?" is shown
+    When the user chooses "Cancel"
+    Then the application keeps running and the call window stays open
+    And the picker is not reopened and no source is shared
+    And the user can start a new screen share through Meet
+
+  Scenario: [automatable] Exit is unchanged when there is no live call
+    Given no call window exists, or its page does not object to being closed
+    When the user selects "Exit" from the tray context menu
+    Then the application process terminates without a confirmation
+
+  Scenario: [automatable] Show call window from the tray
+    Given a call window is open behind other windows
+    When the user selects "Show call window" from the tray menu
+    Then the call window is restored, raised and focused
+    And the main Chat window is unchanged
+
+  Scenario: [automatable] Show call window focuses the picker when it is open
+    Given a call window is open with the source picker open
+    When the user selects "Show call window" from the tray menu
+    Then the call window is raised together with the picker and focus lands on the picker
+
+  Scenario: [automatable] The entry is absent without a call window
+    Given no call window exists
+    When the user opens the tray menu
+    Then the menu contains no "Show call window" entry
+    And when a call window is created the entry appears, and when it is destroyed the entry disappears
 ```
 
 **Resolved (was an open question):** the original draft of this document left "mute notifications"
@@ -1033,9 +1131,47 @@ instead of the system browser, and the call works inside it:
 - **Closing the call window destroys it** — it is never hidden or kept alive — which ends the call for
   this participant and **releases the camera, microphone and any screen capture**. It never quits the
   application and does not close or hide the main Chat window; the app stays resident per FR-06/FR-07.
-  (FR-06's close-to-tray applies to the main window only.)
+  (FR-06's close-to-tray applies to the main window only.) **During a live call the user is asked first**
+  (owner decision 2026-10-01, P1) — see "Closing during a live call" below.
 - **Only `https://meet.google.com` gets this treatment.** Every other link still opens in the system
   browser. The exact matching rule is in NFR-07.
+- **Links clicked inside the call window** (owner decision 2026-10-01): a link to any non-Meet address
+  opens in the **system browser**, exactly as from the main window, and the call window stays where it
+  is; the call window itself never opens a second window and never navigates away to it. The scheme
+  rule below applies to this path too. The user is never shown an "A link was not opened" message.
+- **Which links the application opens outside itself** (owner decision 2026-10-01; applies to the main
+  window's and the call window's external-link handling alike): only **`http`, `https` and `mailto`**
+  are handed to the operating system. Any other scheme (`file:`, `ms-settings:` and so on) is **not
+  opened** and is not routed anywhere. The Meet test of NFR-07 runs first; this is the rule for
+  everything that is not a Meet link.
+
+**Definitions used below (each defined once).**
+- **Call window exists** — the call window has been created and not yet destroyed, in any state.
+- **Meeting page on screen** — the call window shows a Meet page that is *not* a known non-meeting page.
+  The known non-meeting pages are: the app's own opening, error and crashed panels; `accounts.google.com`;
+  and `meet.google.com` at path `/` or `/landing`. Defined by exclusion on purpose: an address the rule
+  does not recognise counts as a meeting page, so a running call is never navigated away by mistake.
+  **Known defect of address-only detection (back-to-back meetings).** Meet's own end page ("You left the
+  meeting") has the **same address** as the meeting, so it counts as a meeting page. After the user
+  leaves a call and, still with the call window open, clicks the next Meet link in Chat, that link is
+  **refused** (the window is only focused) and the notification "A call is already open. The new link was
+  not opened." is shown, which is **false** (no call is open). The user must close the call window by hand
+  and click the link again. Back-to-back meetings are a likely everyday path, so this is a functional
+  gap, not a wording issue. **Proposed mitigation, pending Spike B (not yet an owner decision):** treat a
+  meeting as live only while the live-call signal says so, and fall back to the address rule only when
+  the signal is unavailable. Spike B must therefore also establish whether the signal can be read
+  **without** a close attempt (today it is observed only at a close attempt, which destroys a
+  non-objecting window) or whether another observable (for example the page's title) separates the end
+  page from a meeting in progress. If no non-destructive reading exists, the defect stays and the owner
+  chooses between accepting it and loading the new link into the window when the address-only rule is
+  the only information available (which risks navigating a live call away).
+- **Live call** — Meet's page *objects to being closed* (it asks the browser engine to block unloading,
+  the "Leave site?" behaviour of a Meet tab). It is observed only at the moment of a close attempt.
+  **Unverified; must be proven by Spike B.** If the signal is missing or unobservable (the page does not
+  object, never answers within the timeout, or the user has not yet interacted with the page, which makes
+  the engine ignore the objection), the call is treated as **not live**: no confirmation, the window
+  closes or the application exits at once. The cost is one unguarded close; the opposite error would
+  prompt at the end of every call.
 
 **What counts as "a Meet link from Chat" (scope).** In scope: any Meet link the user activates inside
 the main Chat window — a link in a message, Chat's own **Join / Meet buttons**, and calendar or
@@ -1043,13 +1179,21 @@ meeting cards rendered by Chat — whether the page opens it as a new window or 
 to it (the main-frame case is intercepted, see NFR-07). Out of scope: a Meet link opened from outside
 the application (another app, the OS, a browser); those are not the app's to route.
 
-**Owner decisions (2026-09-30, approved by the owner's reply "делай" to a question listing them):**
-- **One call window at a time.** Activating a second Meet link while a call window is open focuses the
-  existing call window and does **not** open a second one or navigate the existing call away
-  unprompted. **The user is told**, by a native OS notification reading "A call is already open. The
-  new link was not opened." It is shown **regardless of mute**, because it is app status, not a chat
-  message. Clicking it focuses the existing call window. It reuses the notification surface, so it
-  adds no new UI and needs no extra wireframe. The action is never silent.
+**Owner decisions (2026-09-30, approved by the owner's reply "делай" to a question listing them), as
+revised on 2026-10-01:**
+- **One call window at a time.** Activating a second Meet link while a call window exists never opens a
+  second window. What happens depends on whether the call window shows a *meeting page*:
+  - **Meeting page on screen** (a meeting is live or about to be): the existing window is restored if
+    minimized, raised and focused, and the existing call is **not** navigated. **The user is told**, by a
+    native OS notification reading "A call is already open. The new link was not opened." It is shown
+    **regardless of mute**, because it is app status, not a chat message. Clicking it focuses the existing
+    call window (the picker, if one is open). It reuses the notification surface. The action is never
+    silent.
+  - **No meeting page on screen** (opening, load error, crashed, Google sign-in, Meet landing page —
+    revised by the owner 2026-10-01): the new link is **loaded into the existing call window**, which is
+    raised and focused. **No notification** is shown, because "a call is already open" would be false.
+    This revises the earlier wording "does not navigate the existing window away unprompted" for the
+    no-meeting case only; nothing can be lost there.
 - **Linux screen share may use the operating system's picker, if Spike B shows it works there.** The
   application may then rely on the OS's own screen-share picker (on Linux with PipeWire, the portal
   picker) instead of showing the app picker (a second picker would be redundant). Either way **the
@@ -1058,13 +1202,58 @@ the application (another app, the OS, a browser); those are not the app's to rou
   decision that screen share uses "the app's own picker", so it is tied to Spike B: Spike B must
   verify that `setDisplayMediaRequestHandler` can defer to the portal picker without the app
   auto-choosing a source. If it cannot, the app's own picker is used on Linux too and the wireframe
-  must cover it.
+  must cover it. **Until Spike B has passed on Linux, Linux keeps the app picker** (recommended
+  default of 2026-10-01, not an owner decision).
 - **New-message notifications and attention indicators keep arriving while the user is inside the call
   window** (FR-14 and FR-05a still fire, because the main Chat window is not focused).
 
-**Working default, pending the owner (an assumption, not a decision):**
+**Owner decisions (2026-10-01):**
+- **Confirm on closing the call window during a live call (P1).** Closing the call window while Meet's
+  page objects to being closed (a live call) shows a native confirmation before anything is destroyed;
+  see "Closing during a live call" below. Option A of the design (confirm on a live call, no Settings
+  switch) is what is approved; no Settings row is added.
+- **Confirm on tray Exit during a live call (P2)** — amends FR-07 (see FR-07).
+- **Tray entry "Show call window" (P3)** — added to FR-07.
+- **Non-web schemes** — only `http`, `https` and `mailto` are opened in the operating system (see "Which
+  links the application opens outside itself" above and NFR-07).
+- **Non-Meet links clicked in the call window open in the system browser** (see above). This replaces the
+  earlier design recommendation of an "A link was not opened" status strip, which is rejected.
+- **Second link when no meeting page is on screen loads into the existing window** (see "One call window
+  at a time" above).
+
+**Closing during a live call.** The close routes are the title-bar X, Alt+F4 and the taskbar close. A
+minimized call window is restored and focused first.
+- **Page does not object** (not live, including after Meet's own Leave, on a panel, on the sign-in page,
+  with no user interaction yet, or with the signal missing) → the window is destroyed at once, with no
+  dialog.
+- **Page objects (live call)** → the native confirmation "Close the call window?" with **Close window**
+  and **Keep window open**; Keep window open is the default and the Escape answer. *Close window*
+  overrides the objection for this close only and destroys the window (devices released); *Keep window
+  open* leaves the window open and focused.
+- **Page never answers** within a timeout (proposed 3 seconds; the value is not fixed until Spike B has
+  measured the typical answer time during a real call) → treated as not live; the window is destroyed.
+  **During that wait (at most the timeout) nothing is shown**: the window simply stays as it is. This is
+  the one bounded exception to "never silently swallowed" below; it ends by itself with the window
+  destroyed.
+- **While the screen-share source picker is open** the call window does not close: the picker is raised,
+  focused and flashed once, so the attempt is never silent. (Exit is the one exception: it closes the
+  picker first, see FR-07.)
+- **While the close confirmation is open and the user chooses tray Exit**, the close confirmation is
+  dismissed (as "Keep window open") and the Exit confirmation is shown, see FR-07; the Exit is never
+  ignored.
+- **A close is never silently swallowed:** apart from the bounded hung-page wait above (at most the
+  timeout, ending with the window destroyed), every app-initiated close ends in exactly one of: window
+  destroyed; confirmation shown and answered; or, with the picker open, the picker raised.
+- **The override applies only to closes the application initiates** (the window's own close routes and
+  Exit). A navigation the Meet page starts itself (a reload, a Meet-internal navigation) is not overridden.
+  What the user sees then (a Meet prompt, or a silent block) is unverified; see the open questions.
+- **The confirmation never blocks the operating system shutting down or the application quitting**; a
+  quit started while a call page objects overrides the objection, so quitting is never cancelled silently.
+
+**Working default, not yet confirmed by the owner (an assumption, not a decision):**
 - **Tray "Show/Hide Google Chat" acts on the main window only** while a call is open, and never
-  hides or closes the call window.
+  hides or closes the call window. (Reaching the call window is covered by the owner-approved "Show call
+  window" entry.)
 
 Each scenario is tagged **[automatable]** (unit/integration test, with real Meet replaced by a stub
 page or stubbed handlers) or **[manual-only]** (needs a real Meet call, real devices and a real desktop).
@@ -1115,19 +1304,87 @@ Feature: Google Meet calls in an app-owned call window
     When the user picks a real screen or window in the app's picker
     Then that source is shared in the call
 
-  Scenario: [manual-only] [applies only if Spike B shows the OS picker works] Linux with PipeWire uses the OS picker
+  Scenario: [manual-only] [applies only after Spike B has passed on Linux; until then Linux shows the app picker] Linux with PipeWire uses the OS picker
     Given a Linux desktop using PipeWire
     When the user starts a screen share
     Then the operating system's picker is shown and the app's picker is not
     And no source is chosen or pre-selected without a user action
 
-  Scenario: [automatable] Closing the call window destroys it and does not quit the app
-    Given the call window is open and the main Chat window is hidden to tray
+  Scenario: [automatable] Closing the call window destroys it and does not quit the app (no live call)
+    Given the call window is open and Meet's page does not object to being closed
+    And the main Chat window is hidden to tray
     When the user closes the call window
-    Then the call window is destroyed (not hidden)
+    Then no confirmation is shown
+    And the call window is destroyed (not hidden)
     And the application process keeps running
     And the tray icon remains visible
     And the main Chat window remains hidden
+
+  Scenario: [automatable] [conditional - applies under Spike B] A live call asks before the window closes (stubbed page that objects to unload)
+    Given the call window shows a page that objects to being closed
+    When the user closes the call window
+    Then a confirmation "Close the call window?" is shown with "Close window" and "Keep window open"
+    And "Keep window open" is the default and the Escape answer
+    When the user chooses "Keep window open"
+    Then the call window stays open and focused
+    When the user closes the call window again and chooses "Close window"
+    Then the call window is destroyed and the application keeps running
+
+  Scenario: [manual-only] [conditional - applies under Spike B] In a real live call the close dialog appears
+    Given the call window is open on a real Meet call the user has joined and interacted with
+    When the user closes the call window
+    Then the confirmation "Close the call window?" is shown
+
+  Scenario: [manual-only] [conditional - applies under Spike B] After Leave in a real call there is no dialog
+    Given the user has left a real Meet call with Meet's own Leave button and the call window shows
+      Meet's end page
+    When the user closes the call window
+    Then the call window is destroyed without a confirmation
+
+  Scenario: [automatable] A missing live-call signal fails toward closing without a dialog
+    Given the shell cannot determine whether the page objects to being closed
+    When the user closes the call window
+    Then the call window is destroyed without a confirmation
+
+  Scenario: [automatable] No user interaction means no objection, and the close goes through
+    Given the page objects only after user interaction and the user has not interacted with it
+    When the user closes the call window
+    Then the call window is destroyed without a confirmation
+
+  Scenario: [automatable] A hung page does not block closing
+    Given the call window's page never answers the unload check
+    When the user closes the call window
+    Then nothing is shown during the wait and the window stays as it is
+    And after the timeout (proposed 3 seconds) the page is treated as not live
+    And the call window is destroyed without a confirmation
+
+  Scenario: [automatable] Closing is not silent while the source picker is open
+    Given the call window has the source picker open
+    When the user tries to close the call window
+    Then the call window does not close
+    And the source picker is raised, focused and flashed
+
+  Scenario: [automatable] [conditional - applies under Spike B] A close is never silently swallowed (invariant)
+    Given a call window whose page objects to being unloaded
+    When the user closes the call window by any route (title-bar close, Alt+F4, taskbar close)
+    Then exactly one of these happens: the window is destroyed, or the confirmation is shown
+      (or, with the picker open, the picker is raised)
+    And nothing visibly happens only during the bounded hung-page wait (at most the timeout), which ends
+      with the window destroyed; there is no other case in which nothing visibly happens
+
+  Scenario: [automatable] [conditional - applies under Spike B] The override applies only to app-initiated closes
+    Given the call window's page objects to being unloaded
+    When the page itself navigates (a reload or a Meet-internal navigation)
+    Then the shell does not override the objection
+    # What the user sees (a prompt, or a silent block) is unverified (Spike B) and is not asserted here
+    When the user instead closes the window and chooses "Close window" in the confirmation
+    Then the objection is overridden for that close only and the window is destroyed
+
+  Scenario: [automatable] A quit is never cancelled by an objecting call page
+    Given the call window's page objects to being unloaded
+    When the application quits by any path (including an operating-system shutdown)
+    Then the objection is overridden and the quit completes
+    And if a quit nevertheless does not happen, the main window's close still hides it to the tray
 
   Scenario: [manual-only] Closing the call window releases the devices
     Given a real call with camera on and a screen shared
@@ -1135,14 +1392,64 @@ Feature: Google Meet calls in an app-owned call window
     Then the camera indicator turns off and no capture indicator remains
     And the call has ended for this participant
 
-  Scenario: [automatable] A second Meet link focuses the existing call window
-    Given a call window is open
+  Scenario: [automatable] A second Meet link while a meeting page is on screen focuses the existing window
+    Given a call window is open and shows a meeting page
     When the user activates another Meet link
-    Then the existing call window is focused
+    Then the existing call window is restored if minimized, raised and focused
     And no second call window is created
+    And the existing call is not navigated
     And a native OS notification "A call is already open. The new link was not opened." is shown,
       even if "Mute notifications" is on
     And clicking that notification focuses the existing call window
+
+  Scenario: [manual-only] [conditional - applies under Spike B and the end-page mitigation] A new Meet link after Leave in a real call is opened, not refused
+    Given the user has left a real Meet call with Meet's own Leave button and the call window shows
+      Meet's end page
+    When the user activates another Meet link
+    Then the new link is loaded into the existing call window and no "call already open" notification
+      is shown
+    # Until the mitigation is proven, the address-only rule applies and this scenario fails by design:
+    # the link is refused and the false notification appears (see "Known defect" in the definitions)
+
+  Scenario: [automatable] A second Meet link while no meeting page is on screen loads into the existing window
+    Given a call window is open showing its opening state, a load error, the crashed state, a Google
+      sign-in page or the Meet landing page
+    When the user activates another Meet link
+    Then the new link is loaded into the existing call window
+    And the window is raised and focused
+    And no "call already open" notification is shown
+    And no second call window is created
+
+  Scenario: [automatable] An unrecognised Meet address form counts as a meeting page
+    Given a call window is open on a Meet address the shell does not recognise
+    When the user activates another Meet link
+    Then the existing call is not navigated and the notification is shown
+
+  Scenario: [automatable] With the picker open, a second Meet link focuses the picker
+    Given a call window is open on a meeting page with the source picker open
+    When the user activates another Meet link
+    Then the call window is raised together with the picker and focus lands on the picker
+
+  Scenario: [automatable] A non-Meet link inside the call window opens in the system browser
+    Given the call window is open on a Meet page
+    When the page tries to open a popup or navigate to a link on any other host, with scheme http, https
+      or mailto
+    Then no popup window is created and the call window does not navigate
+    And the link opens in the system browser
+    And no "link not opened" message is shown
+
+  Scenario: [automatable] A link with another scheme is not opened (main window and call window)
+    Given the main window or the call window has a link whose scheme is not http, https or mailto
+      (for example file:///C:/Windows/System32/calc.exe or ms-settings:privacy)
+    When the user activates it
+    Then it is not handed to the operating system and no window is created
+    And the call window (if it was the source) does not navigate
+
+  Scenario: [automatable] The crashed call page is reported and can be reloaded or closed
+    Given the call window's page process has ended unexpectedly
+    Then the window shows "The call window stopped working" with "Reload" and "Close window"
+    When the user chooses "Close window"
+    Then the call window is destroyed without a confirmation and the application keeps running
 
   Scenario: [automatable] Tray Show/Hide does not affect the call window (working default)
     Given a call window is open
@@ -1162,12 +1469,11 @@ Feature: Google Meet calls in an app-owned call window
     Then it opens in the system browser and no call window is created
 ```
 
-**Requires a wireframe.** The screen-share source picker is a **new UI surface** (what it lists, how a
-source is previewed and chosen, cancel, empty and error states). It needs a wireframe from
-`ux-ui-designer` before any implementation; this document does not design it and states only the
-behavioural rules above. (Where the OS picker is used on Linux/PipeWire (owner decision, conditional on Spike B) the app
-picker is not shown there, which the wireframe need not cover unless Spike B shows the portal
-picker cannot be deferred to.)
+**Wireframe.** The screen-share source picker is a **new UI surface** (what it lists, how a source is
+previewed and chosen, cancel, empty and error states). Its wireframe exists:
+[design 05](../design/05-meet-source-picker.md). This document does not design it and states only the
+behavioural rules above. (Where the OS picker is used on Linux/PipeWire (owner decision, conditional on
+Spike B) the app picker is not shown there.)
 
 **Verification — every release.** Real Meet inside Electron is unverified today (ADR-0004 Spike B:
 a real call with camera, microphone and screen share, on Windows and on Linux) and is not a
@@ -1175,6 +1481,14 @@ documented, supported configuration for Meet, so it can break on a user-agent or
 Google's side. Every **[manual-only]** scenario above must be **re-run by hand on every release**, on a
 real desktop, stating which platform was actually tested (the same discipline as sign-in under
 ADR-0001). A release that has not re-verified it must say so in its release notes.
+
+**Crashed or failed page (design-derived, not separately ratified).** The application draws its own panel
+only where Meet's page cannot speak for itself: while it opens (with a "taking longer than expected" note
+and Reload / Close window after 10 seconds), when the page fails to load ("Couldn't open the call", a
+plain reason, Try again / Close window) and when the page's process crashes ("The call window stopped
+working", Reload / Close window). Close from these panels destroys the window with no confirmation (no
+live page can object). Nothing app-owned is ever drawn over Meet's own content, and there is no status
+strip. Layout and wording: [design 04](../design/04-meet-call-window.md).
 
 **Open questions (owner):**
 - If Spike B shows Meet does not work in Electron, what does the owner want? ADR-0004 lists Meet in the
@@ -1186,6 +1500,30 @@ ADR-0001). A release that has not re-verified it must say so in its release note
 - **Spike B (Linux picker):** verify that `setDisplayMediaRequestHandler` can defer to the portal
   picker without the app choosing a source automatically. If it cannot, the app's own picker is used
   on Linux too (per the owner decision above).
+- **Spike B (live-call signal and close mechanics):** does Meet's page object to being closed during a
+  call, does that objection reach the shell for a window close, what is the typical answer time during a
+  real call (to fix the 3-second timeout), and what happens to a page-initiated objection that nothing
+  handles (a silent block would mean Meet's own "Leave site?" protection does not appear in Electron)?
+  If the live-call signal cannot be proven, the close and Exit confirmations (P1, P2) never show, by the
+  failure direction above, and the owner decides whether to accept that.
+- **Meet link clicked inside the call window.** Working default: it follows the second-link rule above
+  (existing call not navigated, notification shown when a meeting page is on screen); it is never sent to
+  the system browser. Please confirm.
+- **Non-web scheme, no cue.** Per the owner's decision a link with a scheme other than http, https or
+  mailto is simply not opened, in the main window and in the call window, with no on-screen message
+  (this document specifies none). A silent no-op is a dead end for the person who clicked; please confirm
+  that no on-screen cue is wanted.
+- **Hung-page timeout** (proposed 3 seconds) may be changed by the owner once Spike B has measured it.
+- **Notification sound.** Working assumption: the "call already open" notification follows the
+  Notification sound setting (FR-11).
+- **Wording of the *Electron security baseline* project rule.** The rule now carries the 2026-10-01
+  http/https/mailto allow-list for external links, so nothing is pending on schemes. Whether the rule
+  also covers a hosted app-owned local view (the call window's app view) is still the technical lead's
+  open question in [meet-call-window.md](../architecture/meet-call-window.md).
+- **Meet's end page and the live-call signal (back-to-back meetings).** See "Known defect of
+  address-only detection" in the definitions above: after a call ends, a new Meet link is refused with a
+  false "A call is already open" notification. Spike B must find a non-destructive way to read the
+  live-call signal (or another end-page marker); the owner decides what to do if none exists.
 
 ## Non-Functional Requirements
 
@@ -1302,7 +1640,7 @@ module) that is the sole reference to the running interval:
      reach zero once the sequence ends with no unread messages remaining.
 
 ### NFR-07 — Security of the Meet call window (ties to FR-16)
-**Priority: Must.** Mirrors the amended space rule `electron-security-baseline` (owner decision
+**Priority: Must.** Mirrors the amended the *Electron security baseline* project rule (owner decision
 2026-09-30, UI-01), which is the authority if the two ever differ. FR-16 is the single exception to
 "external links open in the system browser"; this requirement bounds it.
 
@@ -1310,7 +1648,7 @@ module) that is the sole reference to the running interval:
   `https` and its hostname is **exactly** `meet.google.com`. No suffix, substring or wildcard matching.
   Host case is normalised by URL parsing (`MEET.GOOGLE.COM` is the same host). Anything that only
   *looks* like the host is refused: a trailing dot, userinfo tricks (`meet.google.com@evil.example`),
-  lookalike hosts. Per the space rule, the origin must equal `https://meet.google.com`: an explicit
+  lookalike hosts. Per the project rule, the origin must equal `https://meet.google.com`: an explicit
   port other than the default 443 is refused, and a URL carrying userinfo is refused.
 - **Wrapper unwrapping.** Only a `https://www.google.com/url?q=<target>` wrapper is unwrapped, and only
   **once**. The wrapper's own URL must be exactly that host and path; the target must be a parseable
@@ -1319,21 +1657,40 @@ module) that is the sole reference to the running interval:
   other host all go to the system browser. A wrapper-shaped URL on any other host is **not**
   unwrapped.
 - **Duplicated `q` parameter — refused (added 2026-09-30 by `tech-lead`; a narrowing of this
-  requirement, pending owner acknowledgement).** A `https://www.google.com/url` wrapper that carries
+  requirement, kept as a recommended default; the owner has not yet acknowledged it).** A `https://www.google.com/url` wrapper that carries
   **more than one** `q` parameter is not unwrapped and goes to the system browser, because two parsers
   could pick different values (first vs. last) and one could validate a Meet target while another
   follows a different one. This narrows the bullet above: it refuses a shape the earlier wording did
   not mention. Until the owner acknowledges it, it is a proposed tightening, not a ratified decision;
   it is stricter than the owner's stated rule, so it cannot let a non-Meet link into the call window.
+- **Which non-Meet links are opened in the operating system (owner decision 2026-10-01).** For the
+  **main window's** external-link handling (new-window requests and navigations away from the allowed
+  Chat origins) **and** for the call window's (below), a URL that is not a Meet link is handed to the
+  operating system **only if its scheme is `http`, `https` or `mailto`**. Any other scheme (`file:`,
+  `ms-settings:`, `javascript:`, a custom application scheme, and so on) is **not opened** and creates
+  no window. The scheme is the one produced by normal URL parsing, compared case-insensitively; an
+  unparseable value is not opened.
 - **Call window hardening**, checked on the `webPreferences` the call window is **created with** (and
   on its live web contents where the test can reach them): `contextIsolation` on, `nodeIntegration`
-  off, `sandbox` on; it shares the main session (so the login carries over); it denies its own popups;
-  its navigation is limited to `meet.google.com` and `accounts.google.com`.
+  off, `sandbox` on; it shares the main session (so the login carries over); it **denies its own
+  popups** (no popup window is ever created from it); its navigation is limited to `meet.google.com`
+  and `accounts.google.com`. **A popup or navigation the call window blocks for pointing at any other
+  address is routed, not dropped** (owner decision 2026-10-01): if its scheme is `http`, `https` or
+  `mailto` it opens in the system browser, as from the main window; any other scheme is not opened. The
+  call window itself never opens a second window or navigates away. No status strip or message is shown
+  in the call window for a routed link.
+- **The call window's app-owned view** (a second web contents hosted inside the call window, decided by
+  `tech-lead`; it draws the opening, load-error and crashed panels) is created with `contextIsolation`
+  on, `nodeIntegration` off and `sandbox` on, with its **own non-persistent session** (not the main
+  session), a bundled local page and no navigation; it talks to the main process only through its
+  preload script's two channels (state to the view; retry, reload and close from the view). Meet's own
+  web contents has no preload and no bridge.
 - **Main-window navigation.** A Meet URL that the **main window** tries to navigate itself to
   (`will-navigate`, not just a new-window request) is intercepted and treated exactly like a link
   click: prevented in the main window and routed by these rules. All other main-window navigation is
   **out of scope** of this requirement and unchanged.
-- **Permissions scoped to Meet.** Camera, microphone and display-capture permissions are granted only
+- **Permissions scoped to Meet** (the stricter two-origin rule is a recommended default, kept; the owner
+  has not separately decided it). Camera, microphone and display-capture permissions are granted only
   when **both** the requesting origin and the top-level page's origin are exactly
   `https://meet.google.com`, enforced in **both** the permission-request handler and the
   permission-check handler. Every other case is refused: any other origin (including the main Chat
@@ -1343,7 +1700,8 @@ module) that is the sole reference to the running interval:
   except where the operating system's picker is relied on (Linux/PipeWire, owner decision in FR-16,
   conditional on Spike B). The user always chooses the source explicitly in either case.
 - **Closing the call window never quits the app** (FR-06/FR-07).
-- **Everything else is unchanged:** every other URL still goes to the system browser; the main window's
+- **Everything else is unchanged:** every other `http`, `https` or `mailto` URL still goes to the system
+  browser (any other scheme is not opened, see above); the main window's
   NFR-04 baseline is untouched; session cookies and credentials are never logged, persisted or
   transmitted by this feature.
 
@@ -1374,7 +1732,7 @@ Feature: Meet call window security
       | https://google.com/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij        | system browser |
       | https://www.google.com/url?q=http%3A%2F%2Fmeet.google.com%2Fabc-defg-hij     | system browser |
       | https://www.google.com/url?q=https%3A%2F%2Fwww.google.com%2Furl%3Fq%3Dhttps%253A%252F%252Fmeet.google.com%252Fabc | system browser |
-      | https://www.google.com/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij&q=https%3A%2F%2Fevil.example%2F | system browser (duplicated q; narrowing pending owner acknowledgement) |
+      | https://www.google.com/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij&q=https%3A%2F%2Fevil.example%2F | system browser (duplicated q; recommended default, owner acknowledgement outstanding) |
       | https://www.google.com/url?q=%%%not-a-url                                    | system browser |
       | https://www.google.com/url?q=https%3A%2F%2Fevil.example%2F                   | system browser |
       | https://evil.example/url?q=https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij      | system browser |
@@ -1391,10 +1749,41 @@ Feature: Meet call window security
     And it uses the main session
     And a popup opened from it is denied
 
-  Scenario: [automatable] Call window navigation is limited
+  Scenario: [automatable] The call window's app-owned view is hardened, checked on creation
+    When the call window's app view is created
+    Then its webPreferences have contextIsolation on, nodeIntegration off and sandbox on
+    And it uses its own non-persistent session, not the main session
+    And it loads only a bundled local page and every navigation from it is prevented
+    And Meet's own web contents has no preload script
+
+  Scenario: [automatable] Call window navigation is limited, and the blocked link is routed
     Given the call window is open on a Meet call
-    When the page attempts to navigate to a host other than meet.google.com or accounts.google.com
-    Then the navigation is blocked
+    When the page attempts to navigate to https://example.org/ (a host other than meet.google.com or
+      accounts.google.com)
+    Then the navigation is blocked in the call window
+    And https://example.org/ opens in the system browser
+
+  Scenario: [automatable] A popup from the call window is denied and routed
+    Given the call window is open on a Meet call
+    When the page calls window.open("https://example.org/")
+    Then no popup window is created
+    And https://example.org/ opens in the system browser
+
+  Scenario Outline: [automatable] Only http, https and mailto are handed to the operating system
+    When a link "<url>" is activated in the main window or in the call window
+    Then the outcome is "<outcome>"
+
+    Examples:
+      | url                                  | outcome                            |
+      | https://example.org/page             | system browser                     |
+      | http://example.org/page              | system browser                     |
+      | HTTPS://example.org/page             | system browser                     |
+      | mailto:someone@example.org           | operating system mail handler      |
+      | file:///C:/Windows/System32/calc.exe | not opened                         |
+      | ms-settings:privacy                  | not opened                         |
+      | javascript:alert(1)                  | not opened                         |
+      | ssh://host.example                   | not opened                         |
+      | not a url                            | not opened                         |
 
   Scenario Outline: [automatable] Media permissions only for the Meet origin
     When a page at "<requesting>" embedded in a top-level page at "<top>" requests camera, microphone
@@ -1586,18 +1975,46 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
 | ID | Priority | Change | Traces to |
 |----|----------|--------|-----------|
 | FR-05a | Must (unconditional) | Split out: a native notification appears while hidden, minimized or unfocused (BUG-01 core) | ADR-0004 Spike A; FR-11, FR-12, FR-14 |
-| FR-05b | Must (conditional) | Title = chat name, body = message text; applies under owner answer (a) only | ADR-0004 Spike C; ADR-0002 piece 2; space rule `wrapper-not-a-rewrite`; open question in FR-05 |
+| FR-05b | Must (conditional) | Title = chat name, body = message text; applies under owner answer (a) only | ADR-0004 Spike C; ADR-0002 piece 2; the *Wrapper, not a rewrite* project rule; open question in FR-05 |
 | FR-05c | Must (step 1 unconditional, step 2 conditional) | Click brings window forward from tray/minimized; step 2 opens that conversation under (a) only; degraded outcome logged | ADR-0004 Spike C; open question in FR-05 |
 | FR-06, FR-07 | Must | Scoped: close-to-tray and tray Show/Hide act on the main window only | FR-16 |
+| FR-07 | Must | Amended 2026-10-01: tray entry "Show call window" (P3); Exit asks first while a live call exists (P2) | Owner decision 2026-10-01; FR-16 |
+| FR-16 | Must (conditional on Spike B) | Amended 2026-10-01: close asks first during a live call (P1); second link loads into the existing window when no meeting page is on screen; non-Meet links in the call window open in the system browser (no strip); only http, https, mailto opened outside the app | Owner decisions 2026-10-01; NFR-07 |
+| NFR-07 | Must | Amended 2026-10-01: scheme allow-list for external links (main and call window); blocked call-window links routed to the system browser; app-view hardening recorded | Owner decisions 2026-10-01; the *Electron security baseline* project rule |
 | FR-09 | Must | Prose and Linux scenario now reference NFR-08 | NFR-08, NFR-05 |
 | FR-10 | Must | Linux autostart `Exec` path must be the space-free executable path (checked under NFR-08); first-run default changed to on, see the last row of this table | NFR-08, FR-15 |
 | FR-10, FR-15 | Must | Amended: first-run defaults all on (Start at login, sound, blinking), mute off; applied once on a fresh install, never over an existing user choice | Owner decision 2026-09-30 |
 | FR-14 | Must | Amended: taskbar flash added; condition "hidden" becomes "not focused"; stop on focus; degraded trigger stated; working assumptions on flash, mute and the setting | ADR-0004 (S2: `flashFrame` unimplemented), FR-05a, FR-12, FR-15, NFR-06 |
-| FR-16 | Must (conditional on Spike B) | New: Meet in app-owned call window, own screen-share picker | ADR-0004 Spike B; space rule `electron-security-baseline`; NFR-07; wireframe from `ux-ui-designer` still to be produced; three defaults approved by the owner 2026-09-30 (one call window, Linux OS picker if Spike B allows, notifications/indicators during a call); tray Show/Hide main-only remains a working default |
-| NFR-07 | Must | New: exact-origin match, hardened call window, permissions scoped to Meet; duplicated-`q` wrapper refused (narrowing, pending owner acknowledgement) | Space rule `electron-security-baseline` (amended 2026-09-30, UI-01); NFR-04 |
+| FR-16 | Must (conditional on Spike B) | New: Meet in app-owned call window, own screen-share picker | ADR-0004 Spike B; the *Electron security baseline* project rule; NFR-07; wireframe from `ux-ui-designer` still to be produced; three defaults approved by the owner 2026-09-30 (one call window, Linux OS picker if Spike B allows, notifications/indicators during a call); tray Show/Hide main-only remains a working default |
+| NFR-07 | Must | New: exact-origin match, hardened call window, permissions scoped to Meet; duplicated-`q` wrapper refused (narrowing; recommended default, owner acknowledgement outstanding) | The *Electron security baseline* project rule (amended 2026-09-30, UI-01); NFR-04 |
 | NFR-08 | Must | New: no spaces in Linux install path/executable name; deb declares audio dependency | FR-09, FR-10, NFR-05 |
 
 ## Change log
+
+- **2026-10-01 (Meet review fixes)** — After the skeptic review: (1) the project rule now holds the
+  http/https/mailto allow-list, so the "owner must add a line" item is removed; (2) tray Exit is never
+  ignored: with the close confirmation (P1) open it is dismissed and the Exit confirmation (P2) is shown,
+  with P2 already open it is focused (orchestrator default, owner to confirm; FR-07, FR-16); (3) P1/P2
+  scenarios and the FR-07 Exit paragraph tagged conditional on Spike B, and manual-only cases against a
+  real Meet call added (dialog appears in a live call, none after Leave); (4) the Meet end page shares the
+  meeting's address, so address-only detection refuses the next Meet link and shows a false "A call is
+  already open" notification; recorded as a known defect with a mitigation proposed pending Spike B;
+  (5) "never nothing visibly happens" now states the bounded hung-page wait (at most 3 s) as its only
+  exception; (6) outcome of cancelling the Exit confirmation after Exit closed the picker stated; (7) the
+  picker wireframe exists, stale "requires a wireframe" removed.
+
+- **2026-10-01 (Meet owner decisions)** — The owner decided: (1) a second Meet link while the call window
+  is open but shows no meeting page loads into the existing window (revises FR-16's "does not navigate
+  away unprompted" for that case; with a meeting page on screen it still focuses the window and shows the
+  notification, no navigation); (2) all three call-time confirmations: P1 confirm on closing the call
+  window during a live call, P2 confirm on tray Exit (amends FR-07), P3 tray entry "Show call window";
+  (3) the external-link handler opens only `http`, `https` and `mailto`, any other scheme is not opened;
+  (4) non-Meet links clicked inside the call window open in the system browser (resolves design OQ-3; the
+  "A link was not opened" strip is rejected and removed from the design). Definitions of *call window
+  exists*, *meeting page on screen* and *live call* moved into FR-16; the app view's hardening (decided by
+  `tech-lead`) recorded in NFR-07. Kept as recommended defaults, not owner-decided: the two-origin Meet
+  permission rule, refusal of a duplicated `q`, Linux keeping the app picker until Spike B passes there,
+  tray Show/Hide acting on the main window only. Design docs and the architecture note updated to match.
 
 - **2026-09-30 (first-run defaults)** — Owner decision: after installation everything is on by
   default: Start at login (previously off; launches hidden into the tray), notification sound and icon
@@ -1630,7 +2047,7 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
   (consistent with FR-14). FR-05 and FR-14 scenarios tagged automatable or manual-only. FR-16: a
   second Meet link now tells the user it was not opened; the Linux/PipeWire default is tied to a Spike
   B check and an open question because it departs from "the app's own picker". NFR-07's port/userinfo
-  rule stated as the space rule's, without hedge. Design docs added to the superseded list; FR-15 gained
+  rule stated as the project rule's, without hedge. Design docs added to the superseded list; FR-15 gained
   the label question; FR-09 and FR-10 added to the changes table.
 
 - **2026-09-30 (owner decisions recorded)** — The owner approved four defaults (reply "делай"):
