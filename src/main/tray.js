@@ -94,7 +94,7 @@ function createAppTray({
       { type: 'separator' },
       { label: 'Settings…', click: () => onOpenSettings() },
       { type: 'separator' },
-      // The only path that terminates the process — see the space's `quit-only-from-tray` rule.
+      // The only path that terminates the process — see the project rule "Quit only from the tray" (docs/architecture/project-rules.md).
       { label: 'Exit', click: () => onExit() },
       { type: 'separator' },
       // Owner request (2026-09-22): disabled/non-clickable diagnostic line, deliberately last and

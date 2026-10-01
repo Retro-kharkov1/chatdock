@@ -45,7 +45,7 @@ const BRAND_GREEN = '#149960';
 const APP_ICON_SIZES = [16, 24, 32, 48, 64, 128, 256, 512];
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]; // Windows .ico frame set
 
-// Tray sizes actually requested by the two in-scope platforms (electron-desktop.md §7):
+// Tray sizes actually requested by the two in-scope platforms:
 // Windows system tray reads at 16/20/24/32 depending on DPI scaling; Linux tray/appindicator
 // implementations commonly request 16/22/24/32/48.
 const TRAY_SIZES = [16, 20, 22, 24, 32, 48];

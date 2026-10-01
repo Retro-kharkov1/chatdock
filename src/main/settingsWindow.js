@@ -31,7 +31,7 @@ function getSettingsWindow() {
  * main window's `isQuitting`-gated hide) — a real close destroys the `BrowserWindow`, and the
  * `closed` listener below is only bookkeeping (nulling the module's own reference), not a
  * lifecycle override. This does not affect `isQuitting` and cannot quit the app — the window has
- * no in-page Exit control (space's `quit-only-from-tray` rule).
+ * no in-page Exit control (project rule "Quit only from the tray", docs/architecture/project-rules.md).
  *
  * @param {object} options
  * @param {string} [options.appIconPath] Optional window icon path.

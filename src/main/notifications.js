@@ -64,8 +64,8 @@ function shouldMuteOrSilence(mutedFlag, soundEnabledFlag, notificationOptions) {
  *     `n.close()`/`addEventListener()` afterward doesn't throw;
  *   - otherwise delegates to the real `Notification` constructor and returns the same live
  *     instance Chat's own page code receives, so Chat's own click/onclick handling — and any
- *     in-page deep-link navigation it does — keeps running unmodified (per the space's
- *     `wrapper-not-a-rewrite` rule and notifications.md piece 2's "Does the page already do this
+ *     in-page deep-link navigation it does — keeps running unmodified (per the project rule
+ *     "Wrapper, not a rewrite", docs/architecture/project-rules.md, and notifications.md piece 2's "Does the page already do this
  *     for us?" section);
  *   - forces `silent: true` when sound is off, unless the page itself already asked for silent
  *     (FR-11), while never blocking Chat's own listeners (no `preventDefault`/
