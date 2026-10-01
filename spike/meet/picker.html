@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Spike B - choose what to share</title>
+<style>
+  body { font: 14px sans-serif; margin: 12px; }
+  #list { display: flex; flex-wrap: wrap; gap: 10px; }
+  button.src { width: 200px; padding: 6px; text-align: left; cursor: pointer; }
+  button.src img { width: 100%; display: block; background: #ddd; }
+</style>
+</head>
+<body>
+<h3>Choose what to share (explicit choice required)</h3>
+<div id="list">loading...</div>
+<p><button id="cancel">Cancel</button></p>
+<script>
+  document.getElementById('cancel').onclick = () => window.picker.cancel();
+  window.picker.onSources((sources) => {
+    const list = document.getElementById('list');
+    list.textContent = '';
+    for (const s of sources) {
+      const b = document.createElement('button');
+      b.className = 'src';
+      b.setAttribute('data-source', s.id);
+      const img = document.createElement('img');
+      img.src = s.thumbnail;
+      const t = document.createElement('div');
+      t.textContent = s.name;
+      b.append(img, t);
+      b.onclick = () => window.picker.choose(s.id);
+      list.append(b);
+    }
+    if (!sources.length) list.textContent = '(no sources)';
+  });
+</script>
+</body>
+</html>

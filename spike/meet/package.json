@@ -1,0 +1,7 @@
+{
+  "name": "gcd-spike-b-meet",
+  "version": "0.0.0",
+  "private": true,
+  "description": "THROWAWAY harness for ADR-0004 Spike B (Meet in Electron). Not product code; never packaged (build.files only includes src/**).",
+  "main": "main.js"
+}
