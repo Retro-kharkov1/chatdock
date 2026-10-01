@@ -59,7 +59,7 @@ function bootstrap() {
   const { createAppTray, setUnreadOverlay } = require('./tray');
   const { createAttentionController, bindWindowFocus } = require('./attention');
   const { createUnreadTracker } = require('./unreadTracker');
-  const { buildOrigins, parseDevStartUrl } = require('./origins');
+  const { buildOrigins, parseDevStartUrl, START_URL } = require('./origins');
   const { resolveAppUserModelId } = require('./appIdentity');
   const { createToastService } = require('./nativeToast');
   const { attachServiceWorkerNotifications } = require('./serviceWorkerNotifications');
@@ -84,7 +84,6 @@ function bootstrap() {
   // running process's own build doesn't change while it's running.
   const versionLabel = buildVersionLabel(readBuildInfo(() => app.getAppPath()));
 
-  const START_URL = 'https://chat.google.com/app/chat/SPACE_ID';
   const DEFAULT_SIZE = { width: 1200, height: 800 };
 
   // Provisional per overview.md — task 2 (real sign-in, out of scope this pass) is what actually
@@ -112,7 +111,7 @@ function bootstrap() {
   }
 
   // Windows notification/AppUserModelID — needed for Start Menu/Action Center toast identity in
-  // dev, before the installer sets this up for a packaged build (electron-desktop.md §5).
+  // dev, before the installer sets this up for a packaged build.
   if (process.platform === 'win32') {
     // BUG-01-G: packaged = build.appId (unchanged for installed users), dev = distinct stable id.
     app.setAppUserModelId(resolveAppUserModelId({ isPackaged: app.isPackaged }));
@@ -293,7 +292,7 @@ function bootstrap() {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        // FR-05 / space rule `hidden-window-must-stay-live`: a hidden window must keep running
+        // FR-05 / project rule "Hidden window must stay live" (docs/architecture/project-rules.md): a hidden window must keep running
         // its page script so notifications keep firing. See ADR-0002 for the Windows hide()
         // caveat.
         //
@@ -372,7 +371,7 @@ function bootstrap() {
       }
     });
 
-    // FR-06 / space rule `quit-only-from-tray`: the close (X) button hides, it never quits.
+    // FR-06 / project rule "Quit only from the tray" (docs/architecture/project-rules.md): the close (X) button hides, it never quits.
     mainWindow.on('close', (event) => {
       if (!isQuitting) {
         event.preventDefault();
@@ -385,7 +384,7 @@ function bootstrap() {
       mainWindow = null;
     });
 
-    // Security baseline (electron-desktop.md §3, space rule `electron-security-baseline`): deny
+    // Electron security baseline (docs/architecture/project-rules.md): deny
     // every popup by default, hand target=_blank/window.open to the system browser instead.
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
       shell.openExternal(url);
@@ -473,7 +472,7 @@ function bootstrap() {
     focusMainWindow();
   });
 
-  // Space rule `quit-only-from-tray`: only the tray's Exit entry (and OS shutdown, which also
+  // Project rule "Quit only from the tray" (docs/architecture/project-rules.md): only the tray's Exit entry (and OS shutdown, which also
   // fires before-quit) actually terminates the process.
   app.on('before-quit', () => {
     isQuitting = true;

@@ -6,7 +6,12 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildOrigins, parseDevStartUrl } = require('../src/main/origins.js');
+const {
+  CHAT_ORIGIN,
+  START_URL,
+  buildOrigins,
+  parseDevStartUrl,
+} = require('../src/main/origins.js');
 
 test('navigation allowlist keeps chat + sign-in origins', () => {
   const o = buildOrigins(null);
@@ -51,4 +56,11 @@ test('dev seam: rejects https, non-loopback hosts, look-alikes, junk and empty v
   ]) {
     assert.equal(parseDevStartUrl(v, false), null, String(v));
   }
+});
+
+test('START_URL is the generic Chat root (no private space ID) and sits inside the navigation allowlist', () => {
+  assert.equal(START_URL, 'https://chat.google.com/');
+  assert.equal(new URL(START_URL).origin, CHAT_ORIGIN);
+  assert.equal(buildOrigins(null).navigationOrigins.includes(new URL(START_URL).origin), true);
+  assert.equal(buildOrigins(null).notificationOrigins.includes(new URL(START_URL).origin), true);
 });

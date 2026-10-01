@@ -11,6 +11,10 @@
 const CHAT_ORIGIN = 'https://chat.google.com';
 const SIGN_IN_ORIGIN = 'https://accounts.google.com';
 
+// Generic Chat root - never a private space/DM ID. Same origin as CHAT_ORIGIN, so it is covered by
+// every allowlist above (navigation, notifications, clipboard).
+const START_URL = CHAT_ORIGIN + '/';
+
 /**
  * @param {string|null} devOrigin An extra loopback origin for the dev harness, or null.
  * @returns {{navigationOrigins: string[], notificationOrigins: string[]}} fresh arrays per call.
@@ -45,4 +49,4 @@ function parseDevStartUrl(value, isPackaged) {
   }
 }
 
-module.exports = { CHAT_ORIGIN, SIGN_IN_ORIGIN, buildOrigins, parseDevStartUrl };
+module.exports = { CHAT_ORIGIN, SIGN_IN_ORIGIN, START_URL, buildOrigins, parseDevStartUrl };
