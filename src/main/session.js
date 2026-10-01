@@ -11,7 +11,12 @@
  * appears logged out with no error). Keeping one canonical definition makes that mistake a
  * one-place-to-check instead of a grep across the codebase.
  */
+const { CHAT_ORIGIN } = require('./origins');
+
 const PARTITION = 'persist:google-chat';
+
+/** Origins granted `clipboard-sanitized-write` (BUG-02): Chat only. */
+const CLIPBOARD_WRITE_ORIGINS = Object.freeze([CHAT_ORIGIN]);
 
 /**
  * buildDesktopUserAgent()
@@ -46,21 +51,34 @@ function originOf(value) {
  *
  * Applies the session-wide settings FR-03/FR-04/FR-05 depend on:
  * - the desktop UA (see buildDesktopUserAgent above)
- * - permission handlers (request AND check) that grant only `notifications`, and only to the
- *   allowlisted notification origins - never to whatever origin happens to be loaded - and deny
- *   everything else (notifications.md piece 1: "deny everything else by default").
+ * - permission handlers (request AND check) that grant only `notifications` (allowlisted
+ *   notification origins) and `clipboard-sanitized-write` (Chat origin only, BUG-02) - never to
+ *   whatever origin happens to be loaded - and deny everything else (notifications.md piece 1:
+ *   "deny everything else by default").
  *
  * @param {Electron.Session} ses The session obtained via `session.fromPartition(PARTITION)`.
  * @param {{notificationOrigins: string[]}} opts See origins.js.
  */
-function configurePersistentSession(ses, { notificationOrigins }) {
+function configurePersistentSession(
+  ses,
+  { notificationOrigins, clipboardOrigins = CLIPBOARD_WRITE_ORIGINS }
+) {
   ses.setUserAgent(buildDesktopUserAgent());
 
-  const allowed = (permission, origin) =>
-    permission === 'notifications' &&
-    origin !== undefined &&
-    Array.isArray(notificationOrigins) &&
-    notificationOrigins.includes(origin);
+  // BUG-02: `navigator.clipboard.writeText` needs `clipboard-sanitized-write`. It is granted from
+  // its own allowlist (Chat only by default), deliberately NOT derived from notificationOrigins so
+  // the dev loopback origin never gains clipboard write through the notifications list. Every other
+  // clipboard permission (read, raw write, sanitized-read) stays denied.
+  const allowed = (permission, origin) => {
+    if (origin === undefined) return false;
+    if (permission === 'notifications') {
+      return Array.isArray(notificationOrigins) && notificationOrigins.includes(origin);
+    }
+    if (permission === 'clipboard-sanitized-write') {
+      return Array.isArray(clipboardOrigins) && clipboardOrigins.includes(origin);
+    }
+    return false;
+  };
 
   ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
     let origin = originOf(details && details.requestingUrl);
