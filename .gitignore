@@ -9,3 +9,14 @@ Thumbs.db
 # Generated at build time by scripts/generate-build-info.js — see that file's header comment
 # for the field contract. Never hand-edited, never committed: it is per-build, not per-commit.
 build-info.json
+
+# Secrets / signing material - never commit
+.env*
+*.pem
+*.pfx
+*.p12
+*.key
+
+# Spike scratch output
+spike/**/.profile/
+spike/**/out/
