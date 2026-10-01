@@ -9,7 +9,7 @@
     "url": "https://github.com/Retro-kharkov1/google-chat-desktop.git"
   },
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "main": "src/main/index.js",
   "engines": {
     "node": ">=20"
