@@ -50,6 +50,9 @@ in a signed apt repository, so `electron-updater` update verification relies on 
 
 ## Notes on running the result
 
+Linux verification target: WSL2 with WSLg on the owner's workstation, see
+[verify-on-linux-wslg.md](verify-on-linux-wslg.md) (including what it cannot prove).
+
 - The deb installs to `/opt/GoogleChatDesktop/` (no spaces) and ships `chrome-sandbox`, which the
   package post-install sets to `root:root` mode `4755` when the kernel does not allow
   unprivileged user namespaces.
