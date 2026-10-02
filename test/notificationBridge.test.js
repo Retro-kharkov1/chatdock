@@ -178,7 +178,8 @@ pending('SW path (FR-05a): unmuted + sound on hands ONE request to main - title,
   page.inject(true, false);
   await page.showViaServiceWorker(TITLE, { body: BODY, tag: 'space/abc', data: { url: '/chat/x' } });
   assert.deepEqual(JSON.parse(JSON.stringify(page.record.bridgeShows)), [
-    { title: TITLE, body: BODY, silent: false, tag: 'space/abc' },
+    // BUG-05: Chat's `data` now travels too (it was dropped, which made the click unresolvable).
+    { title: TITLE, body: BODY, silent: false, tag: 'space/abc', data: { url: '/chat/x' } },
   ]);
   assert.equal(page.record.swShowCalls.length, 0);
 });

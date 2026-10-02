@@ -80,6 +80,7 @@ function bootstrap() {
   const { readBuildInfo, buildVersionLabel } = require('./version');
   const { classifyLink, isOpenableExternalScheme } = require('./meetLink');
   const { createLinkRouter } = require('./linkRouter');
+  const { createNotificationOpener } = require('./notificationOpen');
   const { createCallWindowManager } = require('./callWindow');
   const { createQuitGuard } = require('./quitGuard');
   const { createQuitTerminator, sessionFlushers } = require('./quitTerminator');
@@ -316,13 +317,33 @@ function bootstrap() {
   // Live native toasts must be referenced until closed or Electron may garbage-collect them
   // before the user clicks.
   const liveToasts = new Set();
-  function showNativeToast({ title, body, silent }) {
+  // BUG-05: set once the session hooks exist (app ready); replays a click into Chat's worker.
+  let swNotifications = null;
+
+  // BUG-05: a URL asked for by a replayed click (clients.openWindow / navigate). Chat's own origin
+  // opens in the app window; everything else goes through the link router.
+  const notificationOpener = createNotificationOpener({
+    inAppOrigins: NOTIFICATION_ORIGINS,
+    loadInApp: (url) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.webContents.getURL() !== url) {
+        mainWindow.webContents.loadURL(url).catch((err) => logLine('[gcd] notification open failed', err && err.name));
+      }
+    },
+    route: (url) => linkRouter.route(url),
+    focus: () => focusMainWindow(),
+    log: logLine,
+  });
+
+  function showNativeToast({ title, body, silent, tag, data, scope }) {
     const toast = new Notification({ title, body, silent });
     liveToasts.add(toast);
     const release = () => liveToasts.delete(toast);
     toast.on('click', () => {
       release();
       focusMainWindow(); // FR-05c step 1
+      // FR-05c step 2 (BUG-05): run Chat's own notificationclick handler with the data it attached.
+      if (scope && swNotifications) swNotifications.deliverClick(scope, { title, body, tag, data });
     });
     toast.on('close', release);
     toast.on('failed', (_e, error) => {
@@ -628,7 +649,17 @@ function bootstrap() {
 
   // A page-initiated ServiceWorkerRegistration.showNotification (Electron shows no toast for it).
   ipcMain.on('notification:show', (event, payload) => {
-    if (fromAllowedFrame(event, 'notification:show')) toasts.show(payload);
+    if (!fromAllowedFrame(event, 'notification:show')) return;
+    // The scope comes from the page's registration but is only honoured on the sender's own origin.
+    let scope;
+    try {
+      const claimed = payload && typeof payload.scope === 'string' ? new URL(payload.scope) : null;
+      if (claimed && claimed.origin === event.senderFrame.origin) scope = claimed.href;
+    } catch {
+      scope = undefined;
+    }
+    if (scope === undefined) scope = event.senderFrame.origin + '/';
+    toasts.show(payload, { scope });
   });
 
   // Settings window channels (docs/architecture/ipc-contract.md "Settings window"). No sender-
@@ -663,10 +694,11 @@ function bootstrap() {
     });
     // BUG-01-B: intercept Chat's own service-worker showNotification (see
     // serviceWorkerNotifications.js). Must be registered before the page loads its worker.
-    attachServiceWorkerNotifications(persistentSession, {
+    swNotifications = attachServiceWorkerNotifications(persistentSession, {
       preloadPath: path.join(__dirname, '../preload/serviceWorkerPreload.js'),
       allowedOrigins: NOTIFICATION_ORIGINS,
-      onShow: (payload) => toasts.show(payload),
+      onShow: (payload, ctx) => toasts.show(payload, ctx),
+      onOpen: (url, ctx) => notificationOpener.open(url, ctx),
       log: (msg, err) => console.error(msg, err === undefined ? '' : err),
     });
 

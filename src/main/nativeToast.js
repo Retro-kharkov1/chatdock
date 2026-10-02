@@ -16,8 +16,8 @@
 // is impossible (bridge missing / throwing), so a notification is never silently lost.
 // TRADE-OFF (recorded for the docs): because the original is not called, the browser never owns
 // the notification, so the worker's `notificationclick` handler and `registration.getNotifications()`
-// see nothing. A click on the native toast only focuses the window (FR-05c step 1); opening the
-// specific conversation (FR-05b/c, Spike C) is out of scope here.
+// see nothing. BUG-05 closes that gap: the request keeps Chat's `data` and the worker scope, and
+// index.js replays a `notificationclick` into that worker on click (serviceWorkerNotifications.js).
 //
 // One path per message: the unread-count fallback below only fires when no interceptor reported
 // an arrival for that increase. Everything Electron-shaped is injected (test/nativeToast.test.js).
@@ -26,6 +26,23 @@ const MAX_TITLE = 200;
 const MAX_BODY = 1000;
 const MAX_TAG = 100;
 const MAX_TRACKED_TAGS = 50;
+const MAX_DATA_JSON = 16384; // BUG-05: notification `data` kept for the click replay (in memory only)
+
+/**
+ * BUG-05: Chat attaches `data` to its notification for its own worker `notificationclick` handler.
+ * It is kept (as a plain-JSON clone, capped) so the click can be replayed there. Returns
+ * undefined for anything absent, not JSON-safe, circular or oversized. The content is never logged.
+ */
+function cloneData(value) {
+  if (value === undefined || value === null) return undefined;
+  try {
+    const json = JSON.stringify(value);
+    if (typeof json !== 'string' || json.length > MAX_DATA_JSON) return undefined;
+    return JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Some Linux notification servers render markup (b, i, u, a, img) in the body. Web content is
@@ -53,12 +70,15 @@ function sanitizeToastRequest(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const title = typeof raw.title === 'string' ? stripMarkup(raw.title, MAX_TITLE).trim() : '';
   if (!title) return null;
-  return {
+  const request = {
     title: title.slice(0, MAX_TITLE),
     body: typeof raw.body === 'string' ? stripMarkup(raw.body, MAX_BODY).slice(0, MAX_BODY) : '',
     silent: raw.silent === true,
     tag: typeof raw.tag === 'string' ? raw.tag.slice(0, MAX_TAG) : '',
   };
+  const data = cloneData(raw.data);
+  if (data !== undefined) request.data = data;
+  return request;
 }
 
 /**
@@ -165,11 +185,15 @@ function createToastService({
     /**
      * An intercepted notification: re-raise it natively. Counts as an arrival even when muted
      * (the attention controller applies the mute rule itself).
+     * @param {unknown} raw
+     * @param {{scope?: string}} [source] Where it came from, set by the trusted transport (never by
+     *   the payload): the service-worker scope that the click is replayed into (BUG-05).
      * @returns {boolean} whether a toast was shown
      */
-    show(raw) {
+    show(raw, source) {
       const request = sanitizeToastRequest(raw);
       if (!request) return false;
+      if (source && typeof source.scope === 'string') request.scope = source.scope;
       const t = now();
       const key = `${request.title}\u0000${request.body}`;
       if (key === lastKey && t - lastKeyAt < dedupeMs) return false; // F5: double delivery

@@ -24,6 +24,10 @@ const { isAllowedSender } = require('./originCheck');
 // versionId key would wrongly skip every worker after the first.
 
 const CHANNEL = 'notification:sw-show';
+// BUG-05: worker -> main "open this URL" (what a replayed click asked clients.openWindow/navigate
+// for) and main -> worker "replay a notificationclick with this record".
+const OPEN_CHANNEL = 'notification:sw-open';
+const CLICK_CHANNEL = 'notification:sw-click';
 
 /**
  * @param {Electron.Session|object} ses Session (or a stand-in exposing registerPreloadScript and
@@ -31,10 +35,13 @@ const CHANNEL = 'notification:sw-show';
  * @param {object} opts
  * @param {string} opts.preloadPath Absolute path of the service-worker preload script.
  * @param {string[]} opts.allowedOrigins
- * @param {(payload: unknown) => void} opts.onShow Receives the (unsanitised) payload.
+ * @param {(payload: unknown, ctx: {scope: string}) => void} opts.onShow Receives the (unsanitised)
+ *   payload and the worker's scope (from the transport, not the payload).
+ * @param {(url: string, ctx: {scope: string}) => void} [opts.onOpen] A replayed click asked to open
+ *   a URL (BUG-05). The URL is untrusted; the receiver decides where it goes.
  * @param {(msg: string, err?: unknown) => void} [opts.log]
  */
-function attachServiceWorkerNotifications(ses, { preloadPath, allowedOrigins, onShow, log = () => {} }) {
+function attachServiceWorkerNotifications(ses, { preloadPath, allowedOrigins, onShow, onOpen = () => {}, log = () => {} }) {
   ses.registerPreloadScript({ type: 'service-worker', filePath: preloadPath });
 
   const hooked = new WeakSet();
@@ -42,18 +49,24 @@ function attachServiceWorkerNotifications(ses, { preloadPath, allowedOrigins, on
   function hook(worker) {
     if (!worker || hooked.has(worker)) return;
     hooked.add(worker);
-    worker.ipc.on(CHANNEL, (event, payload) => {
+    const allowedScope = (event, what) => {
       let origin;
       try {
         origin = new URL(event.serviceWorker.scope).origin;
       } catch {
         origin = undefined;
       }
-      if (!isAllowedSender(origin, allowedOrigins)) {
-        log(`[gcd] rejected service-worker notification from disallowed scope: ${origin}`);
-        return;
-      }
-      onShow(payload);
+      if (isAllowedSender(origin, allowedOrigins)) return event.serviceWorker.scope;
+      log(`[gcd] rejected service-worker ${what} from disallowed scope: ${origin}`);
+      return null;
+    };
+    worker.ipc.on(CHANNEL, (event, payload) => {
+      const scope = allowedScope(event, 'notification');
+      if (scope !== null) onShow(payload, { scope });
+    });
+    worker.ipc.on(OPEN_CHANNEL, (event, url) => {
+      const scope = allowedScope(event, 'open request');
+      if (scope !== null && typeof url === 'string') onOpen(url, { scope });
     });
   }
 
@@ -91,6 +104,34 @@ function attachServiceWorkerNotifications(ses, { preloadPath, allowedOrigins, on
       // unknown worker / unparseable scope: drop the line
     }
   });
+
+  /**
+   * BUG-05: replays a toast click into the worker that raised it, so Chat's own `notificationclick`
+   * listener runs (it never could, because the browser does not own the notification). Starts the
+   * worker if it was torn down. Never throws; a failure is logged without the record's contents.
+   * @param {string|undefined} scope The worker scope recorded with the toast.
+   * @param {object} record {title, body, tag, data}
+   */
+  async function deliverClick(scope, record) {
+    let origin;
+    try {
+      origin = new URL(scope).origin;
+    } catch {
+      origin = undefined;
+    }
+    if (!isAllowedSender(origin, allowedOrigins)) {
+      log('[gcd] notification click not replayed: no allowed worker scope recorded');
+      return;
+    }
+    try {
+      const worker = await ses.serviceWorkers.startWorkerForScope(scope);
+      worker.send(CLICK_CHANNEL, record);
+    } catch (err) {
+      log('[gcd] notification click not replayed: worker unavailable', err && err.name);
+    }
+  }
+
+  return { deliverClick };
 }
 
-module.exports = { attachServiceWorkerNotifications, CHANNEL };
+module.exports = { attachServiceWorkerNotifications, CHANNEL, OPEN_CHANNEL, CLICK_CHANNEL };

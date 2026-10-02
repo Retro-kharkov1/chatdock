@@ -134,12 +134,19 @@ function buildNotificationBridgeScript(soundEnabled, muted) {
           const b = bridge();
           if (b && typeof b.notificationShow === 'function') {
             try {
-              b.notificationShow({
+              const payload = {
                 title: String(title),
                 body: typeof opts.body === 'string' ? opts.body : '',
                 silent,
                 tag: typeof opts.tag === 'string' ? opts.tag : '',
-              });
+              };
+              // BUG-05: keep Chat's click data (JSON-safe only) and this registration's scope so
+              // main can replay the click into the worker that owns it.
+              try {
+                if (opts.data !== undefined && opts.data !== null) payload.data = JSON.parse(JSON.stringify(opts.data));
+              } catch (e) {}
+              if (typeof this.scope === 'string') payload.scope = this.scope;
+              b.notificationShow(payload);
               return Promise.resolve();
             } catch (e) {
               // fall through to the original
