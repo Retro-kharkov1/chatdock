@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!-- Local, bundled content only. docs/design/05-meet-source-picker.md. The only surface the app
+       draws for Google Meet; thumbnails arrive as data: URLs, nothing remote is ever loaded. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:;" />
+  <title>Choose what to share — Google Chat Desktop</title>
+  <link rel="stylesheet" href="picker.css" />
+</head>
+<body>
+  <main id="app">
+    <header>
+      <p class="origin-line">meet.google.com is asking to share your screen or a window.</p>
+      <p class="reassurance"><span aria-hidden="true">(i) </span>Only what you choose is shared. Nothing is shared until you press Share.</p>
+    </header>
+
+    <div class="toolbar" id="toolbar">
+      <div role="tablist" aria-label="What to share" id="tabs">
+        <button type="button" role="tab" id="tab-screen" data-kind="screen" aria-controls="source-list" data-testid="picker-tab-screens">Screens</button>
+        <button type="button" role="tab" id="tab-window" data-kind="window" aria-controls="source-list" data-testid="picker-tab-windows">Windows</button>
+      </div>
+      <button type="button" class="secondary" id="refresh-button" data-testid="picker-refresh-button" disabled>Refresh</button>
+    </div>
+
+    <section id="content" aria-busy="true">
+      <div id="loading-state" data-testid="picker-loading-state">
+        <div class="skeleton-row" aria-hidden="true">
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+        </div>
+        <p class="loading-text">Looking for screens and windows…</p>
+      </div>
+
+      <div id="error-state" class="message" data-testid="picker-error-state" role="alert" hidden>
+        <p class="glyph" aria-hidden="true">(!)</p>
+        <p class="message-title">Couldn't load screens and windows</p>
+        <p>The list of things you can share couldn't be loaded.</p>
+        <p>Nothing has been shared. You can try again or cancel.</p>
+        <p class="code" id="error-code"></p>
+      </div>
+
+      <div id="empty-state" class="message" data-testid="picker-empty-state" hidden>
+        <p class="glyph" aria-hidden="true" id="empty-glyph">(i)</p>
+        <p class="message-title" id="empty-title"></p>
+        <p id="empty-detail"></p>
+      </div>
+
+      <div id="source-list" role="radiogroup" aria-label="Screens and windows" data-testid="picker-source-list" hidden></div>
+    </section>
+
+    <footer>
+      <p id="status" role="status" aria-live="polite">Select a screen or window to share.</p>
+      <div class="buttons">
+        <button type="button" class="secondary" id="cancel-button" data-testid="picker-cancel-button">Cancel</button>
+        <button type="button" class="primary" id="retry-button" data-testid="picker-retry-button" hidden>Try again</button>
+        <button type="button" class="primary" id="share-button" data-testid="picker-share-button" disabled>Share</button>
+      </div>
+    </footer>
+  </main>
+  <script src="picker.js"></script>
+</body>
+</html>

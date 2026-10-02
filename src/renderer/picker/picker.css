@@ -1,0 +1,197 @@
+/* docs/design/05-meet-source-picker.md section 6 (tokens), section 4 (WCAG 2.2 AA). The theme mirrors
+   the OS through `prefers-color-scheme` (same approach as settings.css). Values are the design's
+   hand-estimated starting points. The skeleton is static in every case (no animation at all, so
+   reduced motion needs no special handling). */
+
+:root {
+  --bg: #FFFFFF;
+  --text-primary: #1B1B1B;
+  --text-secondary: #5C5C5C;
+  --border: #E1E1E1;
+  --accent: #0F6CBD;
+  --accent-text: #FFFFFF;
+  --track-off: #C7C7C7;
+  --error: #A80000;
+  --focus-ring: #0F6CBD;
+  --hover: #F0F0F0;
+  --pressed: #E6E6E6;
+  --control-border: #767676;
+  --accent-hover: #115EA3;
+  --accent-pressed: #0C3B5E;
+  --skeleton: #E1E1E1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1F1F1F;
+    --text-primary: #F5F5F5;
+    --text-secondary: #B3B3B3;
+    --border: #3B3B3B;
+    --accent: #479EF5;
+    --accent-text: #1B1B1B;
+    --track-off: #5A5A5A;
+    --error: #F1707B;
+    --focus-ring: #479EF5;
+    --hover: #333333;
+    --pressed: #3D3D3D;
+    --control-border: #8A8A8A;
+    --accent-hover: #62ABF5;
+    --accent-pressed: #7DB9F7;
+    --skeleton: #5A5A5A;
+  }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+header, .toolbar, footer { flex: none; padding: 0 16px; }
+header { padding-top: 12px; }
+header p { margin: 0 0 4px; }
+.reassurance { color: var(--text-secondary); }
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+[role="tablist"] { display: flex; gap: 4px; }
+
+#content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 16px 8px;
+}
+
+footer {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  padding-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+#status { margin: 0; flex: 1 1 auto; color: var(--text-secondary); }
+#status.is-error { color: var(--error); }
+.buttons { display: flex; gap: 8px; flex: none; }
+
+button {
+  font: inherit;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-primary);
+  background: var(--bg);
+  border: 1px solid var(--control-border);
+}
+button:hover { background: var(--hover); }
+button:active { background: var(--pressed); }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.primary:hover { background: var(--accent-hover); }
+button.primary:active { background: var(--accent-pressed); }
+button:disabled, button:disabled:hover, button:disabled:active {
+  background: var(--track-off);
+  color: var(--text-secondary);
+  border-color: var(--track-off);
+  cursor: not-allowed;
+}
+
+[role="tab"] { border: 1px solid transparent; border-bottom: 3px solid transparent; border-radius: 4px 4px 0 0; }
+[role="tab"][aria-selected="true"] { border-bottom-color: var(--accent); font-weight: 600; }
+
+button:focus-visible,
+.card:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* --- grid of source cards (native radios styled as cards) ----------------------------------- */
+#source-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+@media (min-width: 560px) { #source-list { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 600px) { #source-list { grid-template-columns: repeat(3, 1fr); } }
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  min-height: 44px;
+  border: 2px solid var(--control-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.card:hover { background: var(--hover); border-color: var(--text-secondary); }
+.card:active { background: var(--pressed); }
+.card.is-selected { border-color: var(--accent); border-width: 3px; padding: 7px; }
+.card input {
+  /* visually hidden but focusable and keyboard-operable */
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.card .thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: var(--skeleton);
+  border-radius: 3px;
+}
+.card .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card .check { display: none; position: absolute; top: 12px; right: 12px; font-weight: 700;
+  background: var(--accent); color: var(--accent-text); border-radius: 50%; width: 22px; height: 22px;
+  align-items: center; justify-content: center; }
+.card.is-selected .check { display: flex; }
+
+@media (max-width: 559px) {
+  .card { flex-direction: row; align-items: center; }
+  .card .thumb { width: 96px; flex: none; }
+}
+
+/* --- loading skeleton, empty and error panels -------------------------------------------------- */
+.skeleton-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.skeleton-card {
+  aspect-ratio: 16 / 9;
+  border: 2px dashed var(--control-border);
+  border-radius: 6px;
+  background: var(--skeleton);
+}
+@media (max-width: 559px) { .skeleton-row { grid-template-columns: 1fr; } }
+.loading-text { color: var(--text-secondary); }
+
+.message { text-align: center; padding: 24px 8px; }
+.message p { margin: 4px 0; }
+.message .glyph { font-size: 20px; color: var(--text-secondary); }
+#error-state .glyph { color: var(--error); }
+.message-title { font-weight: 600; font-size: 16px; }
+.message .code { color: var(--text-secondary); font-size: 12px; }

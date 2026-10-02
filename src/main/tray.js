@@ -2,6 +2,7 @@
 
 const path = require('path');
 const { Tray, Menu, nativeImage } = require('electron');
+const { buildTrayMenuTemplate } = require('./trayMenu');
 
 // FR-06/07/08/10/11/12 (docs/architecture/tray-lifecycle.md) + the three tray icon states from
 // assets/README.md ("What consumes what"). This module owns the Tray instance, its context menu,
@@ -68,6 +69,9 @@ function resolveIconState(unreadCount, muted) {
  * @param {() => void} options.onToggleMute
  * @param {() => void} options.onOpenSettings Opens/focuses the Settings window (FR-15).
  * @param {() => void} options.onExit
+ * @param {() => boolean} options.hasCallWindow UI-01 (P3): read at menu-build time; the first entry
+ *   "Show call window" exists only while a call window does (refreshMenu() is called on change).
+ * @param {() => void} options.onShowCallWindow
  */
 function createAppTray({
   getNotificationsMuted,
@@ -76,32 +80,26 @@ function createAppTray({
   onToggleMute,
   onOpenSettings,
   onExit,
+  hasCallWindow = () => false,
+  onShowCallWindow = () => {},
 }) {
   let currentIconState = 'normal';
   const tray = new Tray(trayIconPath(currentIconState));
   tray.setToolTip('Google Chat Desktop');
 
   function buildMenu() {
-    return Menu.buildFromTemplate([
-      { label: 'Show/Hide Google Chat', click: () => onToggleShowHide() },
-      { type: 'separator' },
-      {
-        label: 'Mute notifications',
-        type: 'checkbox',
-        checked: getNotificationsMuted(),
-        click: () => onToggleMute(),
-      },
-      { type: 'separator' },
-      { label: 'Settings…', click: () => onOpenSettings() },
-      { type: 'separator' },
-      // The only path that terminates the process — see the project rule "Quit only from the tray" (docs/architecture/project-rules.md).
-      { label: 'Exit', click: () => onExit() },
-      { type: 'separator' },
-      // Owner request (2026-09-22): disabled/non-clickable diagnostic line, deliberately last and
-      // visually de-emphasized — this is a diagnostic aid, not a feature, and must not compete
-      // with the actual controls above it.
-      { label: getVersionLabel(), enabled: false },
-    ]);
+    return Menu.buildFromTemplate(
+      buildTrayMenuTemplate({
+        getNotificationsMuted,
+        getVersionLabel,
+        hasCallWindow,
+        onShowCallWindow,
+        onToggleShowHide,
+        onToggleMute,
+        onOpenSettings,
+        onExit,
+      })
+    );
   }
 
   function refreshMenu() {

@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 // --- Pure decision functions (task 0's covered net — test/index.test.js) -------------------
 // These two stay dependency-free so they remain unit-testable under plain `node:test` with no
@@ -42,7 +43,17 @@ if (process.versions.electron) {
 }
 
 function bootstrap() {
-  const { app, BrowserWindow, ipcMain, shell, Menu, Notification } = require('electron');
+  const {
+    app,
+    BrowserWindow,
+    ipcMain,
+    shell,
+    Menu,
+    Notification,
+    dialog,
+    desktopCapturer,
+    session,
+  } = require('electron');
   const {
     resolveWindowState,
     getWindowStatePath,
@@ -67,6 +78,12 @@ function bootstrap() {
   const { openSettingsWindow, getSettingsWindow } = require('./settingsWindow');
   const trayBlink = require('./trayBlink');
   const { readBuildInfo, buildVersionLabel } = require('./version');
+  const { classifyLink, isOpenableExternalScheme } = require('./meetLink');
+  const { createLinkRouter } = require('./linkRouter');
+  const { createCallWindowManager } = require('./callWindow');
+  const { createQuitGuard } = require('./quitGuard');
+  const { createDisplayMediaGate } = require('./meetPermissions');
+  const { createPickerController, createPickerWindow } = require('./pickerWindow');
 
   // Application-menu suppression (docs/architecture/tray-lifecycle.md "Application menu
   // suppression is part of quit-only-from-tray, not a separate concern") — the single
@@ -120,7 +137,6 @@ function bootstrap() {
   /** @type {Electron.BrowserWindow | null} */
   let mainWindow = null;
   let trayController = null;
-  let isQuitting = false;
   let currentUnreadCount = 0;
 
   const windowStatePath = getWindowStatePath();
@@ -206,6 +222,80 @@ function bootstrap() {
     flashFrame: (flag) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.flashFrame(flag);
     },
+  });
+
+  // --- UI-01 (FR-16): Meet links open in an app-owned call window --------------------------------
+  // docs/architecture/meet-call-window.md. Quit path first: every owned contents gets a
+  // will-prevent-unload listener, and isQuitting is reset if a quit is cancelled.
+  const quitGuard = createQuitGuard();
+
+  const APP_ICON = path.join(__dirname, '../../assets/icons/icon.png');
+  const PICKER_HTML = path.join(__dirname, '../renderer/picker/picker.html');
+  const logLine = (...args) => console.error(...args);
+
+  // The picker is the ONLY surface the app draws for Meet. Its source listing is asynchronous and
+  // runs only when the picker renderer asks (the window shows its loading state first).
+  const picker = createPickerController({
+    createWindow: ({ parent }) =>
+      createPickerWindow({
+        BrowserWindow,
+        session,
+        parent,
+        preloadPath: path.join(__dirname, '../preload/pickerPreload.js'),
+        htmlPath: PICKER_HTML,
+      }),
+    getSources: async () => {
+      const sources = await desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 320, height: 180 },
+      });
+      // Sharing the call window itself produces an endless mirror: label it (still selectable).
+      const callWin = callWindows.getWindow();
+      const ownId = callWin && typeof callWin.getMediaSourceId === 'function' ? callWin.getMediaSourceId() : null;
+      for (const source of sources) {
+        if (ownId && source.id === ownId) source.name = source.name + ' (this call)';
+      }
+      return sources;
+    },
+    bundledFileUrl: pathToFileURL(PICKER_HTML).href,
+    log: logLine,
+  });
+  picker.register(ipcMain);
+
+  // The session-wide screen-share gate (userGesture + origin + call window + one at a time).
+  const displayGate = createDisplayMediaGate({
+    getCallWindow: () => callWindows.getWindow(),
+    picker,
+    log: logLine,
+  });
+
+  // Router and call window refer to each other (a Meet link opens the window; a link inside the
+  // window is routed again), so both are resolved lazily.
+  const linkRouter = createLinkRouter({
+    classifyLink,
+    isOpenableExternalScheme,
+    openCallWindow: (target) => callWindows.openCallWindow(target),
+    openExternal: (target) => {
+      shell.openExternal(target).catch((err) => logLine('[gcd] openExternal failed', err && err.name));
+    },
+    log: logLine,
+  });
+
+  const callWindows = createCallWindowManager({
+    BrowserWindow,
+    Notification,
+    getRouter: () => linkRouter,
+    isQuitting: quitGuard.isQuitting,
+    showMessageBox: (parent, options) => dialog.showMessageBox(parent, options),
+    picker,
+    abortPending: displayGate.abortPending,
+    // Event-driven tray refresh (not the blink tick): "Show call window" appears and goes.
+    onChange: () => {
+      if (trayController) trayController.refreshMenu();
+    },
+    quitApp: () => app.quit(),
+    iconPath: APP_ICON,
+    log: logLine,
   });
 
   // Live native toasts must be referenced until closed or Electron may garbage-collect them
@@ -373,7 +463,7 @@ function bootstrap() {
 
     // FR-06 / project rule "Quit only from the tray" (docs/architecture/project-rules.md): the close (X) button hides, it never quits.
     mainWindow.on('close', (event) => {
-      if (!isQuitting) {
+      if (!quitGuard.isQuitting()) {
         event.preventDefault();
         flushWindowState();
         mainWindow.hide();
@@ -386,25 +476,18 @@ function bootstrap() {
 
     // Electron security baseline (docs/architecture/project-rules.md): deny
     // every popup by default, hand target=_blank/window.open to the system browser instead.
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-      shell.openExternal(url);
-      return { action: 'deny' };
-    });
+    // UI-01: through the link router - Meet links open the call window, http/https/mailto go to
+    // the system browser, every other scheme is dropped (meet-call-window.md section 3).
+    mainWindow.webContents.setWindowOpenHandler((details) => linkRouter.onWindowOpen(details));
+    // The main window's contents always gets a will-prevent-unload listener (quit path).
+    quitGuard.guardContents(mainWindow.webContents);
 
-    // will-navigate allowlist — anything outside ALLOWED_ORIGINS is handed to the system browser
-    // instead of loaded in-app. Provisional list, see ALLOWED_ORIGINS's own comment above.
+    // will-navigate allowlist - anything outside ALLOWED_ORIGINS is prevented and routed (Meet to the
+    // call window, http/https/mailto to the system browser). Provisional list, see ALLOWED_ORIGINS.
     mainWindow.webContents.on('will-navigate', (event, url) => {
-      let origin;
-      try {
-        origin = new URL(url).origin;
-      } catch {
-        event.preventDefault();
-        return;
-      }
-      if (!ALLOWED_ORIGINS.includes(origin)) {
-        event.preventDefault();
-        shell.openExternal(url);
-      }
+      linkRouter.onWillNavigate(event, typeof event.url === 'string' ? event.url : url, {
+        allowedOrigins: ALLOWED_ORIGINS,
+      });
     });
 
     mainWindow.webContents.on('dom-ready', injectNotificationBridge);
@@ -448,8 +531,11 @@ function bootstrap() {
         openSettingsWindow({ appIconPath: path.join(__dirname, '../../assets/icons/icon.png') });
       },
       onExit: () => {
-        app.quit();
+        // Exit rules for a live call (P2) live in the call window manager.
+        callWindows.requestExit();
       },
+      hasCallWindow: () => callWindows.hasCallWindow(),
+      onShowCallWindow: () => callWindows.showCallWindow(),
     });
     refreshTrayIconState();
 
@@ -474,9 +560,14 @@ function bootstrap() {
 
   // Project rule "Quit only from the tray" (docs/architecture/project-rules.md): only the tray's Exit entry (and OS shutdown, which also
   // fires before-quit) actually terminates the process.
-  app.on('before-quit', () => {
-    isQuitting = true;
+  app.on('before-quit', (event) => {
+    quitGuard.onBeforeQuit(event);
     flushWindowState();
+  });
+
+  // The quit really happens: stop the isQuitting reset timer.
+  app.on('will-quit', () => {
+    quitGuard.onWillQuit();
   });
 
   // Electron's Linux/Windows default would quit when the last window closes — overridden per
@@ -541,9 +632,11 @@ function bootstrap() {
     // Session configuration (UA + permission handler) MUST happen before the window's page
     // loads, using the same partition the BrowserWindow is constructed with — otherwise the
     // first load happens with the default (non-desktop) UA and no notification-permission grant.
-    const { session } = require('electron');
     const persistentSession = session.fromPartition(PARTITION);
-    configurePersistentSession(persistentSession, { notificationOrigins: NOTIFICATION_ORIGINS });
+    configurePersistentSession(persistentSession, {
+      notificationOrigins: NOTIFICATION_ORIGINS,
+      displayMediaHandler: displayGate.handler,
+    });
     // BUG-01-B: intercept Chat's own service-worker showNotification (see
     // serviceWorkerNotifications.js). Must be registered before the page loads its worker.
     attachServiceWorkerNotifications(persistentSession, {

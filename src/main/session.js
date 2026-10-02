@@ -12,6 +12,7 @@
  * one-place-to-check instead of a grep across the codebase.
  */
 const { CHAT_ORIGIN } = require('./origins');
+const { decideMeetRequest, decideMeetCheck } = require('./meetPermissions');
 
 const PARTITION = 'persist:google-chat';
 
@@ -57,11 +58,17 @@ function originOf(value) {
  *   "deny everything else by default").
  *
  * @param {Electron.Session} ses The session obtained via `session.fromPartition(PARTITION)`.
- * @param {{notificationOrigins: string[]}} opts See origins.js.
+ * UI-01 (Meet): the same two handlers are EXTENDED with the Meet decisions (meetPermissions.js:
+ * camera / microphone / speaker-selection / display-capture, granted only when the requesting AND
+ * top-level origin are https://meet.google.com). The notification and clipboard grants above are
+ * untouched. `displayMediaHandler`, when given, becomes the session-wide screen-share gate.
+ *
+ * @param {{notificationOrigins: string[], clipboardOrigins?: string[], displayMediaHandler?: Function}} opts
+ *   See origins.js.
  */
 function configurePersistentSession(
   ses,
-  { notificationOrigins, clipboardOrigins = CLIPBOARD_WRITE_ORIGINS }
+  { notificationOrigins, clipboardOrigins = CLIPBOARD_WRITE_ORIGINS, displayMediaHandler }
 ) {
   ses.setUserAgent(buildDesktopUserAgent());
 
@@ -81,6 +88,11 @@ function configurePersistentSession(
   };
 
   ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const meet = decideMeetRequest(webContents, permission, details);
+    if (meet !== undefined) {
+      callback(meet);
+      return;
+    }
     let origin = originOf(details && details.requestingUrl);
     if (origin === undefined && webContents && typeof webContents.getURL === 'function') {
       origin = originOf(webContents.getURL());
@@ -88,9 +100,18 @@ function configurePersistentSession(
     callback(allowed(permission, origin));
   });
 
-  ses.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
-    allowed(permission, originOf(requestingOrigin) ?? originOf(details && details.requestingUrl))
-  );
+  ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    const meet = decideMeetCheck(webContents, permission, requestingOrigin, details);
+    if (meet !== undefined) return meet;
+    return allowed(
+      permission,
+      originOf(requestingOrigin) ?? originOf(details && details.requestingUrl)
+    );
+  });
+
+  if (typeof displayMediaHandler === 'function') {
+    ses.setDisplayMediaRequestHandler(displayMediaHandler);
+  }
 }
 
 module.exports = { PARTITION, buildDesktopUserAgent, configurePersistentSession };
