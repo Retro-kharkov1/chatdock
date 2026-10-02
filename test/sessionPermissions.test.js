@@ -172,8 +172,9 @@ test('char/check: a usable requestingOrigin wins over details.requestingUrl', ()
   assert.equal(check('notifications', 'https://evil.example', { requestingUrl: `${CHAT}/` }), false);
 });
 
-test('char: no Meet-origin grants exist today (media/display-capture denied everywhere)', () => {
-  // Documents the current state: the brief anticipated Meet grants; there are none in src/.
+test('char: no Meet grant without a Meet top-level page (fail closed; the Meet gate itself is in meetPermissions.test.js)', () => {
+  // These helpers pass no top-level page (webContents undefined / null), so even a Meet requesting
+  // origin must be refused: the Meet gate needs BOTH the requesting and the top-level origin.
   const { request, check } = setup();
   for (const p of ['media', 'display-capture']) {
     assert.equal(request(p, 'https://meet.google.com/abc'), false, p);

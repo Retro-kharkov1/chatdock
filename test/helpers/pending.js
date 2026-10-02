@@ -7,10 +7,10 @@
 //                                real failure). `GCD_ENFORCE_BUG01=0 npm test` downgrades it back to
 //                                node:test `todo` (still runs, does not fail the suite) - only
 //                                useful to bisect a regression, never in CI.
-//   pendingMeet(name, fn)        NFR-07 Meet link classifier set (src/main/meetLink.js). NOT part of
-//                                BUG-01: the Meet feature awaits owner design approval, so these
-//                                stay `todo` by default. `GCD_ENFORCE_MEET=1 npm test` runs them as
-//                                real tests. Flip DEFAULT_ENFORCE_MEET to true when the feature lands.
+//   pendingMeet(name, fn)        NFR-07 Meet link classifier set (src/main/meetLink.js). ENFORCED BY
+//                                DEFAULT since UI-01 started (coverage-first net: red until the module
+//                                lands, then green). `GCD_ENFORCE_MEET=0 npm test` downgrades it to
+//                                node:test `todo` - only useful to bisect, never in CI.
 //
 // Modules that do not exist yet MUST be loaded with `load()` inside the test body, never with a
 // top-level `require`, so a missing module fails only its own test instead of the whole file.
@@ -22,7 +22,7 @@ const ENFORCE =
   process.env.GCD_ENFORCE_BUG01 === '1' ||
   (DEFAULT_ENFORCE && process.env.GCD_ENFORCE_BUG01 !== '0');
 
-const DEFAULT_ENFORCE_MEET = false;
+const DEFAULT_ENFORCE_MEET = true;
 const ENFORCE_MEET =
   process.env.GCD_ENFORCE_MEET === '1' ||
   (DEFAULT_ENFORCE_MEET && process.env.GCD_ENFORCE_MEET !== '0');

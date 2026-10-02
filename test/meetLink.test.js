@@ -163,3 +163,156 @@ pending('unwrapping happens once: a wrapper is not a call-window result even if 
   const outer = `https://www.google.com/url?q=${enc(inner)}`;
   assert.equal(outcomeOf(outer), BROWSER);
 });
+
+// --- Added by the UI-01 coverage-first net (docs/architecture/meet-call-window.md section 2 and 10) ---
+
+// Mixed-case scheme: the scheme is case-insensitive in WHATWG parsing; the opened url is normalised.
+pending('mixed-case scheme (HTTPS://, HtTpS://) on a meet link -> call window, url normalised', () => {
+  const { classifyLink } = load('meetLink.js');
+  for (const input of ['HTTPS://meet.google.com/abc-defg-hij', 'HtTpS://Meet.Google.Com/abc-defg-hij']) {
+    const r = classifyLink(input);
+    assert.equal(r.outcome, CALL, input);
+    assert.equal(r.url, MEET, input);
+  }
+});
+
+pending('mixed-case scheme on the wrapper still unwraps', () => {
+  const r = load('meetLink.js').classifyLink(`HTTPS://www.google.com/url?q=${enc(MEET)}`);
+  assert.equal(r.outcome, CALL);
+  assert.equal(r.url, MEET);
+});
+
+// Percent-encoded host letters are decoded by the URL parser: the parsed host IS meet.google.com, so
+// the outcome follows the parsed (normalised) form and the returned url is that normalised form.
+pending('percent-encoded host letters decode to the real host -> call window with the normalised url', () => {
+  const { classifyLink } = load('meetLink.js');
+  for (const input of ['https://meet%2Egoogle.com/abc-defg-hij', 'https://%6Deet.google.com/abc-defg-hij']) {
+    const r = classifyLink(input);
+    assert.equal(r.outcome, CALL, input);
+    assert.equal(r.url, MEET, input);
+  }
+});
+
+pending('percent-encoded userinfo terminator (meet.google.com%2F@evil.example) -> system browser', () => {
+  assert.equal(outcomeOf('https://meet.google.com%2F@evil.example/'), BROWSER);
+});
+
+pending('tab and newline characters are stripped by the parser: the opened url carries none of them', () => {
+  const { classifyLink } = load('meetLink.js');
+  for (const input of ['https://mee\tt.google.com/abc-defg-hij', 'https://meet.google.com/\nabc-defg-hij', 'https://meet.google.com/abc-\r\ndefg-hij']) {
+    const r = classifyLink(input);
+    assert.equal(r.outcome, CALL, JSON.stringify(input));
+    assert.equal(r.url, MEET, JSON.stringify(input));
+  }
+});
+
+pending('tab or newline hiding a foreign host is still a foreign host -> system browser', () => {
+  assert.equal(outcomeOf('https://evil.example\t/https://meet.google.com/abc'), BROWSER);
+  assert.equal(outcomeOf('https://meet.google.com.\tevil.example/abc'), BROWSER);
+});
+
+pending('punycode / IDN lookalikes of the host -> system browser', () => {
+  const { classifyLink } = load('meetLink.js');
+  for (const input of [
+    'https://meеt.google.com/abc', // Cyrillic small letter ie in place of the second "e"
+    'https://xn--met-sdd.google.com/abc', // the punycode form of the line above
+    'https://meet.googlе.com/abc', // Cyrillic ie in "google"
+    'https://meet.google.cοm/abc', // Greek omicron in "com"
+  ]) {
+    assert.equal(classifyLink(input).outcome, BROWSER, input);
+  }
+});
+
+// Wrapper-host hardening: only https://www.google.com/url (no explicit port, no userinfo) unwraps.
+pending('wrapper host in uppercase is the same host -> unwraps', () => {
+  const r = load('meetLink.js').classifyLink(`https://WWW.GOOGLE.COM/url?q=${enc(MEET)}`);
+  assert.equal(r.outcome, CALL);
+  assert.equal(r.url, MEET);
+});
+
+const WRAPPER_HOST_BROWSER_CASES = [
+  ['wrapper with a non-default port', `https://www.google.com:8443/url?q=${enc(MEET)}`],
+  ['wrapper with userinfo', `https://a@www.google.com/url?q=${enc(MEET)}`],
+  ['wrapper with user and password', `https://a:b@www.google.com/url?q=${enc(MEET)}`],
+  ['wrapper whose userinfo names the real host', `https://www.google.com@evil.example/url?q=${enc(MEET)}`],
+  ['wrapper with a trailing-dot host', `https://www.google.com./url?q=${enc(MEET)}`],
+  ['wrapper path in a different case', `https://www.google.com/URL?q=${enc(MEET)}`],
+  ['wrapper path with a suffix', `https://www.google.com/url/extra?q=${enc(MEET)}`],
+];
+
+for (const [label, input] of WRAPPER_HOST_BROWSER_CASES) {
+  pending(`system browser (wrapper host): ${label}`, () => {
+    assert.equal(outcomeOf(input), BROWSER);
+  });
+}
+
+pending('wrapper q target keeps its query and fragment in the opened url', () => {
+  const target = 'https://meet.google.com/abc-defg-hij?authuser=1&pli=1#fragment';
+  const r = load('meetLink.js').classifyLink(`https://www.google.com/url?q=${enc(target)}`);
+  assert.equal(r.outcome, CALL);
+  assert.equal(r.url, target);
+});
+
+pending('wrapper url is never what is opened: the result is the target, not the wrapper', () => {
+  const wrapper = `https://www.google.com/url?q=${enc(MEET)}&sa=D`;
+  const r = load('meetLink.js').classifyLink(wrapper);
+  assert.notEqual(r.url, wrapper);
+  assert.equal(r.url, MEET);
+});
+
+pending('duplicated q is refused in either order, even when both values are the same meet link', () => {
+  const { classifyLink } = load('meetLink.js');
+  const evil = enc('https://evil.example/');
+  assert.equal(classifyLink(`https://www.google.com/url?q=${enc(MEET)}&q=${evil}`).outcome, BROWSER);
+  assert.equal(classifyLink(`https://www.google.com/url?q=${evil}&q=${enc(MEET)}`).outcome, BROWSER);
+  assert.equal(classifyLink(`https://www.google.com/url?q=${enc(MEET)}&q=${enc(MEET)}`).outcome, BROWSER);
+});
+
+pending('classifyLink never throws, for exotic inputs of any type', () => {
+  const { classifyLink } = load('meetLink.js');
+  const exotic = [Symbol('x'), 10n, NaN, true, new Date(0), Object.create(null), { toString() { throw new Error('boom'); } }, 'https://', 'https://:443', 'https://[::1', '\u0000'];
+  for (const input of exotic) {
+    assert.doesNotThrow(() => classifyLink(input));
+    assert.equal(classifyLink(input).outcome, BROWSER);
+  }
+});
+
+// --- isOpenableExternalScheme (architecture section 2, rule 5) ---------------------------------
+
+pending('isOpenableExternalScheme: http, https and mailto (any case) are openable', () => {
+  const { isOpenableExternalScheme } = load('meetLink.js');
+  for (const url of ['https://example.org/page', 'http://example.org/page', 'HTTPS://example.org/page', 'mailto:someone@example.org', 'MAILTO:someone@example.org']) {
+    assert.equal(isOpenableExternalScheme(url), true, url);
+  }
+});
+
+const NOT_OPENABLE = [
+  'file:///C:/Windows/System32/calc.exe',
+  'ms-settings:privacy',
+  'javascript:alert(1)',
+  'data:text/html,hello',
+  'ftp://example.org/x',
+  'ssh://host.example',
+  'myapp://do-something',
+  'blob:https://example.org/uuid',
+  'vbscript:msgbox(1)',
+  'not a url',
+  '%%%',
+  '//example.org/x',
+  'example.org/x',
+  '',
+  '   ',
+];
+
+for (const url of NOT_OPENABLE) {
+  pending(`isOpenableExternalScheme: ${JSON.stringify(url)} is not openable`, () => {
+    assert.equal(load('meetLink.js').isOpenableExternalScheme(url), false);
+  });
+}
+
+pending('isOpenableExternalScheme: non-string input is not openable and never throws', () => {
+  const { isOpenableExternalScheme } = load('meetLink.js');
+  for (const bad of [null, undefined, 42, {}, [], () => {}]) {
+    assert.equal(isOpenableExternalScheme(bad), false);
+  }
+});
