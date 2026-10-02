@@ -114,7 +114,9 @@ uses `contextBridge.executeInMainWorld` to patch the worker's `showNotification`
 
 | Channel | Direction | Payload | Purpose |
 |---|---|---|---|
-| `'notification:sw-show'` | service-worker context → main, `ipcRenderer.send`, received on `ServiceWorkerMain.ipc` | `{ title: string, body: string, silent: boolean, tag: string }` | Chat's own worker called `showNotification`; main re-raises a native toast (see [Notifications](notifications.md)). No cookies, no page state. |
+| `'notification:sw-show'` | service-worker context → main, `ipcRenderer.send`, received on `ServiceWorkerMain.ipc` | `{ title: string, body: string, silent: boolean, tag: string, data?: JSON }` (`data` is Chat's click data, 16 KB cap, BUG-05) | Chat's own worker called `showNotification`; main re-raises a native toast (see [Notifications](notifications.md)). No cookies, no page state. |
+| `'notification:sw-open'` | service-worker context → main, `ipcRenderer.send`, on `ServiceWorkerMain.ipc` | `string` (URL) | BUG-05: a replayed click asked for `clients.openWindow`/`navigate`. Honoured only from an allowed worker scope; Chat origin opens in the app window, everything else goes through the link router. The URL is never logged. |
+| `'notification:sw-click'` | main → service-worker context, `ServiceWorkerMain.send` | `{ title, body, tag, data }` | BUG-05: replay a `notificationclick` to the listeners Chat registered in that worker. |
 
 Validation: main accepts a message **only** when the worker's **scope origin** (`event.serviceWorker.scope`)
 is in the notification origins (chat only); anything else is rejected and logged. Payloads are sanitised

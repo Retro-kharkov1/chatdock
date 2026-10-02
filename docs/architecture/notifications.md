@@ -35,12 +35,23 @@ it shows no toast (reported by the implementer, verified by reading the Windows 
 here), and calling both would double up if Electron ever fixed it. The original is called **only** as a
 fallback when the bridge is missing or throws, so a notification is never silently lost.
 
-**Recorded trade-off:** because the browser never owns the notification, Chat's worker
-`notificationclick` handler and `registration.getNotifications()` **never fire**. A native toast click only
-brings the window forward (FR-05c step 1). Opening the conversation (step 2) and any behaviour that relies
-on the worker's click handler are **not** delivered by this path. If Spike C shows Chat's own click routing
-would have worked, this trade-off is what made it unreachable (mechanism M0 above is therefore closed for
-this build).
+**Trade-off and its fix (BUG-05).** Because the browser never owns the notification, Chat's worker
+`notificationclick` handler never fires on its own (and `registration.getNotifications()` stays empty). That
+was why a toast click only brought the window forward. Fix: the intercepted request now keeps Chat's
+`options.data` (JSON-safe clone, 16 KB cap, in memory only, never logged) and the worker scope (taken from
+the transport, not the payload). On a toast click `index.js` focuses the window and calls
+`deliverClick(scope, {title, body, tag, data})`, which starts the worker if it was torn down
+(`serviceWorkers.startWorkerForScope`) and sends `notification:sw-click`. The worker preload then **replays**
+a `notificationclick` event (own `notification`/`action`/no-op `waitUntil`) to the listeners Chat registered.
+A replay cannot call `clients.openWindow`, `WindowClient.focus` or `navigate` natively (they need a real
+click), so for 10 s after a replay those three are answered in the worker and a URL is sent to main on
+`notification:sw-open`; `src/main/notificationOpen.js` opens an exact `https://chat.google.com` URL in the
+app window and sends anything else through the link router (Meet and scheme rules intact). Outside a replay
+the three calls are untouched. Page-initiated `showNotification` forwards the same `data` and its
+registration scope and uses the same replay. Verified in real Electron 44.4.3 against a loopback worker;
+**not yet against a real signed-in Chat** (what Chat's handler does with the replayed event is [U]). Note
+the link router sends a page `window.open` to an in-app Chat URL to the system browser; that is unchanged
+and is not on the notification path.
 
 ### Main-process toast service (`src/main/nativeToast.js`)
 
@@ -56,7 +67,8 @@ Everything Electron-shaped is injected. Rules, in the order they are applied to 
   ("N more notifications"), which is itself mute-aware.
 - **Mute (FR-12):** a muted request creates no toast but still counts as an arrival (the attention
   controller applies mute itself). **Sound (FR-11):** `silent` is forced when sound is off.
-- **Click:** the toast's `click` calls `focusMainWindow()` (restore, show, focus): FR-05c step 1 only.
+- **Click:** the toast's `click` calls `focusMainWindow()` (restore, show, focus), then replays the click
+  into the originating worker (BUG-05, above).
   Live toast objects are held until closed so they are not garbage-collected before a click.
 - **No toast for the conversation being viewed (FR-05a):** the shell only surfaces calls Chat chose to
   make on this path, so Chat's own suppression stays in force. The fallback applies its own coarser rule.
