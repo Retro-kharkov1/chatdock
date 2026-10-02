@@ -82,6 +82,7 @@ function bootstrap() {
   const { createLinkRouter } = require('./linkRouter');
   const { createCallWindowManager } = require('./callWindow');
   const { createQuitGuard } = require('./quitGuard');
+  const { createQuitTerminator, sessionFlushers } = require('./quitTerminator');
   const { createDisplayMediaGate } = require('./meetPermissions');
   const { createPickerController, createPickerWindow } = require('./pickerWindow');
 
@@ -228,6 +229,20 @@ function bootstrap() {
   // docs/architecture/meet-call-window.md. Quit path first: every owned contents gets a
   // will-prevent-unload listener, and isQuitting is reset if a quit is cancelled.
   const quitGuard = createQuitGuard();
+
+  // Quit-hang fix (meet-call-window.md section 8): flush the persistent partition, then force-terminate
+  // after will-quit/quit. Settings and window state are written synchronously (writeFileSync), so the
+  // only async persisted state is the partition's cookie store and DOM storage. The session is resolved
+  // lazily (at quit) because it is created in whenReady.
+  const quitTerminator = createQuitTerminator({
+    flushers: [
+      { name: 'cookies', run: () => sessionFlushers(session.fromPartition(PARTITION))[0].run() },
+      { name: 'storage', run: () => sessionFlushers(session.fromPartition(PARTITION))[1].run() },
+    ],
+    requestQuit: () => app.quit(),
+    terminate: () => process.kill(process.pid),
+    log: (...args) => console.error(...args),
+  });
 
   const APP_ICON = path.join(__dirname, '../../assets/icons/icon.png');
   const PICKER_HTML = path.join(__dirname, '../renderer/picker/picker.html');
@@ -470,6 +485,9 @@ function bootstrap() {
       }
     });
 
+    // OS shutdown / logoff (Windows): never force-terminate on that path.
+    mainWindow.on('session-end', () => quitTerminator.onSessionEnd());
+
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
@@ -566,8 +584,14 @@ function bootstrap() {
   });
 
   // The quit really happens: stop the isQuitting reset timer.
-  app.on('will-quit', () => {
+  app.on('will-quit', (event) => {
     quitGuard.onWillQuit();
+    quitTerminator.onWillQuit(event);
+  });
+
+  // After the normal quit sequence and the flush: end the process (it can otherwise linger on Windows).
+  app.on('quit', () => {
+    quitTerminator.onQuit();
   });
 
   // Electron's Linux/Windows default would quit when the last window closes — overridden per
