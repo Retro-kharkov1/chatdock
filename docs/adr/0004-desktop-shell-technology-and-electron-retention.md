@@ -384,7 +384,8 @@ harness, run non-interactively (`--mode=auto`, picker clicks simulated by the dr
 
 **What this changes.**
 - The Linux app picker works on X11 and (screens only) on Wayland-in-WSLg, so the app picker stays the Linux default,
-  as `docs/design/08-meet-open-questions.md` OQ-4 already assumed. **The condition for allowing the OS picker on Linux
+  as [FR-16](../business/requirements.md) now specifies (the Linux OS-picker option was removed from scope on
+  2026-10-02). **The condition for allowing the OS picker on Linux
   ("it works and the user still chooses explicitly") was NOT met or refuted: it could not be tested.** Do not enable
   it until checked on native GNOME (Wayland) and KDE with PipeWire.
 - Wayland window sharing and the ~3 s `getSources` latency in WSLg may be WSLg artefacts or real Ozone-Wayland

@@ -5,9 +5,7 @@ The complete, narrow surface `src/preload/preload.js` exposes via `contextBridge
 senders), the service-worker preload's one bridge and channel (`src/preload/serviceWorkerPreload.js`), plus
 the one main-world injection used by the notification bridge (a different mechanism, see
 [Notifications](notifications.md)), plus the separate, smaller surface the Settings window's own preload
-exposes (see [Tray & Lifecycle](tray-lifecycle.md)'s "Settings window (FR-15)"), plus two **provisional**
-surfaces added by the 2026-09-30 requirements (the Meet contents has none; the call window's app view and
-the screen-share picker are sketched, not built). This is the contract the implementer and the tests both
+exposes (see [Tray & Lifecycle](tray-lifecycle.md)'s "Settings window (FR-15)"), plus the screen-share picker's own narrow surface (FR-16; not built yet; the Meet contents has none). This is the contract the implementer and the tests both
 cite; nothing beyond this list is exposed to the renderer(s).
 </overview>
 
@@ -81,53 +79,31 @@ window's `notificationClicked`, because the Settings window's UI genuinely needs
 request/response IPC round trip is used, and it exists specifically because this window's own
 renderer-side state (the switches) needs to reconcile against a main-process-confirmed outcome.
 
-## Call window (FR-16): Meet contents has no bridge; the app view has a narrow one — PROVISIONAL
+## Call window (FR-16): the Meet contents has no bridge
 
-The call window holds two web contents (see [Meet Call Window](meet-call-window.md) §3a).
+**The Meet contents has no preload script and exposes nothing:** no `contextBridge` object and no IPC channel
+is reachable from Meet's page (the *Electron security baseline* project rule). The call window has no other
+web contents. Everything the app needs from it is done from the main process (window events,
+`render-process-gone`, permission and display-media handlers) and with native dialogs, which are not
+channels (see [Meet Call Window](meet-call-window.md) §8 and §9). There are no `callui:*` channels.
 
-**The Meet contents has no preload script and exposes nothing:** no `contextBridge` object, no IPC channel
-is reachable from Meet's page (the *Electron security baseline* project rule). Everything the app needs from it is
-done from the main process (window events, `render-process-gone`, `did-fail-load`, permission and
-display-media handlers).
+## Screen-share picker window (FR-16) — final
 
-**The app view** (a child `WebContentsView` that draws the loading, load-error and crashed panels only;
-the status strip of the earlier design was removed 2026-10-01) loads only bundled local HTML, with its own
-preload exposing `window.__gcdCallUiBridge`. It is
-**provisional**: it follows the Meet design, which is under review, and the offline and back-online states
-are cut and have no channel. Security constraints (context isolation, sandbox, no Node, no navigation,
-non-persistent separate session, local content only) are in
-[Meet Call Window](meet-call-window.md) §3a and are not repeated here. Never merged into any other preload.
+The picker is the only app-drawn surface of the call window ([Meet Call Window](meet-call-window.md) §7). It
+loads only this app's own local HTML with its own preload (`src/preload/pickerPreload.js`, exposing
+`window.__gcdPickerBridge`), the same trust model as the Settings window, never a third-party origin.
+Nothing below may be exposed on the main window's bridge or on the Meet contents.
 
 | Exposed function | Wire channel | Direction | Payload | Purpose |
 |---|---|---|---|---|
-| `onState(cb)` | `'callui:state'` | main → view, `webContents.send`; view subscribes via `ipcRenderer.on` | `{ state: 'opening' \| 'slow' \| 'load-error' \| 'crashed' \| 'ok', address: string, errorCode?: number }` | The complete UI state, replaced whole on every change (no partial updates to drift). `address` is a display string main builds (for example `meet.google.com/abc-defg-hij`), never a raw URL with query or fragment. `errorCode` is a number; the wording for each code is local to the view. **No string taken from the Meet page is ever sent.** |
-| `act(action)` | `'callui:action'` | view → main, `ipcRenderer.send` (fire-and-forget) | `{ action: 'retry' \| 'reload' \| 'close' }` | The user pressed a button. Main ignores any value outside the enum **and** any action illegal in the current state: `retry` only in `load-error`; `reload` only in `slow` or `crashed`; **`close` only in `slow`, `load-error` or `crashed`** (the states where the design offers a Close button and no live page can object; it destroys the window directly, with no probe or dialog; there is no in-view close in `opening` or `ok`). |
+| `getSources()` | `'picker:get-sources'` | renderer → main, `invoke` | none | Called once after the window shows its loading state. Resolves (possibly after several seconds) with `[{ id: string, name: string, kind: 'screen' \| 'window', thumbnail: string }]` (`thumbnail` a data URL). Main remembers the ids it sent. Thumbnails show live screen content: never logged or persisted. |
+| `choose(sourceId)` | `'picker:choose'` | renderer → main, `invoke` | `{ sourceId: string }` | The user's selection. Main accepts only an id from the list it sent to this picker and only while the display request is still pending; it then returns that source to the request and closes the picker. Resolves `{ ok: boolean }`. |
+| `cancel()` | `'picker:cancel'` | renderer → main, `send` | none | Denies the pending request and closes the picker. Closing the window, Escape and Meet-side teardown are equivalent. |
 
-Sender validation: main accepts `'callui:action'` only when `event.sender` is the app view's own web
-contents (its stored id) and its frame URL is the bundled local file. Anything else is dropped and logged as
-a warning, without content. Nothing is invoked with a response (`send`, not `invoke`) because the view has
-no use for a return value; the next `callui:state` is the only feedback. The close and Exit confirms
-(design SC-2) are native OS dialogs, not channels (see [Meet Call Window](meet-call-window.md) §3b; owner-approved
-2026-10-01).
-
-## Screen-share picker window — PROVISIONAL
-
-**Provisional: the picker is being wireframed ([design/05](../design/05-meet-source-picker.md)), and these
-channels may change with it.** The picker loads only this app's own local HTML with its own preload
-(`__gcdPickerBridge`), the same trust model as the Settings window, never a third-party origin. Nothing
-below may be exposed on the main window's, the Meet contents' or the app view's bridge.
-
-| Exposed function | Wire channel | Direction | Payload | Purpose |
-|---|---|---|---|---|
-| `getSources()` | `'picker:get-sources'` | renderer → main, `invoke` | none | Returns the list of screens/windows (id, name, thumbnail) for this request. Thumbnails show live screen content: never logged or persisted. |
-| `choose(sourceId)` | `'picker:choose'` | renderer → main, `invoke` | `{ sourceId: string }` | The user's selection; main returns that source to the pending display-media request. Only a value from the list main just sent is accepted. |
-| `cancel()` | `'picker:cancel'` | renderer → main, `send` | none | Denies the request. Closing the picker window without choosing is equivalent. |
-
-There is never an automatic choice: with no `choose`, the request is denied. **Where the picker exists:**
-on Windows always; on Linux X11 (design position); **not** on Linux Wayland/PipeWire, where the OS
-picker replaces it **only if Spike B shows the conditions in [Meet Call Window](meet-call-window.md) §5 hold**
-(the user chooses explicitly; a silent or pre-selected source is never allowed on any platform). If Spike B
-shows they do not, this window is used there too. The OS-picker path adds no channel.
+Sender validation: main accepts all three only from the picker's own `webContents` id with a frame URL equal
+to the bundled file; anything else is dropped and logged without content. There is never an automatic
+choice: with no `choose`, the request is denied. The picker is used on Windows and on Linux (the Linux OS
+picker is out of scope and would add no channel).
 
 ## Service-worker context (implemented, mechanism M2)
 

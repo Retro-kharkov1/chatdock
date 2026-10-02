@@ -1,7 +1,7 @@
 # Project Rules
 
 <overview>
-Six standing rules that the other documents cite by name (rendered as *Italic Name* project rule). They
+Seven standing rules that the other documents cite by name (rendered as *Italic Name* project rule). They
 are decisions of the maintainer, stated here so each document can point at one place. Where a design
 document and a rule differ, the rule wins.
 </overview>
@@ -28,8 +28,8 @@ Chat and Meet are untrusted third-party content.
 - Single exception: a Google Meet link whose origin is exactly `https://meet.google.com` (no other
   port, no userinfo, no lookalike host) opens in the app-owned call window. That window denies its own
   popups, and its permissions are scoped to Meet.
-- Screen sharing: the user always chooses the source explicitly; nothing is pre-selected. On Linux the
-  OS picker is allowed.
+- Screen sharing: the user always chooses the source explicitly; nothing is pre-selected. The
+  application's own picker is used on Windows and Linux; the Linux OS picker is out of scope.
 - Never log, persist elsewhere or transmit cookies, tokens, credentials, message text, or sender and
   chat names.
 
@@ -55,4 +55,11 @@ checked.
 A release is not done until the installers have been built and run. Release notes state plainly that
 the artifacts are unsigned and what the user will see (Windows SmartScreen warning), see
 [Packaging & Release](packaging-release.md).
+
+## Design scaled to the wrapper
+
+Almost all of the UI is the wrapped site's own. Design work (wireframes, mockups) is done only for
+surfaces the shell itself must draw, such as the Settings window and the screen-share source picker.
+Native dialogs and tray entries get a wording spec, not mockups. The application draws no further
+surfaces (views, strips, banners, panels) beyond what a requirement explicitly calls for.
 </rules>

@@ -29,8 +29,8 @@ mainWindow.on('close', (event) => {
 
 This hide-on-close handler is on the **main window only** (FR-06). The Settings window has none (it is
 destroyed on close). The call window has a **different** `close` handler (yield to `isQuitting`; block
-while the source picker is open; on a live call ask (owner-approved 2026-10-01); otherwise destroy; see
-[meet-call-window.md](meet-call-window.md) §3 and §3b), which never hides. Closing either must still never
+while the source picker is open; a one-shot probe of Meet's unload objection, and only on a live call the
+native confirm P1; otherwise destroy; see [meet-call-window.md](meet-call-window.md) §8), which never hides. Closing either must still never
 quit the process, which `window-all-closed` (below) guarantees while the main window exists hidden. Do not
 copy the hide handler onto them: a hidden call window would keep the camera and microphone live (FR-16).
 
@@ -39,11 +39,16 @@ what an OS shutdown also reaches, so shutdown lets the `close` handler through i
 a hide. **`before-quit` must therefore never be prevented and never show a dialog.** Because `app.quit()` closes
 every window first, a page whose `beforeunload` objection is not overridden would cancel the quit and leave
 `isQuitting` stuck at true (so the main window's X would destroy it); the rules that prevent this (override
-while quitting, reset if a quit is cancelled) are in [meet-call-window.md](meet-call-window.md) §3b and
-apply to the main window's contents too. Any confirm in front of
+while quitting, reset if a quit is cancelled) are in [meet-call-window.md](meet-call-window.md) §8 and
+apply to the main window's contents too: a `will-prevent-unload` handler is **always registered** on the
+main window's contents and, while `isQuitting` is true, calls `event.preventDefault()` synchronously
+(Spike B showed that without it a `beforeunload` objection silently blocks `app.quit()`: `before-quit`
+fires, `will-quit` never does). `before-quit` also starts a one-shot timer that `will-quit` clears; if it
+ever fires the quit did not happen and `isQuitting` is reset to `false`. Any confirm in front of
 Exit or a window close is added *before* `app.quit()` or inside a `close` interception that yields to
-`isQuitting` (see [meet-call-window.md](meet-call-window.md) §3b). Tray Exit is never silently ignored: while
-a close confirm is open it replaces that confirm with the Exit confirm (or focuses it if already open).
+`isQuitting` (see [meet-call-window.md](meet-call-window.md) §8). Tray Exit is never silently ignored: while
+the close confirm (P1) is open it dismisses that confirm and shows the Exit confirm (P2) (fallback if an open
+native box cannot be dismissed: focus P1, show P2 after the answer); if P2 is already open it focuses it.
 `window-all-closed` does **not** call
 `app.quit()` (Electron's Linux/Windows default
 would otherwise quit the app when the last window closes — this must be overridden). The renderer
@@ -157,11 +162,11 @@ Context menu, in order:
 
 | Entry | Type | Action | Why it earns its place |
 |---|---|---|---|
-| Show call window — **conditional on a call window existing; owner-approved 2026-10-01 (P3, FR-07)** | action, first entry | present only while a call window exists, **in every one of its states** (opening, error, crashed, sign-in, Meet page); restores, raises and focuses the **call window**, and **when the source picker is open focus goes to the picker**; never touches the main window. **No tooltip change** (dropped from the design). The menu is rebuilt (`refreshMenu`, event-driven, not from the blink tick) when the call window is created and destroyed. See [meet-call-window.md](meet-call-window.md) §3b. | Buried call windows are otherwise reachable only by the OS window switcher. Additive to FR-07's "at minimum" list; recorded in FR-07. |
+| Show call window — **conditional on a call window existing; owner-approved 2026-10-01 (P3, FR-07)** | action, first entry | present only while a call window exists, **in every one of its states** (opening, error, crashed, sign-in, Meet page); restores, raises and focuses the **call window**, and **when the source picker is open focus goes to the picker**; never touches the main window. **No tooltip change.** The menu is rebuilt (`refreshMenu`, event-driven, not from the blink tick, so NFR-06 holds) when the call window is created and destroyed. See [meet-call-window.md](meet-call-window.md) §4 and §7. | Buried call windows are otherwise reachable only by the OS window switcher. Additive to FR-07's "at minimum" list; recorded in FR-07. |
 | Show/Hide Google Chat | action | toggles the **main window only** (`toggleShowHide` in `src/main/index.js`): `hide()` vs restore/`show()`/`focus()`. While a call window is open it never hides, closes or focuses the call (recommended default, not an owner decision; see [meet-call-window.md](meet-call-window.md)). | FR-07's explicit requirement: close-to-tray removes the taskbar path back in on some platforms/configs, so the tray needs its own way in. |
 | Mute notifications | checkbox | see "Notification sound, mute, and icon blinking" below | Owner-requested (FR-12). The **only** preference checkbox still on the tray — Start at login and Notification sound moved to the Settings window (FR-15); see that section. |
 | Settings… | action | opens/focuses the Settings `BrowserWindow` — see "Settings window (FR-15)" below | New entry point for Start at login, Notification sound, and Icon blinking (the setting label is under redesign, see [design docs](../design/00-settings-surface-spec.md)), added so the tray menu stops growing with every new preference (FR-15). |
-| Exit | action | `app.quit()` (`isQuitting` is set by `before-quit`, see above). **Owner-approved 2026-10-01 (P2, FR-07):** if a call window exists, Exit first **probes it as a close attempt**; only if Meet's page objects (a live call) does an asynchronous native confirm "Exit Google Chat Desktop?" appear, and `app.quit()` then runs only on "Exit"; a non-objecting call window is destroyed and Exit proceeds with no dialog; see [meet-call-window.md](meet-call-window.md) §3b. | The **only** path that terminates the process — no in-page Exit control exists (the *Quit only from the tray* project rule, FR-07). |
+| Exit | action | `app.quit()` (`isQuitting` is set by `before-quit`, see above). **Owner-approved 2026-10-01 (P2, FR-07):** if a call window exists, Exit first **probes it as a close attempt**; only if Meet's page objects (a live call) does an asynchronous native confirm "Exit Google Chat Desktop?" (`dialog.showMessageBox`) appear, and `app.quit()` then runs only on "Exit"; a non-objecting call window is destroyed and Exit proceeds with no dialog; a crashed call window (its crash dialog open) never blocks Exit; see [meet-call-window.md](meet-call-window.md) §8. | The **only** path that terminates the process — no in-page Exit control exists (the *Quit only from the tray* project rule, FR-07). |
 | *(separator)* — build/version label | disabled, non-clickable | none | Owner-requested mid-incident (2026-09-22), see "Build/version diagnostic line" below (FR-13). |
 
 **Amended per FR-15/Wireframe F** (supersedes the 7-item menu this table originally described):

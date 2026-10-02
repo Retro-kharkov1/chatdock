@@ -2,643 +2,421 @@
 
 <overview>
 Design for opening Google Meet links in an app-owned call window with camera, microphone and screen share.
-The requirements are [FR-16 and NFR-07](../business/requirements.md); the decision context is
-[ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md) Spike B. **Delivery is
-conditional on Spike B**: real Meet inside Electron is not a documented, supported configuration and is
-unverified. Statements tagged **[U]** are unverified; nothing here has been run. `file:line` citations of
-current code name a file or symbol rather than a line, because the code moves. Nothing in this document is
-implemented yet; the BUG-01 change touched the notification, session-permission and attention code, not the
-Meet path.
+The behaviour is specified by [FR-16 and NFR-07](../business/requirements.md); the evidence is
+[ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md) "Spike B result" (Windows) and
+"Spike B, Linux half" (WSLg), cited below as **Spike B**. The standing rules (security baseline, quit only
+from the tray, wrapper not a rewrite) are in [Project Rules](project-rules.md) and are not restated here.
 
-This is the **single exception** to "external links open in the system browser". Its authority is the
-the *Electron security baseline* project rule; if this document and that rule ever differ, the rule wins.
-Mirrored here without change (owner decision 2026-09-30, UI-01):
+**Scope is deliberately minimal (owner decision 2026-10-02).** The call window shows **only the Meet page**.
+The app draws exactly **one** surface: the screen-share source picker. There is no app-owned view inside
+the call window, no status strip, no loading/error/crash panel, no preload on the Meet page and no
+window-state persistence. Everything the user must be told (live-call close, Exit, a crash) is a **native
+OS dialog**. Nothing in this design injects script into Meet (*Wrapper, not a rewrite*).
 
-> **Single exception:** Google Meet call links open in an app-owned call window. The match is exact:
-> scheme `https` and hostname exactly `meet.google.com` (a `www.google.com/url?q=` wrapper is unwrapped
-> first and its target must pass the same test). No suffix, substring or wildcard matching. The URL's
-> origin must equal `https://meet.google.com` exactly: an explicit non-default port or any userinfo
-> (`user@`) is refused and goes to the system browser. The call window keeps `contextIsolation`, has
-> `nodeIntegration:false`, `sandbox:true`, shares the main session, denies its own popups, and its
-> navigation is limited to `meet.google.com` + `accounts.google.com`. Media and display-capture
-> permissions are granted only to the `https://meet.google.com` origin (request AND check handler);
-> screen share always goes through the app's own source picker, never an automatic choice. On Linux
-> only, the OS's own picker (e.g. the xdg-desktop-portal dialog) may replace the app's picker if Spike B
-> shows it works there (owner default, 2026-09-30) — the user still chooses explicitly; a silent or
-> pre-selected source is never allowed on any platform. Closing the call window never quits the app.
-> Every other URL still goes to the system browser.
->
-> **Scheme allow-list (owner decision 2026-10-01, UI-01):** the main window and the call window hand
-> a URL to the OS only when its scheme is `http`, `https` or `mailto`. Any other scheme (`file:`,
-> `ms-settings:`, custom protocol handlers, …) is not opened. Non-Meet links clicked inside the call
-> window go to the system browser, same as in the main window.
+Status tags: **[Spike B]** observed facts; **[U]** unverified, the implementer proves it on Electron 44.4.3
+with a real build and records the outcome here. Code is cited by file or symbol, not line.
 
-The rule says nothing about a second, app-owned view inside the call window (section 3a). Section 3a keeps
-that view inside the rule's spirit (local content only, narrow explicit IPC surface, no third-party
-origin), but the rule's sentence about the call window's web contents was written for the Meet page. See
-open question 7: the owner should confirm, ideally by a one-line addition to the rule.
-
-Nothing in this design injects script into Meet or the call window (the *Wrapper, not a rewrite* project rule).
-
-**Owner decisions of 2026-10-01, folded in below** (recorded in the requirements): second link loads into
-the existing window when no meeting page is on screen (section 3); close confirmation (P1), Exit
-confirmation (P2) and the tray entry "Show call window" (P3) approved (section 3b); only `http`, `https`
-and `mailto` are opened in the OS, by the main window's handler and the call window's alike (sections 2
-and 3c); non-Meet links clicked in the call window open in the system browser, so there is **no status
-strip** (section 3a, 3c). The *Electron security baseline* project rule quoted above already carries the scheme allow-list; it is still
-silent on the app-owned view; see open question 7.
+**Known limitations accepted by this scope** (not defects to fix in this change):
+- *End-of-call page.* "Meeting page" is decided from the address only (section 5). After a call ends Meet
+  keeps a meeting-code address, so a second link then gets "focus and notify" instead of loading into the
+  window. The user closes the window and clicks the link again.
+- *No in-window load-error or "opening" UI.* A failed load shows Chromium's own error page; a slow load
+  shows an empty window until Meet paints. The window is always closable.
+- *Page-initiated unload objection is not overridden* (section 8): a Meet-started reload during a call
+  with `beforeunload` registered does nothing, silently. Spike B showed this is the Electron default.
+- *Popups that need the session* (for example a sign-in popup that Meet opens) go to the system browser
+  and do not share the app's session; watch for it in the manual run (section 12).
 </overview>
 
 <architecture>
-## 1. Components
+## 1. Units
 
-```
- main window ──link click / will-navigate──▶ classifyExternalUrl(url)
-   (chat.google.com)                             │
-                                     kind:'meet' │ kind:'external'
-                                                 ▼                 ▼
-                                    openCallWindow(url)     scheme in {http, https, mailto}?
-                                      │                       yes: shell.openExternal(url)
-                                      │                       no:  not opened
-                                      │
-                 ┌────────────────────┴───────────────────┐
-        no call window open                       call window already open
-                 │                       ┌─────────────────┴─────────────────┐
-   create BrowserWindow (hardened,   meeting page on screen       no meeting page on screen
-   same session as main)             (or address not recognised)  (opening, error, crashed,
-                 │                   focus + notify "A call is     sign-in, Meet landing)
-                 │                   already open..."; do NOT      load new link into the
-                 │                   navigate                      existing window; raise +
-                 │                                                 focus; no notification
-   Meet page requests camera/mic/screen
-                 ▼
-   session permission handlers (request + check)  ── origin gate ──▶ deny unless https://meet.google.com
-                 ▼ (display capture only)
-   setDisplayMediaRequestHandler ─▶ app source picker window ─▶ user picks / cancels
-```
-
-| Unit | Kind | New or changed | Purpose |
+| Unit | File (suggested) | Kind | Purpose |
 |---|---|---|---|
-| `classifyExternalUrl(url)` | pure function, no Electron import | new | The only place that decides Meet versus system browser. Unit-testable against NFR-07's table. |
-| `openCallWindow(url)` / `getCallWindow()` | main-process module | new | Owns the one call window, its `webPreferences`, navigation limits, popup denial, close behaviour. |
-| App view (`callUiView`) | child `WebContentsView` of the call window, local HTML, own preload | new (section 3a) | The app-drawn loading, load-error and crashed panels. Never shows Meet. (No status strip: owner decision 2026-10-01.) |
-| External-link scheme gate | pure function next to `classifyExternalUrl` | new | For `kind:'external'`, returns "open" only for `http:`, `https:` and `mailto:`; used by the main window's handlers and the call window's (owner decision 2026-10-01). Unit-testable against the NFR-07 scheme table. |
-| Permission handlers | `src/main/session.js` | changed | Replace "grant `notifications`, deny the rest" with origin-aware request **and** check handlers. |
-| Display-media handler + picker | main + small local renderer | new | Screen-share source choice. |
-| `setWindowOpenHandler`, `will-navigate` on the main window | `createWindow` in `src/main/index.js` | changed | Route through `classifyExternalUrl`. |
+| URL classifier + scheme allow-list | `src/main/meetLink.js` | pure, no Electron import | The only place that decides call window versus system browser, and which schemes may reach the OS. |
+| Link router factory | `src/main/linkRouter.js` | pure factory, deps injected | Main-window `setWindowOpenHandler` / `will-navigate` routing. Also used by the call window's popup and navigation handlers. |
+| Permission policy | `src/main/meetPermissions.js` | pure decision functions + installer | Origin gate and the request / check / display-media decisions. Installed from `configurePersistentSession` in `src/main/session.js`. |
+| Meeting-page predicate | `src/main/meetingPage.js` (or inside the call window module) | pure | Address-only "is this a meeting page". |
+| Call window | `src/main/callWindow.js` | main-process factory, deps injected | Singleton window, navigation limits, popups, close/quit handling, second-link rule, crash dialog. |
+| Dialog slot | inside the call window module | small state machine | At most one native dialog (P1, P2 or crash) at a time; owns its `AbortController`. |
+| Source picker | `src/main/pickerWindow.js` + `src/renderer/picker/` + `src/preload/pickerPreload.js` | main + local renderer | The only app-drawn surface. Section 7. |
 
-## 2. URL classification contract
+Wiring: `src/main/index.js` constructs the router with the real `openCallWindow` and `shell.openExternal`,
+passes the call window module `isQuitting` getter and the tray refresh hook, and keeps `before-quit` as
+today.
 
-```
-classifyExternalUrl(input: string) -> { kind: 'meet', url: string } | { kind: 'external' }
-```
-
-Never throws; anything unparseable is `external`. Rules, all from NFR-07 (the test table lives there and
-is not repeated here):
-
-1. Parse with the WHATWG `URL`. Accept as Meet only when `protocol === 'https:'`, `hostname ===
-   'meet.google.com'`, `port === ''` (default 443 normalizes to empty; any other explicit port is refused),
-   and `username === '' && password === ''`. Hostname case is normalized by parsing; a trailing dot, a
-   suffix or a lookalike host is a different hostname and fails the equality.
-2. **Unwrap once.** If the URL is exactly `https://www.google.com/url` (hostname `www.google.com`, path
-   `/url`, https, no port, no userinfo), read `q`. Require **exactly one** `q` parameter
-   (`searchParams.getAll('q').length === 1`; a duplicated `q` is refused, a hardening not spelled out in
-   NFR-07 that only narrows it). Parse the decoded value; it must pass rule 1 **on its own**. A wrapper
-   target that is itself a wrapper fails naturally because its hostname is not `meet.google.com`. Any other
-   host with a wrapper-shaped URL is not unwrapped.
-3. Return the **target** URL's normalized `href`, never the wrapper, as the URL the call window loads.
-4. **Scheme gate for `kind:'external'` (owner decision 2026-10-01).** Only a parsed `protocol` of `http:`,
-   `https:` or `mailto:` is passed to `shell.openExternal`; every other scheme (`file:`, `ms-settings:`,
-   `javascript:`, custom schemes) and every unparseable value is **not opened**: no `openExternal`, no
-   window. This replaces today's "every other URL goes to `shell.openExternal`" in the main window's
-   `setWindowOpenHandler` and `will-navigate` handlers, and applies to the call window's own routing too
-   (section 3c). The Meet test of rules 1 to 3 runs first.
-
-Where it is called: the main window's `setWindowOpenHandler` (new-window requests) **and**
-`will-navigate` (the main frame navigating to Meet is prevented in the main window and routed the same
-way). Redirects (`will-redirect`) are the implementer's decision to cover for the main window; NFR-07 puts
-only `will-navigate` in scope, so a redirect chain into Meet is an open question below.
-
-## 3. Call window
-
-- `new BrowserWindow` with `webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true,
-  partition: PARTITION }` (`PARTITION` in `src/main/session.js`, the main window's session, so the Google login
-  carries over). **The Meet web contents has no preload and no bridge**: nothing is exposed to Meet. The
-  app-drawn UI lives in a separate view (section 3a). Automated tests assert the options each web contents
-  is **created with** (NFR-07), not only the live contents.
-- `setWindowOpenHandler` returns `{ action: 'deny' }` for every popup: **no popup window is ever created**.
-  Owner decision 2026-10-01: the denied target is then routed as in section 3c (an `http`, `https` or
-  `mailto` target opens in the system browser; any other scheme is not opened), so the call window's own
-  denial stays intact and the link is not silently lost.
-- Navigation limit: `will-navigate` allows only `https://meet.google.com` and `https://accounts.google.com`
-  (sign-in re-authentication) and blocks the rest; a blocked navigation target is routed as in section 3c.
-  Whether iframe navigations and `will-redirect` must
-  also be limited, and whether Meet legitimately navigates to other Google hosts during a call, is unknown
-  [U] and is a Spike B observation; do not widen the list without evidence and an owner decision, since the
-  rule names exactly these two hosts.
-- **The call window has a `close` handler** (unlike "no interception"; full mechanics and the live-call
-  probe are in section 3b). In order, for an app-initiated close:
-  1. If `isQuitting` is true, or the close is the deliberate destroy after an answer, the handler yields and
-     the window is destroyed. Never `hide()`.
-  2. If the **source picker is open** the close is blocked: the picker is raised, focused and flashed
-     (`flashFrame` on the picker window, not the main window), so the attempt is never silent.
-  3. Otherwise Meet's own unload objection decides: a page that does **not** object lets the window be
-     destroyed at once; a page that **objects** (a live call) shows the SC-2 confirm (P1,
-     owner-approved 2026-10-01; section 3b).
-  Destroying the window ends the participant's call and must release camera, microphone and screen capture;
-  confirm the OS camera indicator goes off on a real desktop (FR-16 manual scenario): release on destroy is
-  expected but unverified [U]. Closing never touches `isQuitting` and never quits (`window-all-closed` is a
-  no-op).
-- **One call window (owner-approved; the no-meeting-page branch below was decided by the owner on
-  2026-10-01, design A3).** A second Meet link never opens a second window. Two branches, chosen by
-  whether the call window shows a **meeting page**:
-  - **Meeting page on screen** → the existing window is restored if minimized, raised and focused; the
-    existing call is **not** navigated; the OS notification "A call is already open. The new link was not
-    opened." is shown **regardless of mute** (app status, not a chat message); clicking it focuses the call
-    window. It is created in the main process as an Electron `Notification` and does not pass through the
-    FR-05 mute check. If the picker is open, the picker (with its call window) is raised and focused.
-  - **No meeting page on screen** (opening, load-error, crashed, Google sign-in, Meet landing) → nothing can
-    be lost: the new link is **loaded into the existing window** (state back to `opening` for the new
-    address), the window is raised and focused, and **no notification** is shown, because "a call is already
-    open" would be false.
-  - **"Meeting page" is defined by exclusion, on purpose:** the known non-meeting pages are the app's own
-    panel states, `accounts.google.com`, and `meet.google.com` at path `/` or `/landing`. Anything else,
-    **including an address form the rule does not recognise, counts as a meeting page.** The failure
-    direction is safe: an unknown page gets "focus and notify", never "navigate away". This predicate uses
-    the address and panel state only and is **not** the live-call probe of section 3b (different question,
-    different failure direction).
-  - **Dependency, stated so it is not missed:** the notification is only as reliable as OS toast delivery,
-    which is BUG-01 (Spike A). If toasts are suppressed the user still sees the call window come to the
-    front, but the "never silent" wording of FR-16 is not guaranteed until Spike A is resolved.
-  - Whether it follows the sound setting (FR-11) is unspecified; assumption: it follows it.
-- **Tray and attention.** Tray Show/Hide acts on the main window only and never hides or closes the call
-  window. A separate tray entry **"Show call window"** (design 03 F7, SC-4; present in every call-window
-  state; owner-approved 2026-10-01, P3) restores, raises and focuses the call window; when the source picker is open
-  focus goes to the **picker**. The main window is untouched. FR-14 indicators still fire while the call window has focus (see
-  [tray-lifecycle.md](tray-lifecycle.md)); the call window never appears in that logic.
-  Tray Show/Hide acting on the main window only remains a recommended default, not an owner decision.
-
-## 3a. App-owned view inside the call window (decision, provisional pending the wireframes)
-
-**Revised 2026-10-01.** The status strip ("A link was not opened.") is **removed**: the owner decided that
-non-Meet links clicked in the call window open in the system browser (section 3c), so there is nothing to
-report. The app view therefore draws **panels only**, and no strip behaviour remains below.
-One consequence: the app view is never a thin band beside Meet, so Meet never has to be shrunk (see the
-layout notes).
-
-**Problem.** The design ([design/04](../design/04-meet-call-window.md)) draws app UI in the call window: a
-loading panel, a load-error panel (Try again, Close) and a crashed panel (Reload, Close). That UI cannot come from
-Meet's page, cannot be a local page in the same web contents (the Meet page is what the window navigates,
-and navigation is limited to two Google hosts), and a crashed Meet renderer cannot draw its own panel. The
-offline and back-online strips are being cut from the design (the signals are unobservable) and are **not**
-designed for here.
-
-**Decision.** The call window hosts **two web contents in two processes**: the Meet page, and a small
-**app view** (a `WebContentsView` layered over or beside it) that loads only a bundled local HTML file with
-its own narrow preload. The main process owns layout and every state transition; the app view only renders
-what it is told and reports button presses.
+## 2. URL classification (unit 1)
 
 ```
- call window (BrowserWindow, Meet web contents = win.webContents, session = main session)
- ├── Meet page   https://meet.google.com   no preload, sandbox, popups denied, navigation limited
- └── app view    local file only, own preload, own non-persistent session, sandbox
-      states: opening | slow | load-error | crashed | ok (view hidden)
+classifyLink(input: unknown) -> { outcome: 'call-window' | 'system-browser', url: string }
+isOpenableExternalScheme(url: string) -> boolean        // http:, https:, mailto: only
 ```
 
-**Why this shape (versus the alternatives).**
+`classifyLink` is the contract the existing `test/meetLink.test.js` fixes; it never throws for any input
+type. Rules (the full table of cases is NFR-07's and the test file's; not repeated):
 
-| Alternative | Verdict |
+1. Parse with WHATWG `URL`. `call-window` only when `origin === 'https://meet.google.com'` and
+   `username === ''` and `password === ''`. The origin test refuses an explicit non-default port, a trailing
+   dot, a lookalike or deeper host and any non-https scheme; default `:443` normalises away. No suffix,
+   substring or wildcard matching.
+2. **Unwrap once.** Only `https://www.google.com/url` (no port, no userinfo, path exactly `/url`) is
+   unwrapped. Require exactly one `q` parameter (a duplicated `q` is refused, as the test table expects).
+   The decoded target must pass rule 1 **on its own**; a wrapper target that is itself a wrapper fails
+   because its host is not `meet.google.com`.
+3. `url` is the **normalised href of the target**, never the raw input or the wrapper (parser-differential
+   removal; the tests assert it).
+4. Everything else, including every parse failure and non-string, is `{ outcome: 'system-browser' }`.
+5. **Scheme allow-list.** Whatever is handed to the OS (`shell.openExternal`) first passes
+   `isOpenableExternalScheme`: parsed protocol `http:`, `https:` or `mailto:`. `file:`, `ms-settings:`,
+   `javascript:`, custom schemes and unparseable values are **not opened** and not routed anywhere. The
+   Meet test runs first; the allow-list gates only the `system-browser` branch.
+
+## 3. Link router factory (unit 2)
+
+```
+createLinkRouter({ classifyLink, isOpenableExternalScheme, openCallWindow, openExternal, log })
+  -> {
+       route(url) -> 'call-window' | 'external' | 'dropped'      // the shared decision + side effect
+       onWindowOpen({ url }) -> { action: 'deny' }               // always deny; route(url) as a side effect
+       onWillNavigate(event, url, { allowedOrigins }) -> void    // in-app origins pass; else preventDefault + route(url)
+     }
+```
+
+- `route(url)`: `classifyLink(url)`; `call-window` → `openCallWindow(result.url)`; otherwise, if
+  `isOpenableExternalScheme(url)` → `openExternal(url)`; else log (scheme only, never the URL) and drop.
+- Main window: `setWindowOpenHandler` = `onWindowOpen`; `will-navigate` keeps the existing in-app origin
+  allow-list (chat, sign-in origin; see [Overview](overview.md)), and anything outside it is
+  `preventDefault()`ed and routed. This replaces today's "every other URL goes to `shell.openExternal`"
+  in `createWindow` in `src/main/index.js`. The allow-list part is a security fix that stands on its own
+  and ships first (section 11).
+- Call window: popups use `onWindowOpen`; navigations use the call window's own origin list (section 4).
+  `openCallWindow` is the call window module's second-link entry (section 5).
+- All collaborators are injected, so the factory is unit-tested with fakes and no Electron.
+- `will-redirect` into Meet on the main window is not intercepted (NFR-07 scopes `will-navigate`); revisit
+  only if Chat is observed to redirect to Meet.
+
+## 4. Call window
+
+`new BrowserWindow` with `webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true,
+partition: PARTITION }`; `PARTITION` comes from `src/main/session.js` (the shared session, so the Google
+login carries over). **No `preload` key at all.** Meet's contents has no bridge and no IPC channel. Tests
+assert the options the window is **created with**, not only the live contents (NFR-07).
+
+- **Content:** only `https://meet.google.com/...` (and `accounts.google.com` for re-authentication). Nothing
+  local is ever loaded into it.
+- **Navigation:** `will-navigate` and `will-redirect` on the main frame allow only origins
+  `https://meet.google.com` and `https://accounts.google.com` (compared via `new URL(x).origin`); anything
+  else is `preventDefault()`ed and routed by the link router (`route(url)`: allow-listed schemes go to the
+  system browser). Sub-frame navigation is not restricted (Meet embeds frames). Do not widen the list
+  without evidence and an owner decision. Whether Meet legitimately needs another Google host during a call
+  is [U]; it shows up as a blocked navigation in the manual run.
+- **Popups:** `setWindowOpenHandler` always returns `{ action: 'deny' }` (no popup window is ever created).
+  The target is routed: non-Meet → system browser through the scheme allow-list; Meet → the second-link
+  rule of section 5 (a Meet link inside a Meet page, for example in-call chat).
+- **Singleton.** At most one call window. The module reference is set synchronously at creation, before the
+  load, so two quick links cannot create two windows.
+- **Close destroys, never quits, never hides.** A hidden call would keep the camera and microphone live.
+  `window-all-closed` is a no-op (the main window lives in the tray). The `close` handler is section 8.
+- **Release of devices** on destroy is observed at OS level on both platforms for audio and, on Windows, for
+  camera [Spike B]; the X-button / LED path and Linux camera are manual checks (section 12).
+- **No window-state persistence, no app menu** (the application menu is `null`, see
+  [Tray & Lifecycle](tray-lifecycle.md)); edit shortcuts are Meet's own page behaviour.
+- **Renderer crash:** section 9.
+- **Teardown hook:** every teardown of the Meet page (window `closed`, `render-process-gone`) calls the
+  picker's `abortPending()` (section 7), so a source is never handed to a gone page.
+
+## 5. Second link and "meeting page" (address-only)
+
+`openCallWindow(url)` is the single entry for a Meet link from anywhere (main window, popup from the call
+window, tray is not an entry):
+
+| State | Action |
 |---|---|
-| A. Local page as the top-level page, Meet embedded in it (iframe or `<webview>`) | Rejected. NFR-07 requires the **top-level** page origin to be `https://meet.google.com` for media permissions, so an embedded Meet frame would be refused; and ADR-0001 forbids `<webview>`. |
-| B. Inject DOM into the Meet page | Rejected. Injecting into a page the app does not control is the fragility ADR-0002 already calls the riskiest point, breaks on a crashed renderer, and violates the *Wrapper, not a rewrite* project rule. |
-| C. A separate frameless overlay window | Rejected. Two top-level windows must be kept aligned by hand across move, resize, minimize, full screen and the taskbar; they appear as separate windows to the OS. |
-| D. No app UI: rely on Meet's own errors and OS notifications | Valid fallback if the design is cut back; it cannot show a crash or load failure (a crashed page draws nothing), so it drops the design's F2 and crashed flows. Not chosen because the design and FR-16 scenarios call for them. |
-| **E. Second web contents in a child view (chosen)** | Survives a Meet crash (separate process), keeps Meet's contents free of any bridge, and needs only main-process layout code. |
+| No call window | Create it (section 4) and `loadURL(url)`; focus. |
+| Call window exists, **not** a meeting page | `loadURL(url)` into the existing window; restore if minimized, raise, focus. No notification. |
+| Call window exists, **meeting page** | Restore if minimized, raise, focus (the picker if one is open); show a native `Notification` "A call is already open. The new link was not opened."; do **not** navigate. |
 
-**Host window (preferred): `BrowserWindow` with a child `WebContentsView`, not `BaseWindow` with two
-views.** Updated 2026-10-01: with the strip removed, the app view only ever **covers the whole content
-area** (panels) or is **hidden**, so Meet's bounds never need to be set independently of the child view.
-The earlier reason to consider `BaseWindow` (shrinking Meet beside a strip) is gone; what remains
-unverified is only whether a `BrowserWindow` can host the child view at all (below).
-- *For `BrowserWindow`:* device release on close (below) and the design's need for Meet's own unload
-  objection to be consulted when the window closes (section 3b), which the window does for its own
-  `webContents`.
-- *Fallback, only if `BrowserWindow` cannot host the child view [U]:* `BaseWindow` with **two**
-  `WebContentsView`s. That fallback then makes two things **mandatory**: (1) the **device-release
-  gate** (explicit `close()` of both web contents in `closed`; FR-16 manual scenario on every release), and
-  (2) a different close mechanism, because a `BaseWindow` close does not consult a child view's unload
-  objection and `will-prevent-unload` is documented as not respected for `BrowserView` (unverified for
-  `WebContentsView`); see section 3b.
+- **Meeting page is decided by exclusion, from the address only** (`webContents.getURL()` parsed with
+  `URL`): it is **not** a meeting page when the origin is not `https://meet.google.com` (this covers
+  `accounts.google.com`, `about:blank` and Chromium error pages), or when the path is `/` or `/landing`.
+  Anything else, **including any address form not recognised, is a meeting page.** The failure direction is
+  safe: unknown means "focus and notify", never "navigate away from a call". No live-call probe is involved
+  (that is section 8, a different question).
+- The notification is shown **regardless of mute** (app status, not a chat message); it does not pass the
+  FR-05 mute check. Clicking it focuses the call window, but only if `!win.isDestroyed()`; on a destroyed
+  window the click is a no-op (no new window, no main-window focus).
+- A call window showing the crash dialog counts as a meeting page by address: the second link focuses and
+  notifies; the dialog stays.
+- Delivery depends on OS toast delivery ([Notifications](notifications.md)); if toasts are suppressed the
+  user still sees the window come to the front.
+- **Known limitation:** the end-of-call page is a meeting page by address (see overview).
 
-Rationale for the preference, unchanged:
-FR-16 requires that closing the call window releases the camera, microphone and capture. Electron's
-`BaseWindow` documentation states that when a `WebContentsView` is added to a `BaseWindow` and the window is
-closed, the view's `webContents` "are not destroyed automatically" and closing them is the app's
-responsibility, else they leak. A `BrowserWindow` owns and destroys **its own** `webContents`, so the
-privacy-critical Meet contents is released by the window closing, and only the small app view needs manual
-cleanup. Chosen also so a forgotten cleanup can leak a local status page, not a live camera. Verification
-status:
-- Verified in Electron docs (fetched 2026-09-30): `WebContentsView` takes `webPreferences` and has
-  `setBounds` and a read-only `webContents`; `View` has `addChildView`, `removeChildView`, `setBounds`,
-  `setVisible`; `BaseWindow.contentView` exists; the not-destroyed-automatically warning above;
-  `webContents` events `render-process-gone` (`details.reason`), `did-fail-load` (`errorCode`,
-  `isMainFrame`), `unresponsive`, `will-navigate`; `contents.close()` and `contents.reload()`.
-- **Unverified [U]:** the docs page for `BrowserWindow` does not itself document `contentView` or
-  `addChildView` (it states `BrowserWindow extends BaseWindow`, so the members are expected to be
-  inherited). The implementer confirms on the pinned Electron 44.4.3 with a real build. **If a
-  `BrowserWindow` cannot host the child view, fall back to `BaseWindow` with two `WebContentsView`s and
-  explicit `webContents.close()` on both in the window's `closed` handler, then re-run the device-release
-  check (FR-16 manual scenario) as a release gate.**
-- **Unverified [U]:** behaviour of a child view during Meet's HTML full screen (the app view is hidden
-  whenever Meet is showing, so the expected case is no visible difference; the exact full-screen event
-  and result must still be checked); screen-reader behaviour across two web contents in one window;
-  keyboard focus hand-off (main calls `focus()` on the right contents: the app view when a panel appears,
-  Meet when the panel gives way).
+## 6. Permissions (NFR-07), with Spike B facts
 
-### Layout and state ownership (main process)
+The session is shared, so the handlers see requests from the main window and the call window alike and
+decide by **origin**, never by window. `configurePersistentSession` already installs a request and a check
+handler (notifications and `clipboard-sanitized-write`, chat origin only, everything else denied). The Meet
+gate **extends** them and must leave those two grants exactly as they are (tests: notifications and clipboard
+still work in the main window).
 
-- **Layout.** Main sets the app view's bounds and recomputes on the window's resize, maximize, restore and
-  full-screen events. Panel states (opening, slow, load-error, crashed): the app view covers the whole
-  content area, so no click reaches Meet. No panel (`ok`): the app view is hidden and Meet fills the area.
-  There is no partial-height state.
-- **States and their sources.** `opening` on window creation; `slow` from a single one-shot timer
-  (10 s per the design), cleared on finish-load, failure or destroy (no recurring timer); `load-error`
-  from `did-fail-load` with `isMainFrame` true, ignoring the Chromium aborted-load code (-3, a superseded
-  navigation, not a failure; [U], verify); `crashed` from `render-process-gone` on the **Meet** contents.
-  A blocked navigation or popup does **not** change the state (it is routed, section 3c). Only main
-  decides the state; the app view cannot change it. The design's "automatic retry when the network returns" needs a
-  network signal that is being cut and is **not designed**.
-- **Actions.** Try again and Reload call `reload()` (or reload the Meet address) on the Meet contents and
-  return to `opening`. **Close** (offered in `slow`, `load-error` and `crashed`, where there is no live page
-  to object) **destroys the window directly**, with no probe and no dialog. The design draws the close and
-  Exit confirms (SC-2) as **native OS dialogs**, not app-view states; their mechanics are in section 3b.
-  Destroy-on-close otherwise stays exactly as in section 3.
-- **If the app view's own renderer dies** the panels cannot be drawn. Aligned with the design (F11): main logs
-  a warning (never page content) and leaves the window as it is; if the Meet page is also dead the user sees
-  a **blank window that they can close** (no dialog: nothing can object). Main does **not** recreate the
-  view or raise a notification. (Recreating the view once is a possible improvement, not designed; raise it
-  with the owner only if this proves likely in practice.)
-- **Cleanup.** In the window's `closed` handler main calls `close()` on the app view's web contents and drops
-  every reference; on `render-process-gone` of Meet it never leaves the crashed contents' devices assumed
-  released without the manual check.
-- **Picker lifecycle on a dying page.** On `render-process-gone` of the Meet contents, or on any teardown of
-  the Meet page (window `closed`, a navigation that replaces the requesting frame), main: (1) closes the
-  open source picker, if any; (2) **denies** the pending display-capture request (the handler's callback is
-  invoked with no source, exactly once; a callback already used is never invoked again); (3) drops the
-  picker's references. A source is **never** handed to a page that is gone. With the modal picker closed,
-  the call window is no longer blocked, so the crashed panel's **Close** (CW-4) is reachable. The picker's
-  own answer handler checks that the request is still pending and the window is not destroyed before it
-  returns anything; a late selection after teardown is dropped.
+**Origin gate** (one pure function, `meetOriginGate`): grant only when **both** the requesting origin and the
+top-level origin equal `https://meet.google.com`. Every origin is normalised with `new URL(x).origin`:
+Spike B showed origins arrive **with a trailing slash** (`https://meet.google.com/`), so a literal string
+compare fails. Fail closed: a null `webContents` (the check handler may pass null), a missing or
+unparseable origin, an `embeddingOrigin` that is present and not Meet, a Meet frame inside a non-Meet page,
+or a non-Meet frame inside a Meet page is a denial. Deriving the top-level origin (`webContents.getURL()`
+versus `details.embeddingOrigin`) is the implementer's call, pinned by the NFR-07 matrix in tests.
 
-### Security constraints for the app view
+**What Electron delivers [Spike B, Windows and WSLg alike]:**
 
-These are hard requirements, checked on the options the view is **created with** (as for the Meet view) and
-by tests where reachable:
+| Call | Request handler | Check handler |
+|---|---|---|
+| `getUserMedia` | `media`, `details.mediaTypes` = `["audio"]` / `["video"]` / `["audio","video"]` | `media`, `details.mediaType` = `video` / `audio` (singular, or absent); and `speaker-selection` (no mediaType) |
+| `getDisplayMedia` (screen share) | `media` with **empty** `mediaTypes`, then `setDisplayMediaRequestHandler` | n/a |
+| `display-capture` | **never delivered** | never delivered |
 
-| Constraint | Value |
+Decisions:
+1. `media` (request): grant iff the origin gate passes. `mediaTypes` may be `audio`, `video`, both, or
+   **empty** (the screen-share precursor: it must be granted for Meet or the display-media handler is never
+   reached). The request and check handlers use different detail shapes (`mediaTypes` plural versus
+   `mediaType` singular): two parsers, never one shared.
+2. `media` (check): grant iff the origin gate passes and `mediaType` is not `unknown`.
+3. `speaker-selection` (check): grant iff the origin gate passes. (Meet checks it for output-device choice;
+   the Spike B config denied it and what Meet does without it is unknown. Granting it to the Meet origin
+   only is the working default.)
+4. `display-capture` is **not** relied on; allow-list it under the same origin gate as defence in depth only.
+5. Every other permission keeps today's behaviour. `notifications` and `clipboard-sanitized-write` are
+   unchanged.
+
+**Display-media handler** (`session.setDisplayMediaRequestHandler`, session-wide) is the effective screen
+share gate. In order, any failure denies **without showing a picker**:
+1. `request.userGesture === true` (Spike B saw `false` fire; deny it).
+2. Origin gate on `request.securityOrigin` and the requesting frame's top-level page.
+3. A call window exists and is not destroyed (the picker needs its parent).
+4. No other display request is already pending (a second one is denied).
+5. Show the picker (section 7), wait for the user's choice; cancel, close, teardown or timeout-free
+   dismissal → deny.
+6. On a choice, **validate `sourceId` against the list main sent to that picker**; return exactly that
+   source, video only (no system-audio loopback in this scope; preference, open to argument).
+The callback is invoked **exactly once** per request; a late answer after teardown is dropped. Deny means the
+callback is invoked with no streams (the exact form is the implementer's; Spike B saw the page receive
+`AbortError` on cancel, identical on Windows and Linux).
+
+Elevated process: Spike B saw screen capture fail with `NotReadableError` when the app runs as
+Administrator; release notes say not to run the app elevated if screen share matters.
+
+## 7. Screen-share picker (the only app-drawn surface)
+
+- **Window:** a modal child of the call window (`parent` + `modal: true`), small, loading local HTML via
+  `loadFile`. Own preload `src/preload/pickerPreload.js`, never shared with another window's preload.
+  `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`, its own **non-persistent** partition
+  (not the main session, so Meet's permission handlers do not apply to it; every permission request on that
+  partition is denied), `will-navigate` always prevented, `setWindowOpenHandler` denies, strict CSP, text
+  rendered with `textContent`, no `openExternal`.
+- **Channels** (final; contract in [IPC Contract](ipc-contract.md)): `picker:get-sources` (invoke),
+  `picker:choose` (invoke), `picker:cancel` (send). Sender validation: main accepts a message only from
+  the picker's own `webContents` id and a frame URL equal to the bundled file; anything else is dropped and
+  logged without content.
+- **Loading state.** `desktopCapturer.getSources` took 3.3 to 8.2 s on Windows and about 3 s on WSLg Wayland
+  [Spike B]. The picker window opens at once with a loading state; the renderer then calls
+  `picker:get-sources`; main runs `getSources` (screens and windows, thumbnails) **asynchronously** so the
+  event loop and the close path are never blocked. Main records the list of ids it sent.
+- **Cancel = deny.** `picker:cancel`, closing the picker window, Escape, or an empty selection all deny the
+  pending request. Nothing is ever chosen automatically; there is no default selection.
+- **Teardown.** On the Meet contents' `render-process-gone`, on window `closed`, or on a navigation that
+  replaces the requesting frame, main `abortPending()`: closes the picker, **denies** the pending request
+  (callback once), drops references. A selection arriving later is dropped (the answer handler checks that
+  the request is still pending and the call window is not destroyed).
+- **Thumbnails** show live screen content: sent only to the picker's renderer, never logged, persisted or
+  forwarded.
+- **Platforms.** App picker on Windows and on Linux (X11: screens and windows; Wayland in WSLg: screens only,
+  about 3 s latency [Spike B]). The Linux OS picker (xdg-desktop-portal) is **not** part of this scope: it
+  could not be tested in WSLg and stays off until proven on a native GNOME/KDE desktop with PipeWire
+  (conditions: shown on every share start, cancel denies, nothing pre-selected, the source Meet receives is
+  the user's choice). `useSystemPicker` is macOS-only and is not used.
+- **Picker open blocks the call window.** A close attempt, tray "Show call window" and a second Meet link
+  (meeting-page case) all raise and focus the **picker**; the close attempt additionally calls `flashFrame`
+  on the **picker window** (never the main window). `attention.stop()` targets the main window only and
+  must not touch it.
+
+## 8. Close, quit and `will-prevent-unload`
+
+### Spike B facts that drive this section
+Without a `will-prevent-unload` listener (or with one that does not call `preventDefault()`), a page's
+`beforeunload` objection silently blocks `win.close()`, `contents.close({waitForBeforeUnload:true})`, a page
+reload and **`app.quit()`** (for quit: `before-quit` fires, `will-quit` never does, window and process stay),
+on Windows and Linux alike, even with no user activation. A listener that calls `event.preventDefault()`
+synchronously lets close, reload and quit proceed. Whether real Meet registers `beforeunload` during a call is
+not observed (owner run).
+
+### Rules
+1. **`will-prevent-unload` is registered at window creation, always, on the call window's Meet contents and on
+   the main window's contents.** An objection is never left without a listener.
+2. **While `isQuitting` is true the listener calls `event.preventDefault()` synchronously** (no dialog, no
+   async step). A quit therefore always completes, and `before-quit` itself never calls `preventDefault()`
+   and never shows a dialog.
+3. **`isQuitting` reset.** If a quit is nevertheless cancelled, `isQuitting` must not stay true (the main
+   window's X would then destroy instead of hide, breaking quit-only-from-tray). `before-quit` starts a
+   one-shot timer (proposed 5 s); `will-quit` clears it. If the timer ever fires, the quit did not happen:
+   reset `isQuitting = false`. A test quits with an objecting stub page and proves both the override and the
+   reset.
+4. **App-initiated close of the call window** (title-bar X, Alt+F4, taskbar close), in order:
+   1. `isQuitting` is true, or this is the deliberate destroy after an answer → the handler yields.
+   2. Picker open → the close is blocked; the picker is raised, focused and flashed (never silent).
+   3. A dialog (P1, P2, crash) is already open → ignored (the dialog already represents it).
+   4. Otherwise start a one-shot **close probe** (proposed 3 s) and let the close proceed so Chromium runs
+      Meet's `beforeunload`; set `appClose = true`.
+5. **Probe outcomes.** Page does not object → the window is destroyed, timer cleared, no dialog. Page
+   objects → `will-prevent-unload` fires: if `appClose` is set, consume it (the **first** objection only),
+   clear the timer and show **P1** (below); the handler does not call `preventDefault()` itself because the
+   dialog is asynchronous, the override is `destroy()`. Page hung (timeout) → treated as not live, destroyed.
+   No user activation on the page → no objection is the expected result, so the window closes without a
+   dialog. **A missing or unobservable signal always means no dialog**; the cost is one unguarded close, the
+   opposite error would prompt at the end of every call.
+6. A page-initiated objection (`appClose` not set, not quitting) is **not** overridden: Meet's own leave
+   protection stands (silent, per Spike B; a documented limitation). The timer is cleared on every outcome,
+   including window `closed`.
+
+### P1, P2 and the crash dialog (native, `dialog.showMessageBox`)
+Always asynchronous (`showMessageBox` with the call window as parent), never a synchronous or
+event-loop-blocking dialog. One **dialog slot** holds at most one open dialog `{ kind, controller }` where
+`controller` is an `AbortController` whose `signal` is passed to `showMessageBox`.
+
+| Dialog | When | Buttons (default, Esc) | Result |
+|---|---|---|---|
+| **P1** "Close the call window?" | close probe saw an objection (live call) | "Close window", "Keep window open" (default and Esc: keep) | Close → `destroy()`; keep → nothing |
+| **P2** "Exit Google Chat Desktop?" | tray Exit with a live call | "Exit", "Cancel" (default and Esc: cancel) | Exit → `app.quit()`; cancel → nothing |
+| **Crash** | Meet `render-process-gone` (section 9) | "Reload", "Close" (Esc: close) | Reload → reload; close → `destroy()` |
+
+Every answer handler first checks `!win.isDestroyed()` and that its dialog is still the one in the slot; an
+aborted dialog's answer is discarded.
+
+### Exit is never swallowed
+Tray Exit (the only quit path, plus OS shutdown) with a call window present and `isQuitting` not yet set:
+
+| Situation when Exit is clicked | Behaviour |
 |---|---|
-| `contextIsolation` | `true` |
-| `sandbox` | `true` |
-| `nodeIntegration` | `false` |
-| Content | one bundled local HTML file loaded with `loadFile`; no remote URL, ever |
-| Navigation | none: `will-navigate` (and frame navigation) always `preventDefault()`; `setWindowOpenHandler` returns `deny`; no `openExternal` from this view |
-| Session | its own **non-persistent** partition, **not** the main session, so it shares no cookies or storage with Google and is unaffected by the Meet permission handlers; every permission request on that session is denied |
-| Network | nothing to load; an implementer may additionally cancel every non-`file:` request on that session (defence in depth, optional) |
-| CSP | a strict policy in the HTML (no inline script, no remote sources) |
-| Preload | its own file (never shared with the main window's or the Settings window's preload), exposing only the surface below |
-| Inputs rendered | text only, via `textContent`. Every value from main is an enum, a number (error code) or the display address main constructs. **No string taken from the Meet page is ever sent to the view**, so the Meet page cannot inject text into app UI |
-| Outputs | a fixed enum of actions; main validates the value **and** that it is legal in the current state |
-| What it never receives | the Meet URL's path, query or fragment beyond a display address main constructs (for example `meet.google.com/abc-defg-hij`), cookies, tokens, message or chat content, or screen thumbnails |
-| Meet's own contents | unchanged: no preload, no bridge, and the app view is a **sibling**, not the Meet page's embedder, so NFR-07's "top-level origin is Meet" holds for the Meet contents |
+| No call window | `app.quit()` as today. |
+| Call window, no dialog | Picker open: close it and deny its request first. Then run the close probe with `exitProbe`. Not live → destroy the window, then `app.quit()`, no dialog. Live → **P2**. |
+| **P1 open** | Dismiss P1 (treated as "keep"), show **P2** (a live call is already known, no second probe). |
+| **P2 open** | Raise and focus the call window (P2 is its modal child). |
+| **Crash dialog open** | Dismiss it and `app.quit()` (a crashed page has no live call to protect). |
 
-**IPC surface (provisional, drawn from the design; see [ipc-contract.md](ipc-contract.md)):** one
-main-to-view state channel and one view-to-main action channel, nothing else.
+**Feasibility of dismissing an open native message box, Electron 44 (verified in the documentation, not yet
+on a build):** `dialog.showMessageBox` has no `close()` handle, but its options accept `signal` (an
+`AbortSignal`): "the message box will behave as if it was cancelled by the user"; the documented caveat is
+macOS only, for boxes without a parent window (out of scope, and ours have a parent). So P1 (and the crash
+dialog) can be dismissed programmatically on Windows and Linux. **Verified on Windows 11, Electron 44.4.3 (2026-10-02):** a parented `showMessageBox` with `signal` was
+enumerated as a visible `#32770` window; after `abort()` the promise resolved with `cancelId` within about
+60 ms and the window was gone (win32 `EnumWindows` before and after). The cancel path resolves to the
+"keep" outcome, as the call window module assumes. **[U]** Linux not yet confirmed (no native desktop here).
+**Fallback if `signal` does not dismiss the box** on either platform: Exit while P1 is open **focuses P1** and
+records `exitPending`; after P1 is answered, "Close window" → the window is gone, so `app.quit()` runs with
+no P2; "Keep window open" → show **P2**. Exit while the crash dialog is open: `app.quit()` directly without
+dismissing it (quitting destroys the window; the box goes with its parent [U]). Either way Exit is never
+silently dropped.
 
-## 3b. Close, Exit and tray with a call window (mechanics; P1, P2, P3 owner-approved 2026-10-01)
+**Quitting is unconditional once chosen:** `before-quit` sets `isQuitting`; the close handler yields and
+`will-prevent-unload` overrides (rule 2), so P2's "Exit" and an OS shutdown never get stuck on Meet's
+objection.
 
-The Meet design ([03](../design/03-meet-flows.md) §0 and F5 to F7, [06](../design/06-meet-shared-components.md),
-[08](../design/08-meet-open-questions.md), [09](../design/09-meet-proposed-amendments.md)) proposed three
-behaviours. **The owner approved all three on 2026-10-01 and they are now in the requirements** (FR-07,
-FR-16). This section fixes the mechanics so that they cannot break the quit-path rules. P1 is approved as
-option A (confirm on a live call, no Settings switch); delivery of P1 and P2 still depends on Spike B
-proving the live-call signal, and without it they never show a dialog (failure direction, below).
+**Risk to watch (unexplained; now reproduced without screen share, see below):** on Windows, once, after a completed `app.quit()` in a process that had used
+screen share, the main process stayed alive and even `process.exit(0)` from `will-quit` did not end it; it did
+not reproduce on Linux [Spike B]. Cause unknown. The quit-with-call integration test (section 10) must
+exercise screen share then quit and assert the process exits; if it recurs the release gate is open.
 
-| # | Behaviour (approved) | Requirement | Touches |
-|---|---|---|---|
-| P1 | Native confirm "Close the call window?" when the window is closed during a **live call** | FR-16 "Closing during a live call" | FR-16 "closing destroys it" |
-| P2 | Native confirm "Exit Google Chat Desktop?" on tray Exit during a **live call** | FR-07 Exit | FR-07 (Exit is the only quit) |
-| P3 | Tray entry **"Show call window"**, first in the menu, present in **every** call-window state; no tray tooltip change | FR-07 | FR-07 menu contents ("at minimum", so additive) |
+**Reproduced 2026-10-02 (Windows 11, Electron 44.4.3), independent of this feature's code:** a bare Electron
+script that calls `ses.setUserAgent(<desktop Chrome UA>)` (or `app.userAgentFallback`, or
+`webContents.setUserAgent`) on a session, loads `https://meet.google.com/landing` or
+`https://accounts.google.com/`, then `app.quit()` leaves the main process alive after the JS `exit` event
+(all child processes gone; `app.exit(0)` and `destroy()`-then-quit behave the same). The same script with the
+default UA, or with `example.org` / `www.google.com` under the custom UA, exits in about 1 s. `process.kill(
+process.pid)` from the `quit` event ends it. The app has always set that UA (`session.js`). Not fixed here:
+a forced kill at quit risks losing unflushed session storage (login), so it needs an owner decision.
 
-### Three different questions, three different signals (do not conflate)
+## 9. Renderer crash
 
-| Term (design 03 §0) | Signal | Used for | Missing or wrong signal means |
-|---|---|---|---|
-| Call window exists | certain: the app owns it | one-window rule; P3 entry | cannot be missing |
-| Meeting page on screen | the address plus the app's own panel state, **by exclusion** (section 3) | second-link routing | counts as a meeting page: focus and notify, never navigate away |
-| **Live call** | **Meet's page objects to being unloaded** (`beforeunload`), observed only at a close attempt | P1, P2 | treated as **not live**: no dialog, the window closes or the app exits |
+On `render-process-gone` of the Meet contents (any `reason` except `clean-exit`): (1) `abortPending()` the
+picker; (2) show the native **crash** dialog "The call window stopped working": **Reload** →
+`webContents.reload()` (it returns to a normal Meet load; the user rejoins), **Close** (Esc) → `destroy()`.
+If a dialog is already in the slot, it is dismissed first. The OS releases devices when the renderer dies;
+verify on a real run (section 12). A repeat crash after Reload shows the dialog again.
 
-The earlier idea of guessing a live call from the page address or from `isCurrentlyAudible()` is **dropped**:
-neither signals a live call reliably. The only signal is the page's own objection.
+## 10. Test-coverage map (Coverage-First: the net is written and green before the code it covers)
 
-### Rules for any of P1 and P2
+U = unit (plain `node:test`, no Electron). I = integration (real Electron, stand-in page served under the
+Meet origin as in `spike/meet/`; assertions on the options windows are **created with**). M = manual on a
+real desktop, per release.
 
-1. **A confirm must never block OS shutdown or `before-quit`.** `before-quit` sets `isQuitting`
-   (the `before-quit` handler in `src/main/index.js`) and is also what an OS shutdown reaches [U on Windows and
-   Linux]. It never calls `preventDefault()` and never shows a dialog. Confirms are **asynchronous**
-   dialogs, never a synchronous event-loop-blocking one.
-2. **Intercept, then destroy; never hide.** Answering "close" **destroys** the window; there is no path
-   that hides it, since a hidden call keeps the camera and microphone live.
-3. **`isQuitting` wins.** Every close handler below yields when `isQuitting` is true, **and** the
-   `will-prevent-unload` handlers then override any objection synchronously, or the quit would be
-   silently cancelled (see "Quitting is unconditional" below).
-4. **No new quit path.** A confirm only adds a question in front of the existing tray Exit
-   (the *Quit only from the tray* project rule).
-5. **Guard the lifecycle.** At most one confirm at a time. A second **close** request while one is open is
-   ignored (the open confirm already represents it). **Exit is never ignored** (it is the only quit path):
-   tray Exit while P1 ("Close the call window?") is open **dismisses P1 and shows P2** ("Exit Google Chat
-   Desktop?"); tray Exit while P2 is already open **focuses P2**. A dismissed P1 is treated as "Keep window
-   open" (nothing destroyed). The answer handler checks `isDestroyed()` first, and a dismissed dialog's
-   answer is discarded.
+| Surface | Level | What is asserted |
+|---|---|---|
+| `classifyLink` | U | `test/meetLink.test.js` as written (positive, adversarial host/scheme/port/userinfo, wrapper cases, never throws). |
+| `isOpenableExternalScheme` | U | http, https, mailto true; file, ms-settings, javascript, data, ftp, custom, empty, garbage false. |
+| Link router factory | U | Meet → `openCallWindow` once with the normalised url, `openExternal` never; https/mailto → `openExternal`; disallowed scheme → neither (logged without the URL); `onWindowOpen` always returns deny; `onWillNavigate` lets in-app origins through untouched and prevents the rest. |
+| Meeting-page predicate | U | `/`, `/landing`, accounts, `about:blank`, error page → not meeting; `/abc-defg-hij`, query/fragment forms, unknown address forms → meeting. |
+| Second-link decision | U | no window → create; non-meeting → load into existing, no notification; meeting → focus + notify, no navigation; picker open → focus picker; destroyed window → no-op on notification click. |
+| Origin gate | U | trailing-slash origins normalise; NFR-07's requesting/top matrix (seven rows) incl. null webContents, embedding origin, http, chat origin, lookalike. |
+| Media request decision | U | `["audio"]`, `["video"]`, both, **empty** grant for Meet only; denied for chat/accounts/other. |
+| Media check decision | U | `video`/`audio` grant for Meet only; `unknown` denied; `speaker-selection` Meet only; `display-capture` gated; notifications and clipboard unchanged. |
+| Display-media decision | U | `userGesture:false` denied; non-Meet origin denied; no call window denied; second pending denied; chosen id not in the sent list denied; cancel denies; callback exactly once; late answer after teardown dropped. |
+| Dialog slot | U | one at a time; P1 + Exit → P1 aborted, P2 shown; P2 + Exit → focus; crash + Exit → quit; fallback path (`exitPending`) with a fake that ignores `signal`; stale answers discarded. |
+| Close probe | U | fake timers and fake contents: no objection → destroy; objection → P1; hung → destroy; first-objection-only consumption; picker open → blocked and flashed; isQuitting yields. |
+| Call window options | I | created with `contextIsolation`, no `nodeIntegration`, `sandbox`, shared partition, **no preload**; picker created with own preload, non-persistent partition, modal, parent. |
+| Navigation and popups | I | will-navigate to chat or evil host blocked and routed; accounts allowed; popup denied (no window created) and routed. |
+| `will-prevent-unload` | I | objecting stub: app close → P1 path (dialog stubbed); quit → completes and `will-quit` reached; main-window contents too; `isQuitting` reset after a forced cancelled quit; page reload during a live call is not overridden. |
+| Permission handlers live | I | `getUserMedia` and `getDisplayMedia` from the Meet-origin stand-in succeed (picker stubbed); same from accounts denied; main window `Notification` still works. |
+| Crash | I | kill the Meet renderer: picker closed and request denied, crash dialog shown (stubbed), Reload/Close behave. |
+| Quit after share | I | share, then quit: process exits (watch for the Windows hang). |
+| Real Meet call, camera/mic, release (LED / OS indicator), X-button close with live call, Exit with live call | M | Per FR-16 `[manual-only]` scenarios, Windows and Linux separately. |
+| Real sign-in in the call window, sign-in popup behaviour, `speaker-selection` need, whether Meet registers `beforeunload`, `signal` dismissal of P1 | M | Results recorded back into this document. |
+| Linux native desktop: camera, tray entry P3, picker modal behaviour | M | Native GNOME/KDE only; WSLg proves none of it. |
 
-   | Open confirm | New request | Outcome |
-   |---|---|---|
-   | none | close | probe; P1 only if live |
-   | none | Exit | probe with `exitProbe`; P2 only if live |
-   | P1 | close | ignored (P1 stays) |
-   | P1 | Exit | P1 dismissed, P2 shown |
-   | P2 | close | ignored (P2 stays) |
-   | P2 | Exit | P2 focused |
-6. **A close is never silently swallowed** (design invariant I1). Every app-initiated close ends in exactly
-   one of: window destroyed; confirm shown and answered; or, with the picker open, the picker raised and
-   flashed.
+## 11. Implementation order
 
-### Mechanism on the preferred `BrowserWindow` path (all steps [U] until Spike B)
+Each step starts with its tests from section 10 (red), then code, then green. Steps 1 and 2 are independent of
+Meet working at all and fix the existing "every URL goes to `shell.openExternal`" gap, so they ship first.
 
-Meet is `win.webContents`. Electron documents that the window `close` event fires **before** the DOM
-`beforeunload`/`unload` events, and that `will-prevent-unload` "triggers when a `beforeunload` handler
-attempts to cancel page unload" and that calling `event.preventDefault()` in it lets the page unload despite
-the handler. `contents.close({ waitForBeforeUnload: true })` fires `beforeunload` first and does not close if
-the page prevents the unload. The sequence for a user close (title-bar X, Alt+F4, taskbar close):
+1. `src/main/meetLink.js` (`classifyLink`, `isOpenableExternalScheme`) against `test/meetLink.test.js`.
+2. Link router factory; rewire the main window's `setWindowOpenHandler` and `will-navigate` through it with
+   a placeholder `openCallWindow`.
+3. `meetPermissions.js` pure gates and decisions, then installed in `configurePersistentSession`; existing
+   notification and clipboard tests stay green.
+4. Call window: creation, options, navigation limits, popups, singleton, second-link rule and meeting-page
+   predicate; connect `openCallWindow` in `index.js`.
+5. Quit path: always-registered `will-prevent-unload` (call window and main window), `isQuitting` reset
+   timer, close probe, `appClose` flag. Integration test with the objecting stub, quit-after-share test.
+6. Picker: window, preload, three channels, loading state, display-media handler, teardown.
+7. Native dialogs and slot: P1, P2, crash, `signal` dismissal and its fallback; tray P3 and Exit change
+   ([Tray & Lifecycle](tray-lifecycle.md)).
+8. Manual verification run (section 12); record outcomes in this document and ADR-0004's living section.
 
-1. `close` handler runs. It yields if `isQuitting` or if this is the destroy that follows an answer.
-2. **Picker open?** Block the close: raise and focus the picker and `flashFrame` **the picker window**
-   (never the main window). The call window stays; the attempt was not silent.
-3. Otherwise start a **one-shot timeout** (design I3; proposed 3 s, owner may change) and let the close
-   proceed, so Chromium runs Meet's `beforeunload`.
-4. **Page does not object** → the window is destroyed; clear the timer. No dialog.
-5. **Page objects** → `will-prevent-unload` fires on the Meet contents. **Always registered from window
-   creation**, so an objection is never left with no listener (a page objection with no listener would
-   otherwise cancel the close silently). The handler clears the timer and shows the async SC-2 confirm (if
-   P1 is approved; if not, it destroys). **"Close window"** overrides the objection and **destroys** the
-   window; **"Keep window open"** does nothing further (window stays, focused). The handler does not call
-   `event.preventDefault()` itself, because the dialog is asynchronous and the event handler returns first;
-   the override is `destroy()`, which skips unload. (A synchronous `preventDefault()` is the documented
-   way to ignore an objection at once and is usable only for a no-dialog path.)
-6. **Hung page** (no answer within the timeout) → treated as **not live**; the window is destroyed.
-7. **No user activation:** a browser engine honours an unload objection only after the user has interacted
-   with the page (design I6). A user who never clicked in the call window produces no objection, so it is
-   the "signal missing" case: closed without a dialog.
-8. **Failure direction:** a missing or unobservable signal always means **no dialog**, the window closes.
-   The cost is one unguarded close; the opposite error would prompt at the end of every call.
+Reviewers: `security-engineer` on steps 1 to 3 and 6; the implementer states the `signal` outcome from step 7.
 
-**The override applies only to app-initiated closes** (design I4). `will-prevent-unload` may also fire for
-navigations the page starts itself (a Meet reload or link) [U]. The handler acts only while an app-initiated
-close is in progress: a flag set in step 3 and **consumed by the FIRST objection after step 3 only**. Once
-that objection has been handled (the dialog is showing, or the override done), the flag is cleared, so a
-page-initiated `will-prevent-unload` that arrives while the async dialog is open is **not** treated as
-app-initiated. The one-shot close timeout is cleared on every outcome, including the window's **`closed`**
-event (so it can never fire on a destroyed window). For anything else the handler must not override.
+## 12. Verification and release
 
-**Quitting is unconditional, so it is app-initiated: the objection is always overridden.** `app.quit()`
-closes all windows first, and a window whose `beforeunload` objection is not overridden **cancels the quit**.
-Without a rule the failure is silent and dangerous: with `isQuitting` true the call window's `close` handler
-yields, Meet objects, `will-prevent-unload` fires, nothing overrides, the quit is cancelled, and
-`isQuitting` stays true, so the main window's next X **destroys** the main window instead of hiding it,
-breaking the *Quit only from the tray* project rule and close-to-tray. Rules:
-1. While `isQuitting` is true, the `will-prevent-unload` handler on **every** window that can host a
-   page (the call window's Meet contents, and the main window's contents) calls `event.preventDefault()`
-   **synchronously** (no dialog, no async step), letting the page unload. This covers Exit after P2 is
-   rejected or option C, an OS shutdown during a live call and any other quit. (A second launch does not
-   quit the resident app: the second **process** exits itself and the resident app only focuses its main
-   window, FR-08; the resident app's quit paths remain tray Exit and OS shutdown only.)
-2. **If a quit is nevertheless cancelled** (some path still stops it), `isQuitting` is **reset to false**
-   (on the quit-cancelled outcome, or a guarded timeout after `before-quit`) so close-to-tray works again.
-   Never leave `isQuitting` true after a quit that did not happen. [U] how to observe a cancelled quit
-   in Electron 44.4.3; the implementer proves it with a test that quits with an objecting stub page.
-3. `before-quit` itself still never calls `preventDefault()` and never shows a dialog.
-**Unverified and important:** what Electron does with a page-initiated `beforeunload` objection when nothing
-handles it. If it is a **silent block**, the design's premise that Meet's own "Leave site?" protection stays
-is false, and the user would see a reload or navigation do nothing. Spike B must observe it and report to the
-designer and owner.
+The manual scenarios in FR-16 need a real Meet call with real devices and are re-run on every release on
+the platform being claimed, as sign-in is under ADR-0001; a release that has not re-verified Meet says so in
+its release notes ([Packaging & Release](packaging-release.md)). Windows verification does not establish
+Linux. Open points to check on that run: real sign-in and an existing session accepted; sign-in or other
+popups from Meet; whether Meet registers `beforeunload` in a call; `speaker-selection`; device release on X
+close; behaviour of the crash dialog; the post-quit hang.
 
-### Exit (P2) is a close attempt
+## Open questions
 
-The tray Exit handler, if a call window exists and `isQuitting` is not yet set, runs the **same path** as a
-user close with an `exitProbe` flag, and is **only** run when the app is about to quit anyway (never for OS
-shutdown or any path that does not end in quitting):
-- **Not live** (no objection, hung, no activation, signal missing) → the call window is destroyed and
-  `app.quit()` follows on its `closed`; no dialog.
-- **Live** → the async confirm "Exit Google Chat Desktop?"; **Exit** overrides the objection (destroy) and
-  `app.quit()`; **Cancel** (default, Escape) clears `exitProbe` and leaves the window and app untouched.
-- **No call window** → `app.quit()` as today.
-- **Exit while a confirm is open** follows rule 5: P1 open → P1 dismissed and P2 shown; P2 open → P2
-  focused. Exit is never silently ignored. If the dismissed P1 had a probe in flight, the Exit path
-  starts its own `exitProbe` and consumes the objection (the single-flag rule below still holds).
-  **Stale notification click:** the "call already open" notification (section 3) may be clicked after the
-  call window was destroyed. The click handler checks `isDestroyed()` and, if the window is gone, does
-  **nothing** (a no-op: no new window, no main-window focus, no error); the notification's meaning
-  expired with the call.
-**Picker open during the probe (design I5):** the probe first **closes the picker and denies its pending
-display-capture request** (nothing is shared, no source chosen), then probes the call window. The
-picker-open block of step 2 does not apply to the probe. Because the probe destroys a non-objecting window before the quit, it is correct only because the
-quit is then unconditional.
-
-### Fallback path (`BaseWindow` with two views, if section 3a's layout forces it) (all [U])
-
-A `BaseWindow` close does not consult a child view's `beforeunload`. The probe becomes
-`meetView.webContents.close({ waitForBeforeUnload: true })` on the Meet view: if the page prevents the
-unload the contents are not closed, otherwise they are destroyed and the window follows. The electron docs
-note that `will-prevent-unload` prevention is **not respected for `BrowserView`** and it is unverified for
-`WebContentsView`. If the event is not delivered, "objects" and "hung" cannot be told apart, so live-call
-detection is unavailable and, by the failure direction above, **P1 and P2 never show a dialog**. The owner
-should know that this fallback may silently remove the point of P1 and P2.
-
-### P3: "Show call window"
-
-Present while a call window exists, in any state, first in the tray menu; no tooltip is added (dropped
-from the design). The menu is rebuilt (`refreshMenu`, event-driven, not from the blink tick, so NFR-06
-holds) when the call window is created and destroyed. The handler restores, raises and focuses the call
-window, **except that when the source picker is open focus goes to the picker** (the window that can take
-input); the main window is never touched. See [tray-lifecycle.md](tray-lifecycle.md).
-
-### Source picker rules (from design 05; provisional with it)
-
-- The picker is a **modal child of the call window** (Electron window `parent` plus `modal`), so the call
-  window is blocked while it is open.
-- A close attempt on the call window raises, focuses and flashes the **picker** (step 2 above).
-- Tray "Show call window" and a second Meet link (meeting page case) focus the **picker**.
-- **The picker flash is `flashFrame` on a non-main window.** The FR-14 `attention.stop()` must not touch it:
-  the attention module targets only the main window (never enumerates all windows), and the picker flash
-  clears on its own focus. Whether one `flashFrame(true)` on an already-focused window is visible is [U].
-
-## 3c. Links and popups from inside the call window (design F10, OQ-3 — decided 2026-10-01)
-
-**Owner decision: option A.** A link the call window would otherwise block (a popup request, or a
-navigation to anything other than `meet.google.com` / `accounts.google.com`) is routed, and nothing is
-drawn in the window (the strip of the earlier design is removed):
-
-1. The popup is **denied** (no window is created) or the navigation is **blocked** (the call window stays
-   on its page), exactly as before.
-2. The target goes through `classifyExternalUrl` and the scheme gate (section 2, rule 4): `http`, `https`
-   or `mailto` → `shell.openExternal`; any other scheme or unparseable value → not opened.
-3. A target that is a **Meet link** is not sent to the system browser. Working default (not owner-decided):
-   it follows the second-link rule of section 3, which, with a meeting page on screen, focuses the window
-   and shows the "call already open" notification and does not navigate. (A Meet link inside a Meet page is
-   plausible, for example in the in-call chat.)
-4. The state of the call window and of the app view does not change; the user stays in the call, and the
-   system browser comes to the front through the OS.
-
-Consistency with the project rule: it says the call window "denies its own popups" (kept: no popup window
-exists) and "every other URL still goes to the system browser" (kept for `http`, `https`, `mailto`); the
-scheme allow-list is a further narrowing. No navigation of the call window is widened, so the
-two-host navigation limit is unchanged.
-
-## 4. Permissions (NFR-07)
-
-The session is shared, so the handlers see requests from the **main window and the call window alike**
-and must decide by origin, not by window.
-
-- **Rule:** camera, microphone and display capture are granted only when **both** the requesting origin and
-  the top-level page origin equal `https://meet.google.com` exactly. Refuse: `http://meet.google.com`, any
-  other origin including `https://chat.google.com`, a Meet frame embedded in a non-Meet page, and a
-  non-Meet frame embedded in a Meet page.
-- **Both handlers.** `configurePersistentSession` in `src/main/session.js` **already installs both** a
-  request and a check handler (added by the BUG-01 change), and both currently grant only `notifications`
-  (chat origin, plus a dev loopback origin) and `clipboard-sanitized-write` (chat origin only, BUG-02),
-  denying every other permission. The Meet media
-  gate below **extends** those two handlers; it does not add a check handler. Electron notes that most web APIs do a
-  check and then a request if the check is denied, so a request-only policy is incomplete.
-- **Inputs available** (Electron session docs, fetched 2026-09-30): the check handler receives
-  `webContents` (which **may be null**), the permission name, `requestingOrigin` and a `details` object that
-  can carry `securityOrigin`, `embeddingOrigin` (for cross-origin subframes), `requestingUrl`,
-  `isMainFrame` and, for media, **`mediaType` (singular: `video`, `audio` or `unknown`)**. The **request**
-  handler's details use the plural `mediaTypes`; the two handlers differ, so the gate must not share one
-  parser. Fail closed: a null `webContents`, a missing origin or an `unknown` media type is a denial. How to
-  derive "top-level page origin" in each handler (from `webContents.getURL()` versus
-  `details.embeddingOrigin`) is an implementer decision that the NFR-07 matrix (seven requesting/top rows)
-  must pin down in tests.
-- Permission names to gate (to be confirmed by the implementer against Electron's permission list, not
-  asserted here): the camera/microphone permission (`media`) and `display-capture`. Any other permission
-  keeps today's behaviour.
-- **The effective gate for screen capture is `setDisplayMediaRequestHandler`, not these two handlers.**
-  `getDisplayMedia` is served by that handler (section 5), so the permission handlers'
-  `display-capture` rule is defence in depth and must not be relied on as the only barrier. Both are
-  origin-gated, and the display-media handler is tested on its own.
-- **Notifications unchanged (NFR-07).** The main window's notifications permission is now granted to the
-  chat origin only, in both handlers; the Meet gate must leave that behaviour exactly as it is (test:
-  `Notification.permission` and a notification still work in the main window after the change).
-- **Clipboard (BUG-02, fixed).** The handlers grant `clipboard-sanitized-write` to the chat origin only
-  (separate `clipboardOrigins` allowlist); all other clipboard permissions stay denied. Adding the Meet media
-  grant must not widen any of this.
-
-## 5. Screen share and the source picker
-
-- Electron requires `session.setDisplayMediaRequestHandler()` for `getDisplayMedia` (ADR-0004). It is
-  session-wide, so it must first apply the same origin gate: a request whose frame origin is not exactly
-  `https://meet.google.com`, or whose top-level page is not, is denied without showing a picker.
-- Otherwise the handler opens the **app's own picker** and returns a source only after the user selects
-  one; cancel denies the request. **The app never selects a source automatically.** Sources come from
-  `desktopCapturer` in the main process. Thumbnails contain live screen content: they are sent only to the
-  picker window, never logged, persisted or sent elsewhere.
-- The picker is a new UI surface. **It is being wireframed separately; this document does not design it.**
-  It should follow the Settings window pattern (own local HTML, own preload, no third-party origin); the
-  provisional IPC is in [ipc-contract.md](ipc-contract.md) and is subject to the wireframe.
-- **Linux: the OS picker may replace the app picker, only if Spike B shows it works; the user always
-  chooses explicitly; a silent or pre-selected source is never allowed on any platform.** This is the
-  amended project rule (mirrored in the overview), so there is no rule conflict; what remains is technical.
-  What "defer to the OS picker" means concretely, and what is and is not known:
-  - **It is not `useSystemPicker`.** Electron documents that option as **experimental and available for
-    macOS 15+ only**, and says that when the system picker is available "the media request handler will not
-    be invoked". It is not the Linux mechanism and must not be relied on there.
-  - **The Linux mechanism is `desktopCapturer.getSources`.** Electron documents that it "only returns a
-    single source on Linux when using Pipewire". Whether that call is what raises the xdg-desktop-portal
-    dialog (so the one returned source is the user's own choice in that dialog) is **not stated in the
-    docs [U]**. That is the thing to prove.
-  - **Consequence for the app picker under PipeWire.** If `getSources` itself raises the portal dialog, an
-    app picker in front of it would make the user choose twice (portal, then a one-entry app list). So on
-    PipeWire the coherent design is: the handler calls `getSources`, returns the single source, and shows
-    **no app picker**. On a session where `getSources` enumerates without any dialog, the app picker is used.
-  - **What Spike B must demonstrate on a real Wayland/PipeWire desktop, for the single returned source to
-    count as an explicit choice and not a pre-selection:** (1) the OS dialog appears on **every** share
-    start (no remembered choice or restore token that skips it silently); (2) cancelling the dialog denies
-    the request and returns nothing; (3) the app shows no picker of its own and pre-selects nothing; (4) the
-    source Meet receives is the one the user chose. If (1) fails (the source is returned without a
-    dialog), returning it would be a pre-selection, which is forbidden: screen share on that setup is then
-    unavailable until the owner decides.
-  - **X11 sessions:** the design position is the **app picker**. X11 has no portal-mediated capture, so
-    `getSources` enumerates screens and windows normally and the app lists them; the user chooses in the
-    app's picker. How to detect the session type at runtime (session environment versus Chromium's
-    reported platform) and whether an X11 session ever reaches the portal are Spike B observations [U].
-  - **Windows:** always the app picker.
-  - If Spike B shows the Linux OS path cannot meet (1) to (4), the app picker is used on Linux too and the
-    wireframe covers it (per FR-16). **Until Spike B has passed on Linux, Linux uses the app picker**
-    (recommended default, 2026-10-01); the OS-picker path is switched on only by a passing result.
-
-## 6. Verification and release
-
-The `[manual-only]` scenarios in FR-16 need a real Meet call with real devices and are **re-run on every
-release** on the platform being claimed, exactly as sign-in is under ADR-0001. A release that has not
-re-verified Meet says so in its release notes (see [packaging-release.md](packaging-release.md)). Windows
-verification does not establish Linux. If no Linux machine or VM with a camera or virtual camera exists,
-Linux Meet stays unverified (ADR-0004 Spike B).
-
-## Open questions and assumptions
-
-1. **Spike B (Linux screen share):** can the OS-picker path meet conditions (1) to (4) in section 5 on a
-   real Wayland/PipeWire desktop, and what does an X11 session do? If not, the app picker is used there too.
-2. **Spike B (Meet itself):** does Meet load, sign in, and run camera, microphone and screen share in
-   Electron 44.4.3 on Windows and on Linux?
-3. **Redirects:** should `will-redirect` into a Meet URL from the main window be intercepted like
-   `will-navigate`? NFR-07 does not require it. Assumption: not required now; revisit if Chat is observed
-   to redirect.
-4. **Non-web schemes — DECIDED by the owner 2026-10-01:** only `http`, `https` and `mailto` are opened in
-   the OS; any other scheme is not opened (section 2, rule 4; requirements FR-16, NFR-07), and the
-   *Electron security baseline* project rule now carries the allow-list. Open implementation point: the existing
-   handlers in `index.js` currently pass every URL to `shell.openExternal` and must be changed
-   (implementer, `security-engineer` review).
-5. **Assumption:** the "call already open" notification follows the sound setting (section 3).
-6. **Design rule adopted:** the source picker is a modal child of the call window; a close attempt raises,
-   focuses and flashes it; tray "Show call window" focuses it; its flash is not touched by
-   `attention.stop()` (section 3b).
-7. **Owner:** confirm that the app-owned local view of section 3a is within the
-   *Electron security baseline* project rule. Proposed one-line addition: "the call window may also host one app-owned
-   view that loads bundled local content only, with its own sandboxed preload exposing a fixed, narrow IPC
-   surface and no navigation".
-8. **DECIDED 2026-10-01:** P1, P2, P3 of section 3b and A3 (the two-branch second-link rule of section 3)
-   are approved. **Still open (owner):** the timeout for a hung page (proposed 3 s, to be fixed after
-   Spike B measures it).
-9. **DECIDED 2026-10-01:** links from inside the call window open in the system browser (section 3c). **Still
-   open (owner):** a Meet link clicked inside the call window (section 3c, point 3, working default), and
-   whether a non-web-scheme link needs any on-screen cue (currently none).
-10. **Implementer:** the `BrowserWindow` plus child view arrangement of section 3a is unverified on 44.4.3;
-    the fallback is `BaseWindow` with two views and explicit cleanup of both.
-11. **Done:** NFR-07 now has a table row for the duplicate-`q` refusal (a recommended default, owner
-    acknowledgement outstanding), a scheme table, and the app view's hardening assertion.
-12. **Spike B, close mechanics** (cross-reference: the design's open question on the premise of invariant
-    I4, that Meet's own "Leave site?" may be a **silent block** in Electron): does Meet's page object to
-    unload during a call; does `will-prevent-unload` fire on window close for `win.webContents`; what
-    happens to a page-initiated objection with nothing handling it (a silent block falsifies I4); does a
-    quit started while an objecting Meet page is open get cancelled (section 3b, quitting rule). If the
-    fallback layout is forced, does `will-prevent-unload` fire for a `WebContentsView` at all.
-13. **DECIDED (orchestrator default 2026-10-01, owner to be told):** tray Exit is never ignored while a
-    confirm is open (section 3b, rule 5).
+1. **Close-probe timeout** (proposed 3 s) and **`isQuitting` reset timer** (proposed 5 s): fix after the
+   implementer measures them.
+2. **`signal` dismissal** of an open message box: documented, unverified on 44.4.3 (section 8); fallback
+   specified.
+3. **System-audio capture** in screen share is not offered (video only); revisit if the owner wants it.
+4. **Blocked navigation observed in a real call** to a Google host other than the two allowed: extend the
+   list only with evidence and an owner decision.
 </architecture>
 
 <topics>
-- [Requirements FR-16 and NFR-07](../business/requirements.md) — the authority for behaviour and the security matrix.
-- [ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md) — Spike B and the fallback options.
-- [IPC Contract](ipc-contract.md) — the Meet contents (no bridge), the app view channels and the provisional picker channels.
-- [Tray & Lifecycle](tray-lifecycle.md) — how the call window relates to close-to-tray, Show/Hide, the tray entry and FR-14.
+- [Requirements FR-16 and NFR-07](../business/requirements.md) — behaviour and the security matrix.
+- [ADR-0004](../adr/0004-desktop-shell-technology-and-electron-retention.md) — Spike B evidence (Windows and WSLg).
+- [Project Rules](project-rules.md) — security baseline, quit only from the tray, wrapper not a rewrite.
+- [IPC Contract](ipc-contract.md) — Meet contents has no bridge; the three picker channels.
+- [Tray & Lifecycle](tray-lifecycle.md) — close-to-tray, tray entry P3, Exit (P2), `isQuitting`.
 - [Overview](overview.md) — the window model this adds to.
-- [Meet design](../design/03-meet-flows.md) — flows, wireframes and open questions being reviewed in parallel.
 </topics>

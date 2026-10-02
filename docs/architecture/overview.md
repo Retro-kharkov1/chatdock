@@ -17,8 +17,10 @@ doc for the *why*; this doc covers the concrete configuration). Rules cited as *
 - **Windows**: one **main** `BrowserWindow` (this section), plus two on-demand secondary windows that
   are destroyed on close and never replace it: the **Settings window** (FR-15, local bundled HTML, own
   preload; see [Tray & Lifecycle](tray-lifecycle.md)) and the **Meet call window** (FR-16, third-party
-  Meet page with no preload, plus a small app-owned local view for loading/error/crash UI; see
-  [Meet Call Window](meet-call-window.md)). At most one of each exists.
+  Meet page only: no preload and no app-owned view; its crash and close prompts are native dialogs; see
+  [Meet Call Window](meet-call-window.md)). At most one of each exists. While a screen share is being
+  chosen, a third short-lived window exists: the modal source picker (a child of the call window, local
+  HTML, own preload).
 - **Main renderer**: the main `BrowserWindow`, loading
   `https://chat.google.com/` (FR-01) directly — never an Electron `<webview>`
   tag (per ADR-0001 and the *Electron security baseline* project rule). Treated as untrusted
@@ -57,18 +59,21 @@ doc for the *why*; this doc covers the concrete configuration). Rules cited as *
 `setWindowOpenHandler()` denies every popup by default and hands any `target=_blank`/`window.open`
 call to `shell.openExternal()` instead of opening it inside the app (per
 the *Electron security baseline* project rule), **with one exception**: a Google Meet link (exact match, see
-[Meet Call Window](meet-call-window.md) and the project rule's "Single exception") is denied as a popup and
+[Meet Call Window](meet-call-window.md) §2 and the project rule's "Single exception") is denied as a popup and
 opened in the app-owned call window instead. `will-navigate` is validated against an allowlist starting
 with `chat.google.com`/`accounts.google.com` origins; anything else is prevented and handed to the
 system browser the same way, except that the main window navigating itself to a Meet URL is prevented and
-routed to the call window (the Meet routing is design, not yet built). **Owner decision 2026-10-01:** the
-system-browser hand-off applies only to `http`, `https` and `mailto`; any other scheme is not opened (see
-[Meet Call Window](meet-call-window.md) §2 rule 4; today's handlers still pass every URL on). **Today** the session's permission
+routed to the call window. Both handlers are thin wrappers over one testable router factory with injected
+`openCallWindow` / `openExternal` ([Meet Call Window](meet-call-window.md) §3). **Owner decision 2026-10-01:** the
+system-browser hand-off applies only to `http`, `https` and `mailto`; any other scheme is not opened
+(§2 rule 5; the current handlers in `src/main/index.js` still pass every URL on and are changed first,
+before any Meet window work). **Today** the session's permission
 handlers (request **and** check, `src/main/session.js`) grant only `notifications` (the chat origin, plus a
 dev loopback origin) and `clipboard-sanitized-write` (the chat origin only, BUG-02, from a separate
 `clipboardOrigins` allowlist so the dev loopback origin gets no clipboard write); everything else is denied,
-including `clipboard-read`, `clipboard-write`, `clipboard` and `clipboard-sanitized-read`. The Meet design extends them with an origin gate for camera, microphone and display capture
-(see [Meet Call Window](meet-call-window.md) §4).
+including `clipboard-read`, `clipboard-write`, `clipboard` and `clipboard-sanitized-read`. The Meet design extends them with an origin gate for the `media` permission (camera, microphone, and the
+empty-`mediaTypes` screen-share precursor), `speaker-selection`, and a display-media handler
+(see [Meet Call Window](meet-call-window.md) §6).
 
 **This allowlist is provisional, not settled.** Google's sign-in flow — especially 2-factor/
 security-challenge steps (prompt approval, backup codes, security-key/WebAuthn challenges) — can
