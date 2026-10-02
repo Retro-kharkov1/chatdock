@@ -331,8 +331,22 @@ script that calls `ses.setUserAgent(<desktop Chrome UA>)` (or `app.userAgentFall
 `https://accounts.google.com/`, then `app.quit()` leaves the main process alive after the JS `exit` event
 (all child processes gone; `app.exit(0)` and `destroy()`-then-quit behave the same). The same script with the
 default UA, or with `example.org` / `www.google.com` under the custom UA, exits in about 1 s. `process.kill(
-process.pid)` from the `quit` event ends it. The app has always set that UA (`session.js`). Not fixed here:
-a forced kill at quit risks losing unflushed session storage (login), so it needs an owner decision.
+process.pid)` from the `quit` event ends it. The app has always set that UA (`session.js`).
+
+**Fixed 2026-10-02 (owner decision: flush, then force-terminate)** in `src/main/quitTerminator.js`, wired in
+`index.js`: `will-quit` #1 is prevented and the persistent partition (`PARTITION`) is flushed -
+`cookies.flushStore()` and `flushStorageData()`, concurrently, bounded by 3 s overall (a stuck flush logs
+"timed out" and the quit proceeds); then `app.quit()` is re-issued, `will-quit` #2 passes, and on `quit` the
+process ends with `process.kill(process.pid)` (exit code is non-zero on Windows - TerminateProcess). Settings
+and window state are written with `writeFileSync`, so they are already on disk; no async flush is needed for
+them. Nothing is terminated unless the flush phase completed, never on window close, and never on the OS
+shutdown/logoff path: Electron does not emit `before-quit`/`will-quit`/`quit` on Windows then
+(<https://www.electronjs.org/docs/latest/api/app>), and the main window's `session-end` additionally disables
+the terminate. Only flusher names and error messages are logged, never cookie data. Tests:
+`test/quitTerminator.test.js`. Verified on Windows 11 with the real app (a scratch profile, driven via
+`app.quit()`, the same call the tray Exit makes): with `accounts.google.com` loaded the unfixed quit stayed alive
+(30 s), the fixed one exited in about 1 s after `quit`; a loopback-origin test cookie set in the partition was
+present after quit+relaunch.
 
 ## 9. Renderer crash
 

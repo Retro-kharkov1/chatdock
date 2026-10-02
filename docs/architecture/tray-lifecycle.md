@@ -46,7 +46,7 @@ main window's contents and, while `isQuitting` is true, calls `event.preventDefa
 fires, `will-quit` never does). `before-quit` also starts a one-shot timer that `will-quit` clears; if it
 ever fires the quit did not happen and `isQuitting` is reset to `false`. Any confirm in front of
 Exit or a window close is added *before* `app.quit()` or inside a `close` interception that yields to
-`isQuitting` (see [meet-call-window.md](meet-call-window.md) §8). Tray Exit is never silently ignored: while
+`isQuitting` (see [meet-call-window.md](meet-call-window.md) §8). After the normal quit sequence the app flushes the persistent partition and then force-terminates the process (`quitTerminator.js`; works around a Windows hang after quit - details in meet-call-window.md §8); it is skipped on OS shutdown. Tray Exit is never silently ignored: while
 the close confirm (P1) is open it dismisses that confirm and shows the Exit confirm (P2) (fallback if an open
 native box cannot be dismissed: focus P1, show P2 after the answer); if P2 is already open it focuses it.
 `window-all-closed` does **not** call
