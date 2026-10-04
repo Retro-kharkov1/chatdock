@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'">
+<title>UI-04 host spike - control</title>
+<style>
+  body { font: 13px/1.4 system-ui, sans-serif; margin: 12px; }
+  h1 { font-size: 14px; margin: 0 0 8px; }
+  label { display: block; margin-top: 10px; font-weight: 600; }
+  input { width: 100%; box-sizing: border-box; padding: 5px; }
+  button { margin-top: 4px; padding: 4px 12px; }
+  #out { margin-top: 8px; color: #555; white-space: pre-wrap; }
+  small { color: #777; }
+</style>
+</head>
+<body>
+<h1>UI-04 host-observation spike (throwaway)</h1>
+<small id="info"></small>
+
+<label for="url">Test URL (a Google link, https only)</label>
+<input id="url" placeholder="https://drive.google.com/file/d/.../view?usp=sharing" autofocus>
+<button id="open">Open in test window</button>
+<button id="chat">Re-open Chat window</button>
+
+<label for="mark">Marker (what you are about to click; no file names or message text)</label>
+<input id="mark" placeholder="e.g. step 5: Drive Download, small file">
+<button id="markbtn">Write marker to log</button>
+
+<div id="out"></div>
+<script src="control.js"></script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+# Harness output and the throwaway sign-in profile (never commit)
+out/
+.profile/

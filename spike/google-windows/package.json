@@ -1,0 +1,7 @@
+{
+  "name": "gcd-spike-google-windows",
+  "version": "0.0.0",
+  "private": true,
+  "description": "THROWAWAY host-observation harness for UI-04 (docs/architecture/google-app-windows.md, implementation step 1). Not product code; never packaged (build.files only includes src/**).",
+  "main": "main.js"
+}
