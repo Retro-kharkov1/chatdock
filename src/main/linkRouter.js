@@ -19,13 +19,68 @@ function originOf(url) {
   }
 }
 
-function createLinkRouter({ classifyLink, isOpenableExternalScheme, openCallWindow, openExternal, log }) {
-  /** route(url) -> 'call-window' | 'external' | 'dropped' */
-  function route(url) {
+function createLinkRouter({
+  classifyLink,
+  isOpenableExternalScheme,
+  openCallWindow,
+  openExternal,
+  log,
+  // UI-04 (google-app-windows.md sections 1, 3, 5): ALL OPTIONAL. When any is absent the router behaves
+  // exactly as before (Chat and other Google links go to the system browser).
+  classifyGoogleLink,
+  classifyChatTarget,
+  openMainWindow,
+  focusMainWindow,
+  downloadInMainWindow,
+  openGoogleAppWindow,
+}) {
+  const googleEnabled = [
+    classifyGoogleLink,
+    classifyChatTarget,
+    openMainWindow,
+    focusMainWindow,
+    downloadInMainWindow,
+    openGoogleAppWindow,
+  ].every((fn) => typeof fn === 'function');
+
+  /** 'main' (default; a main-window popup / navigation) or 'app' (a Google app window; 'app-window' accepted). */
+  function normaliseSource(source) {
+    if (source === 'app' || source === 'app-window') return 'app';
+    return source === undefined || source === 'main' ? 'main' : source;
+  }
+
+  /**
+   * route(url, { source }) -> 'call-window' | 'main-window' | 'focus-main' | 'download' | 'app-window'
+   *                           | 'external' | 'dropped'
+   * Order: Meet > Chat > Google app window (incl. the forms.gle hop) > http/https/mailto > dropped.
+   */
+  function route(url, opts) {
     const result = classifyLink(url);
     if (result && result.outcome === 'call-window') {
       openCallWindow(result.url);
       return 'call-window';
+    }
+    if (googleEnabled) {
+      const google = classifyGoogleLink(url);
+      if (google && google.outcome === 'main-window') {
+        const target = classifyChatTarget(google.url, normaliseSource(opts && opts.source));
+        if (target === 'main-window') {
+          openMainWindow(google.url);
+          return 'main-window';
+        }
+        if (target === 'focus-main') {
+          focusMainWindow();
+          return 'focus-main';
+        }
+        if (target === 'download') {
+          downloadInMainWindow(google.url);
+          return 'download';
+        }
+        // 'browser': falls through to the external rule below (today's behaviour for Chat pop-outs).
+      } else if (google && google.outcome === 'app-window') {
+        openGoogleAppWindow(google.url, { hop: Boolean(google.hop) });
+        return 'app-window';
+      }
     }
     if (isOpenableExternalScheme(url)) {
       openExternal(url);
@@ -52,7 +107,7 @@ function createLinkRouter({ classifyLink, isOpenableExternalScheme, openCallWind
     if (Array.isArray(allowedOrigins) && origin !== null && allowedOrigins.includes(origin)) return;
     event.preventDefault();
     try {
-      route(url);
+      route(url, { source: opts && opts.source });
     } catch (err) {
       log('[gcd] link routing failed', err && err.name);
     }

@@ -20,6 +20,18 @@ const PARTITION = 'persist:google-chat';
 const CLIPBOARD_WRITE_ORIGINS = Object.freeze([CHAT_ORIGIN]);
 
 /**
+ * UI-04 (google-app-windows.md section 6): `clipboard-sanitized-write` and `fullscreen` are granted to a Google app
+ * window only when the requesting origin AND the top-level origin are both in this set. A separate constant on
+ * purpose (like BUG-02's list): it is NOT derived from the app windows' navigation list. This is what keeps a
+ * docs/drive frame embedded under Chat (top-level chat.google.com) at no new grant.
+ */
+const GOOGLE_APP_CLIPBOARD_FULLSCREEN_ORIGINS = Object.freeze([
+  'https://docs.google.com',
+  'https://drive.google.com',
+]);
+const GOOGLE_APP_PERMISSIONS = Object.freeze(['clipboard-sanitized-write', 'fullscreen']);
+
+/**
  * buildDesktopUserAgent()
  *
  * Builds a standard desktop Chrome user-agent string using the Chromium version Electron
@@ -45,6 +57,40 @@ function originOf(value) {
   } catch {
     return undefined;
   }
+}
+
+/** originOf() that also refuses userinfo and the empty string (a top-level origin must be unambiguous). */
+function strictOriginOf(value) {
+  if (typeof value !== 'string' || value === '') return undefined;
+  try {
+    const u = new URL(value);
+    return u.username === '' && u.password === '' ? u.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function topLevelUrlOf(webContents) {
+  if (!webContents || typeof webContents.getURL !== 'function') return undefined;
+  try {
+    return webContents.getURL();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The UI-04 grant: requesting origin AND every available top-level signal must be in the Google set.
+ * `topLevelSignals` are raw URL/origin strings; an empty list (no top-level information at all), or any signal that
+ * is missing, empty or unparseable, denies.
+ */
+function googleAppGrant(requesting, topLevelSignals) {
+  if (requesting === undefined || !GOOGLE_APP_CLIPBOARD_FULLSCREEN_ORIGINS.includes(requesting)) return false;
+  if (topLevelSignals.length === 0) return false;
+  return topLevelSignals.every((signal) => {
+    const origin = strictOriginOf(signal);
+    return origin !== undefined && GOOGLE_APP_CLIPBOARD_FULLSCREEN_ORIGINS.includes(origin);
+  });
 }
 
 /**
@@ -88,6 +134,15 @@ function configurePersistentSession(
   };
 
   ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (GOOGLE_APP_PERMISSIONS.includes(permission)) {
+      // Top-level origin of the asking contents (the request details carry no such field).
+      const requesting = strictOriginOf(details && details.requestingUrl);
+      if (googleAppGrant(requesting, [topLevelUrlOf(webContents)])) {
+        callback(true);
+        return;
+      }
+      // Not a docs/drive page: fall through to the existing decisions (Chat keeps its clipboard grant).
+    }
     const meet = decideMeetRequest(webContents, permission, details);
     if (meet !== undefined) {
       callback(meet);
@@ -101,6 +156,19 @@ function configurePersistentSession(
   });
 
   ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    if (GOOGLE_APP_PERMISSIONS.includes(permission)) {
+      // `details.embeddingOrigin` is documented as "only set for cross-origin sub frames" and names the frame
+      // EMBEDDING the asker (not necessarily the top level), so it is combined with the asking contents' own URL
+      // (the real top level; for a top-level page this is the only signal). Every signal present must be listed.
+      const signals = [];
+      const embedding = details && details.embeddingOrigin;
+      if (embedding !== undefined && embedding !== null) signals.push(embedding);
+      const topUrl = topLevelUrlOf(webContents);
+      if (topUrl !== undefined) signals.push(topUrl);
+      const requesting = strictOriginOf(requestingOrigin) ?? strictOriginOf(details && details.requestingUrl);
+      if (googleAppGrant(requesting, signals)) return true;
+      // Not a docs/drive page: fall through to the existing decisions (Chat keeps its clipboard grant).
+    }
     const meet = decideMeetCheck(webContents, permission, requestingOrigin, details);
     if (meet !== undefined) return meet;
     return allowed(
@@ -114,4 +182,9 @@ function configurePersistentSession(
   }
 }
 
-module.exports = { PARTITION, buildDesktopUserAgent, configurePersistentSession };
+module.exports = {
+  PARTITION,
+  GOOGLE_APP_CLIPBOARD_FULLSCREEN_ORIGINS,
+  buildDesktopUserAgent,
+  configurePersistentSession,
+};

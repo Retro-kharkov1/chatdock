@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
@@ -71,7 +72,7 @@ function bootstrap() {
   const { createAttentionController, bindWindowFocus } = require('./attention');
   const { createUnreadTracker } = require('./unreadTracker');
   const { buildOrigins, parseDevStartUrl, START_URL } = require('./origins');
-  const { resolveAppUserModelId } = require('./appIdentity');
+  const { resolveAppUserModelId, resolveProtocolScheme } = require('./appIdentity');
   const { createToastService } = require('./nativeToast');
   const { attachServiceWorkerNotifications } = require('./serviceWorkerNotifications');
   const { createSettingsStore, getSettingsPath } = require('./settingsStore');
@@ -80,7 +81,19 @@ function bootstrap() {
   const { readBuildInfo, buildVersionLabel } = require('./version');
   const { classifyLink, isOpenableExternalScheme } = require('./meetLink');
   const { createLinkRouter } = require('./linkRouter');
+  const { classifyGoogleLink, classifyChatTarget } = require('./googleLink');
+  const { createGoogleAppWindowManager } = require('./googleAppWindow');
+  const { bindEditShortcuts } = require('./editShortcuts');
+  const { createDownloadHandler } = require('./downloads');
+  const { createMainWindowActions } = require('./mainWindowActions');
   const { createNotificationOpener } = require('./notificationOpen');
+  const { createDiagLog, redactUrl, describeShape } = require('./diagLog');
+  const {
+    buildToastXml,
+    findActivationId,
+    createToastRegistry,
+    createClickDeduper,
+  } = require('./toastActivation');
   const { createCallWindowManager } = require('./callWindow');
   const { createQuitGuard } = require('./quitGuard');
   const { createQuitTerminator, sessionFlushers } = require('./quitTerminator');
@@ -122,8 +135,47 @@ function bootstrap() {
   // the window hidden, not forced open. Both autostart.js branches arrange to pass this flag.
   const launchedHidden = process.argv.includes('--hidden');
 
+  // --- BUG-05 attempt 2: temporary diagnostic trail for the notification click path ------------
+  // <userData>/logs/notification-diag.log (src/main/diagLog.js): event names and redacted shapes only.
+  const diagFile = path.join(app.getPath('userData'), 'logs', 'notification-diag.log');
+  try {
+    fs.mkdirSync(path.dirname(diagFile), { recursive: true });
+  } catch {
+    // diagnostics only
+  }
+  const diag = createDiagLog({
+    append: (f, t) => fs.appendFileSync(f, t),
+    size: (f) => {
+      try {
+        return fs.statSync(f).size;
+      } catch {
+        return 0;
+      }
+    },
+    reset: (f) => fs.writeFileSync(f, ''),
+    file: diagFile,
+    pid: process.pid,
+  }).note;
+  // Only option-looking arguments (never paths or values) are recorded.
+  const argFlags = () => process.argv.slice(1).filter((a) => a.startsWith('-')).map((a) => a.split('=')[0]).join(' ');
+  // BUG-05 attempt 2: a toast click launches `<app>.exe <scheme>://toast/<id>` (toastActivation.js).
+  const PROTOCOL_SCHEME = resolveProtocolScheme({ isPackaged: app.isPackaged });
+  diag('proc.start', {
+    packaged: app.isPackaged,
+    flags: argFlags(),
+    comLaunch: process.argv.includes('-Embedding'),
+    toastUrlLaunch: Boolean(findActivationId(process.argv, PROTOCOL_SCHEME)),
+  });
+  // Diagnostics only: Windows' COM-activation callback (never observed to fire on Electron 44.4.3).
+  if (process.platform === 'win32' && typeof Notification.handleActivation === 'function') {
+    Notification.handleActivation((details) => {
+      diag('activation.com', { type: details && details.type });
+    });
+  }
+
   // --- Single-instance lock (FR-08) — must happen before any window is created. ---------------
   const gotLock = app.requestSingleInstanceLock();
+  diag('proc.lock', { gotLock });
   if (decideSingleInstanceAction(gotLock) === 'quit') {
     app.quit();
     return;
@@ -285,22 +337,27 @@ function bootstrap() {
     log: logLine,
   });
 
+  // System browser for http/https/mailto (the router, the hop fallback and the download notice all use it).
+  const openInSystemBrowser = (target) => {
+    shell.openExternal(target).catch((err) => logLine('[gcd] openExternal failed', err && err.name));
+  };
+
   // Router and call window refer to each other (a Meet link opens the window; a link inside the
   // window is routed again), so both are resolved lazily.
-  const linkRouter = createLinkRouter({
+  // The CALL window keeps a router WITHOUT the Google collaborators (google-app-windows.md section 5: the call
+  // window is unchanged; a Chat or Drive link clicked inside a call goes to the system browser as before).
+  const callLinkRouter = createLinkRouter({
     classifyLink,
     isOpenableExternalScheme,
     openCallWindow: (target) => callWindows.openCallWindow(target),
-    openExternal: (target) => {
-      shell.openExternal(target).catch((err) => logLine('[gcd] openExternal failed', err && err.name));
-    },
+    openExternal: openInSystemBrowser,
     log: logLine,
   });
 
   const callWindows = createCallWindowManager({
     BrowserWindow,
     Notification,
-    getRouter: () => linkRouter,
+    getRouter: () => callLinkRouter,
     isQuitting: quitGuard.isQuitting,
     showMessageBox: (parent, options) => dialog.showMessageBox(parent, options),
     picker,
@@ -311,6 +368,48 @@ function bootstrap() {
     },
     quitApp: () => app.quit(),
     iconPath: APP_ICON,
+    log: logLine,
+  });
+
+  // --- UI-04 (FR-17): links to Google services open in app-owned windows on the shared session ----------------
+  // docs/architecture/google-app-windows.md. What a Chat link does to the main window (focus / reload / download):
+  const mainActions = createMainWindowActions({ getMainWindow: () => mainWindow, log: logLine });
+
+  // The router of the MAIN window (popups and navigations away from Chat) and of the Google app windows.
+  const linkRouter = createLinkRouter({
+    classifyLink,
+    isOpenableExternalScheme,
+    classifyGoogleLink,
+    classifyChatTarget,
+    openCallWindow: (target) => callWindows.openCallWindow(target),
+    openMainWindow: mainActions.openMainWindow,
+    focusMainWindow: mainActions.focusMainWindow,
+    downloadInMainWindow: mainActions.downloadInMainWindow,
+    openGoogleAppWindow: (target, opts) => googleAppWindows.openGoogleAppWindow(target, opts),
+    openExternal: openInSystemBrowser,
+    log: logLine,
+  });
+
+  const googleAppWindows = createGoogleAppWindowManager({
+    BrowserWindow,
+    getRouter: () => linkRouter,
+    isQuitting: quitGuard.isQuitting,
+    showMessageBox: (parent, options) => dialog.showMessageBox(parent, options),
+    openExternal: openInSystemBrowser,
+    iconPath: APP_ICON,
+    log: logLine,
+  });
+
+  // Registered ONCE on the shared session in whenReady: app windows (strict chain check) and the main window
+  // (scheme only). Always asks where to save; opens nothing afterwards.
+  const downloadHandler = createDownloadHandler({
+    getAppWindowForContents: (contents) => googleAppWindows.getAppWindowForContents(contents),
+    getMainWindow: () => mainWindow,
+    closeEmptyWindow: (contents) => googleAppWindows.closeIfEmpty(contents),
+    getDownloadsDir: () => app.getPath('downloads'),
+    showMessageBox: (parent, options) =>
+      parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options),
+    openExternal: openInSystemBrowser,
     log: logLine,
   });
 
@@ -326,33 +425,127 @@ function bootstrap() {
     inAppOrigins: NOTIFICATION_ORIGINS,
     loadInApp: (url) => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
+      diag('open.in-app', { url: redactUrl(url), alreadyThere: mainWindow.webContents.getURL() === url });
       if (mainWindow.webContents.getURL() !== url) {
         mainWindow.webContents.loadURL(url).catch((err) => logLine('[gcd] notification open failed', err && err.name));
       }
     },
-    route: (url) => linkRouter.route(url),
+    route: (url) => {
+      diag('open.route', { url: redactUrl(url) });
+      linkRouter.route(url);
+    },
     focus: () => focusMainWindow(),
     log: logLine,
   });
 
+  // BUG-05 attempt 2: every toast gets an id carried in its activation arguments, and the record
+  // (worker scope + Chat's `data`) is kept under it, so a click that arrives as a fresh
+  // `-Embedding` process (Action Center) still finds its way back to the conversation.
+  function registerProtocolHandler() {
+    if (process.platform !== 'win32') return; // toasts are Windows-specific here
+    try {
+      // Unpackaged runs must pass the entry script or the OS would start a bare electron.exe.
+      const ok = app.isPackaged
+        ? app.setAsDefaultProtocolClient(PROTOCOL_SCHEME)
+        : process.argv[1]
+          ? app.setAsDefaultProtocolClient(PROTOCOL_SCHEME, process.execPath, [path.resolve(process.argv[1])])
+          : false;
+      diag('protocol.register', { scheme: PROTOCOL_SCHEME, ok });
+    } catch (err) {
+      logLine('[gcd] protocol registration failed', err && err.name);
+      diag('protocol.register', { scheme: PROTOCOL_SCHEME, ok: false, error: err && err.name });
+    }
+  }
+
+  const toastRegistry = createToastRegistry({ newId: () => require('crypto').randomUUID() });
+  const clickDeduper = createClickDeduper();
+  let lastClickAt = 0;
+
+  /** One resolution point for a toast click, whichever path delivered it. */
+  function handleToastClick(id, via) {
+    lastClickAt = Date.now();
+    focusMainWindow(); // FR-05c step 1
+    const record = id ? toastRegistry.get(id) : undefined;
+    diag('click.resolve', {
+      via,
+      hasId: Boolean(id),
+      recordFound: Boolean(record),
+      hasScope: Boolean(record && record.scope),
+      hasData: Boolean(record && record.data !== undefined),
+      windowVisible: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
+    });
+    if (!id || !record) return;
+    if (!clickDeduper.accept(id)) {
+      diag('click.deduped', { via });
+      return;
+    }
+    // FR-05c step 2 (BUG-05): run Chat's own notificationclick handler with the data it attached.
+    if (record.scope && swNotifications) {
+      swNotifications.deliverClick(record.scope, {
+        title: record.title,
+        body: record.body,
+        tag: record.tag,
+        data: record.data,
+      });
+    }
+  }
+
   function showNativeToast({ title, body, silent, tag, data, scope }) {
-    const toast = new Notification({ title, body, silent });
-    liveToasts.add(toast);
-    const release = () => liveToasts.delete(toast);
-    toast.on('click', () => {
-      release();
-      focusMainWindow(); // FR-05c step 1
-      // FR-05c step 2 (BUG-05): run Chat's own notificationclick handler with the data it attached.
-      if (scope && swNotifications) swNotifications.deliverClick(scope, { title, body, tag, data });
-    });
-    toast.on('close', release);
-    toast.on('failed', (_e, error) => {
-      release();
-      console.error('[gcd] native toast failed:', error);
-    });
+    const id = toastRegistry.register({ title, body, tag, data, scope });
+    const useXml = process.platform === 'win32';
+    const make = (withXml) =>
+      new Notification(
+        withXml
+          ? { title, body, silent, toastXml: buildToastXml({ title, body, silent, id, scheme: PROTOCOL_SCHEME }) }
+          : { title, body, silent }
+      );
+    let toast = make(useXml);
+    let replaced = false;
+    const wire = (t, withXml) => {
+      liveToasts.add(t);
+      t.on('click', () => {
+        diag('toast.click', { inProcess: true });
+        handleToastClick(id, 'click-event');
+      });
+      // Not released on `close`: on Windows `close` also fires when the pop-up merely times out into
+      // the Action Center, where the toast can still be clicked. Released only on a same-tag
+      // replacement (close() below), a failure, or by the size bound on liveToasts.
+      t.on('close', (event) => {
+        diag('toast.close', { reason: event && event.reason });
+      });
+      t.on('failed', (_e, error) => {
+        liveToasts.delete(t);
+        console.error('[gcd] native toast failed:', error);
+        diag('toast.failed', { custom: withXml });
+        // A rejected custom XML must never cost the user the notification: retry once with Electron's own.
+        if (withXml && !replaced) {
+          toast = make(false);
+          wire(toast, false);
+          toast.show();
+        }
+      });
+    };
+    wire(toast, useXml);
     toast.show();
+    // Bound the strong references (a long session raises many toasts).
+    while (liveToasts.size > 100) liveToasts.delete(liveToasts.values().next().value);
+    diag('toast.show', {
+      custom: useXml,
+      silent,
+      hasScope: Boolean(scope),
+      scopeOrigin: scope ? redactUrl(scope) : undefined,
+      hasData: data !== undefined,
+      dataShape: data !== undefined ? describeShape(data) : undefined,
+      tagLen: typeof tag === 'string' ? tag.length : 0,
+    });
     // Handle for same-tag replacement (nativeToast.js): the newer toast closes this one.
-    return { close: () => toast.close() };
+    return {
+      close: () => {
+        replaced = true;
+        liveToasts.delete(toast);
+        toast.close();
+      },
+    };
   }
 
   // Main-process toast service: re-raises service-worker notifications (Electron shows none),
@@ -480,22 +673,8 @@ function bootstrap() {
     // Windows/Linux, since Electron normally routes them through the menu's Edit role. Restored
     // here by dispatching straight to the focused webContents' own edit commands, without
     // reintroducing any Menu (and therefore no second quit-capable surface).
-    mainWindow.webContents.on('before-input-event', (event, input) => {
-      if (input.type !== 'keyDown' || !(input.control || input.meta)) return;
-      const key = input.key.toLowerCase();
-      const wc = mainWindow.webContents;
-      const actions = {
-        c: () => wc.copy(),
-        x: () => wc.cut(),
-        v: () => wc.paste(),
-        a: () => wc.selectAll(),
-        z: () => (input.shift ? wc.redo() : wc.undo()),
-      };
-      if (actions[key]) {
-        event.preventDefault();
-        actions[key]();
-      }
-    });
+    // The same helper binds the Google app windows (googleAppWindow.js).
+    bindEditShortcuts(mainWindow.webContents);
 
     // FR-06 / project rule "Quit only from the tray" (docs/architecture/project-rules.md): the close (X) button hides, it never quits.
     mainWindow.on('close', (event) => {
@@ -530,6 +709,14 @@ function bootstrap() {
     });
 
     mainWindow.webContents.on('dom-ready', injectNotificationBridge);
+    // BUG-05 attempt 2 diagnostics: what the app window did after a toast click (redacted paths only).
+    const afterClick = () => Date.now() - lastClickAt < 20000;
+    mainWindow.webContents.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
+      if (afterClick() && isMainFrame) diag('nav.start', { url: redactUrl(url), inPlace: isInPlace });
+    });
+    mainWindow.webContents.on('did-navigate-in-page', (_e, url, isMainFrame) => {
+      if (afterClick() && isMainFrame) diag('nav.in-page', { url: redactUrl(url) });
+    });
     mainWindow.webContents.on('did-finish-load', () => {
       injectNotificationBridge();
       // Seed the shared baseline from the count the title already shows (D1a).
@@ -593,8 +780,19 @@ function bootstrap() {
   }
 
   // FR-08: focus the existing window instead of a second instance.
-  app.on('second-instance', () => {
-    focusMainWindow();
+  app.on('second-instance', (_event, argv) => {
+    // A toast click launches a second process with the activation URL in its argv (the in-process
+    // `click` normally got there first; the deduper collapses the pair).
+    const id = findActivationId(argv, PROTOCOL_SCHEME);
+    diag('second-instance', {
+      flags: Array.isArray(argv) ? argv.filter((a) => typeof a === 'string' && a.startsWith('-')).map((a) => a.split('=')[0]).join(' ') : '',
+      toastUrl: Boolean(id),
+    });
+    if (id) {
+      handleToastClick(id, 'second-instance');
+    } else {
+      focusMainWindow();
+    }
   });
 
   // Project rule "Quit only from the tray" (docs/architecture/project-rules.md): only the tray's Exit entry (and OS shutdown, which also
@@ -630,6 +828,7 @@ function bootstrap() {
       );
       return;
     }
+    diag('page.notification-clicked');
     focusMainWindow();
   });
 
@@ -659,6 +858,7 @@ function bootstrap() {
       scope = undefined;
     }
     if (scope === undefined) scope = event.senderFrame.origin + '/';
+    diag('page.show-notification', { scopeOrigin: redactUrl(scope), hasData: Boolean(payload && payload.data !== undefined) });
     toasts.show(payload, { scope });
   });
 
@@ -700,10 +900,21 @@ function bootstrap() {
       onShow: (payload, ctx) => toasts.show(payload, ctx),
       onOpen: (url, ctx) => notificationOpener.open(url, ctx),
       log: (msg, err) => console.error(msg, err === undefined ? '' : err),
+      diag,
     });
+    // UI-04: the single download listener for app windows and the main window.
+    persistentSession.on('will-download', downloadHandler);
+    // Windows (and Linux) hand `<scheme>://` URLs to this app; a toast's protocol activation uses it.
+    registerProtocolHandler();
 
     createWindow();
     createTray();
+    if (findActivationId(process.argv, PROTOCOL_SCHEME)) {
+      // This process was itself started by a toast click (no instance was running): the record died
+      // with the previous process, so there is nothing to replay; the window just comes forward.
+      diag('cold-start.toast-launch');
+      focusMainWindow();
+    }
 
     app.on('activate', () => {
       // No macOS dock re-open behavior needed (out of scope, ADR-0003) — kept only so this

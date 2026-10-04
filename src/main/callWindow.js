@@ -13,6 +13,7 @@
 const { MEET_ORIGIN } = require('./meetLink');
 const { isMeetingPage } = require('./meetingPage');
 const { PARTITION } = require('./session');
+const { createCloseProbe } = require('./closeProbe');
 
 const ACCOUNTS_ORIGIN = 'https://accounts.google.com';
 /** Main-frame navigation limits of the call window (meet + re-authentication). Do not widen without evidence. */
@@ -60,8 +61,9 @@ function createCallWindowManager({
   let win = null;
 
   // --- close probe state (section 8 rules 4-6) ---
-  let probeTimer = null; // one-shot close probe (bounded quiet wait for a hung page)
-  let appClose = false; // an app-initiated close is being probed: the FIRST objection is ours
+  // One-shot close probe (closeProbe.js): while active, an app-initiated close is being probed and the
+  // FIRST objection is ours. A hung page (no answer in probeMs) is treated as not live.
+  const probe = createCloseProbe({ timers, probeMs, onTimeout: () => destroyWindow() });
   let exitProbe = false; // the probe was started by tray Exit (objection -> P2, destruction -> quit)
 
   // --- dialog slot: at most one native box at a time ---
@@ -104,11 +106,7 @@ function createCallWindowManager({
 
   // --- probe helpers ------------------------------------------------------------------------------
   function clearProbe() {
-    if (probeTimer !== null) {
-      timers.clearTimeout(probeTimer);
-      probeTimer = null;
-    }
-    appClose = false;
+    probe.clear();
   }
 
   function destroyWindow() {
@@ -117,14 +115,7 @@ function createCallWindowManager({
 
   /** Start a one-shot close probe and let the close proceed so Meet's beforeunload runs. */
   function startProbe() {
-    appClose = true;
-    if (probeTimer !== null) timers.clearTimeout(probeTimer);
-    probeTimer = timers.setTimeout(() => {
-      // Page hung: treated as not live. A missing signal always means no dialog.
-      probeTimer = null;
-      appClose = false;
-      destroyWindow();
-    }, probeMs);
+    probe.start();
   }
 
   // --- dialog slot ----------------------------------------------------------------------------------
@@ -254,7 +245,7 @@ function createCallWindowManager({
       return;
     }
     // 4. otherwise probe: let the close proceed so Meet's beforeunload runs.
-    if (probeTimer !== null) return; // a probe is already in flight
+    if (probe.isActive()) return; // a probe is already in flight
     startProbe();
   }
 
@@ -263,7 +254,7 @@ function createCallWindowManager({
       event.preventDefault(); // synchronous: a quit always completes
       return;
     }
-    if (!appClose) return; // page-initiated objection: Meet's own protection stands (documented limit)
+    if (!probe.isActive()) return; // page-initiated objection: Meet's own protection stands (documented limit)
     // The FIRST objection of an app-initiated close is consumed: a live call. The window stays open
     // (we do not preventDefault); the answer to the native box decides.
     const forExit = exitProbe;
@@ -429,7 +420,7 @@ function createCallWindowManager({
 
     // No dialog: picker first, then run the close probe as an exit probe.
     safe(() => abortPending(), 'abort picker');
-    if (probeTimer !== null) {
+    if (probe.isActive()) {
       exitProbe = true; // a close probe is already in flight: it now also carries the Exit
       return;
     }
