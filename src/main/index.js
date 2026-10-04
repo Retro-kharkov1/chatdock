@@ -1,6 +1,5 @@
 'use strict';
 
-const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
@@ -87,7 +86,6 @@ function bootstrap() {
   const { createDownloadHandler } = require('./downloads');
   const { createMainWindowActions } = require('./mainWindowActions');
   const { createNotificationOpener } = require('./notificationOpen');
-  const { createDiagLog, redactUrl, describeShape } = require('./diagLog');
   const {
     buildToastXml,
     findActivationId,
@@ -135,47 +133,11 @@ function bootstrap() {
   // the window hidden, not forced open. Both autostart.js branches arrange to pass this flag.
   const launchedHidden = process.argv.includes('--hidden');
 
-  // --- BUG-05 attempt 2: temporary diagnostic trail for the notification click path ------------
-  // <userData>/logs/notification-diag.log (src/main/diagLog.js): event names and redacted shapes only.
-  const diagFile = path.join(app.getPath('userData'), 'logs', 'notification-diag.log');
-  try {
-    fs.mkdirSync(path.dirname(diagFile), { recursive: true });
-  } catch {
-    // diagnostics only
-  }
-  const diag = createDiagLog({
-    append: (f, t) => fs.appendFileSync(f, t),
-    size: (f) => {
-      try {
-        return fs.statSync(f).size;
-      } catch {
-        return 0;
-      }
-    },
-    reset: (f) => fs.writeFileSync(f, ''),
-    file: diagFile,
-    pid: process.pid,
-  }).note;
-  // Only option-looking arguments (never paths or values) are recorded.
-  const argFlags = () => process.argv.slice(1).filter((a) => a.startsWith('-')).map((a) => a.split('=')[0]).join(' ');
   // BUG-05 attempt 2: a toast click launches `<app>.exe <scheme>://toast/<id>` (toastActivation.js).
   const PROTOCOL_SCHEME = resolveProtocolScheme({ isPackaged: app.isPackaged });
-  diag('proc.start', {
-    packaged: app.isPackaged,
-    flags: argFlags(),
-    comLaunch: process.argv.includes('-Embedding'),
-    toastUrlLaunch: Boolean(findActivationId(process.argv, PROTOCOL_SCHEME)),
-  });
-  // Diagnostics only: Windows' COM-activation callback (never observed to fire on Electron 44.4.3).
-  if (process.platform === 'win32' && typeof Notification.handleActivation === 'function') {
-    Notification.handleActivation((details) => {
-      diag('activation.com', { type: details && details.type });
-    });
-  }
 
   // --- Single-instance lock (FR-08) — must happen before any window is created. ---------------
   const gotLock = app.requestSingleInstanceLock();
-  diag('proc.lock', { gotLock });
   if (decideSingleInstanceAction(gotLock) === 'quit') {
     app.quit();
     return;
@@ -425,13 +387,11 @@ function bootstrap() {
     inAppOrigins: NOTIFICATION_ORIGINS,
     loadInApp: (url) => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
-      diag('open.in-app', { url: redactUrl(url), alreadyThere: mainWindow.webContents.getURL() === url });
       if (mainWindow.webContents.getURL() !== url) {
         mainWindow.webContents.loadURL(url).catch((err) => logLine('[gcd] notification open failed', err && err.name));
       }
     },
     route: (url) => {
-      diag('open.route', { url: redactUrl(url) });
       linkRouter.route(url);
     },
     focus: () => focusMainWindow(),
@@ -450,35 +410,20 @@ function bootstrap() {
         : process.argv[1]
           ? app.setAsDefaultProtocolClient(PROTOCOL_SCHEME, process.execPath, [path.resolve(process.argv[1])])
           : false;
-      diag('protocol.register', { scheme: PROTOCOL_SCHEME, ok });
     } catch (err) {
       logLine('[gcd] protocol registration failed', err && err.name);
-      diag('protocol.register', { scheme: PROTOCOL_SCHEME, ok: false, error: err && err.name });
     }
   }
 
   const toastRegistry = createToastRegistry({ newId: () => require('crypto').randomUUID() });
   const clickDeduper = createClickDeduper();
-  let lastClickAt = 0;
 
   /** One resolution point for a toast click, whichever path delivered it. */
   function handleToastClick(id, via) {
-    lastClickAt = Date.now();
     focusMainWindow(); // FR-05c step 1
     const record = id ? toastRegistry.get(id) : undefined;
-    diag('click.resolve', {
-      via,
-      hasId: Boolean(id),
-      recordFound: Boolean(record),
-      hasScope: Boolean(record && record.scope),
-      hasData: Boolean(record && record.data !== undefined),
-      windowVisible: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
-    });
     if (!id || !record) return;
-    if (!clickDeduper.accept(id)) {
-      diag('click.deduped', { via });
-      return;
-    }
+    if (!clickDeduper.accept(id)) return;
     // FR-05c step 2 (BUG-05): run Chat's own notificationclick handler with the data it attached.
     if (record.scope && swNotifications) {
       swNotifications.deliverClick(record.scope, {
@@ -504,19 +449,14 @@ function bootstrap() {
     const wire = (t, withXml) => {
       liveToasts.add(t);
       t.on('click', () => {
-        diag('toast.click', { inProcess: true });
         handleToastClick(id, 'click-event');
       });
       // Not released on `close`: on Windows `close` also fires when the pop-up merely times out into
       // the Action Center, where the toast can still be clicked. Released only on a same-tag
       // replacement (close() below), a failure, or by the size bound on liveToasts.
-      t.on('close', (event) => {
-        diag('toast.close', { reason: event && event.reason });
-      });
       t.on('failed', (_e, error) => {
         liveToasts.delete(t);
         console.error('[gcd] native toast failed:', error);
-        diag('toast.failed', { custom: withXml });
         // A rejected custom XML must never cost the user the notification: retry once with Electron's own.
         if (withXml && !replaced) {
           toast = make(false);
@@ -529,15 +469,6 @@ function bootstrap() {
     toast.show();
     // Bound the strong references (a long session raises many toasts).
     while (liveToasts.size > 100) liveToasts.delete(liveToasts.values().next().value);
-    diag('toast.show', {
-      custom: useXml,
-      silent,
-      hasScope: Boolean(scope),
-      scopeOrigin: scope ? redactUrl(scope) : undefined,
-      hasData: data !== undefined,
-      dataShape: data !== undefined ? describeShape(data) : undefined,
-      tagLen: typeof tag === 'string' ? tag.length : 0,
-    });
     // Handle for same-tag replacement (nativeToast.js): the newer toast closes this one.
     return {
       close: () => {
@@ -709,14 +640,6 @@ function bootstrap() {
     });
 
     mainWindow.webContents.on('dom-ready', injectNotificationBridge);
-    // BUG-05 attempt 2 diagnostics: what the app window did after a toast click (redacted paths only).
-    const afterClick = () => Date.now() - lastClickAt < 20000;
-    mainWindow.webContents.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => {
-      if (afterClick() && isMainFrame) diag('nav.start', { url: redactUrl(url), inPlace: isInPlace });
-    });
-    mainWindow.webContents.on('did-navigate-in-page', (_e, url, isMainFrame) => {
-      if (afterClick() && isMainFrame) diag('nav.in-page', { url: redactUrl(url) });
-    });
     mainWindow.webContents.on('did-finish-load', () => {
       injectNotificationBridge();
       // Seed the shared baseline from the count the title already shows (D1a).
@@ -784,10 +707,6 @@ function bootstrap() {
     // A toast click launches a second process with the activation URL in its argv (the in-process
     // `click` normally got there first; the deduper collapses the pair).
     const id = findActivationId(argv, PROTOCOL_SCHEME);
-    diag('second-instance', {
-      flags: Array.isArray(argv) ? argv.filter((a) => typeof a === 'string' && a.startsWith('-')).map((a) => a.split('=')[0]).join(' ') : '',
-      toastUrl: Boolean(id),
-    });
     if (id) {
       handleToastClick(id, 'second-instance');
     } else {
@@ -828,7 +747,6 @@ function bootstrap() {
       );
       return;
     }
-    diag('page.notification-clicked');
     focusMainWindow();
   });
 
@@ -858,7 +776,6 @@ function bootstrap() {
       scope = undefined;
     }
     if (scope === undefined) scope = event.senderFrame.origin + '/';
-    diag('page.show-notification', { scopeOrigin: redactUrl(scope), hasData: Boolean(payload && payload.data !== undefined) });
     toasts.show(payload, { scope });
   });
 
@@ -900,7 +817,6 @@ function bootstrap() {
       onShow: (payload, ctx) => toasts.show(payload, ctx),
       onOpen: (url, ctx) => notificationOpener.open(url, ctx),
       log: (msg, err) => console.error(msg, err === undefined ? '' : err),
-      diag,
     });
     // UI-04: the single download listener for app windows and the main window.
     persistentSession.on('will-download', downloadHandler);
@@ -912,7 +828,6 @@ function bootstrap() {
     if (findActivationId(process.argv, PROTOCOL_SCHEME)) {
       // This process was itself started by a toast click (no instance was running): the record died
       // with the previous process, so there is nothing to replay; the window just comes forward.
-      diag('cold-start.toast-launch');
       focusMainWindow();
     }
 

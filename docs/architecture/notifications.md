@@ -89,19 +89,8 @@ focused the window. That is why a click only ever brought the window forward and
 directly). A toast with `activationType="protocol"` does deliver the in-process `click` (pop-up and Action
 Center, as long as the object is referenced) and launches `<app>.exe <url>`. Verified end to end in a dev
 run against a loopback service worker (click from the Action Center -> worker started -> `notificationclick`
-replayed -> `clients.openWindow` intercepted -> app window navigated to the conversation URL). **Still
-not verified against a real signed-in Chat** (what Chat's handler does with the replay is [U]); the diagnostic
-trail below exists to settle that from one real run.
+replayed -> `clients.openWindow` intercepted -> app window navigated to the conversation URL). **Confirmed by the owner against a real signed-in Chat on build 0.0.1-96:** a click opens the conversation.
 
-### Diagnostic trail (temporary, BUG-05)
-
-`src/main/diagLog.js` appends one line per hop to `<userData>/logs/notification-diag.log` (256 KB cap, then
-truncated): process start/lock, protocol registration, toast shown, toast click, click resolution, worker
-start/send, worker-side replay (listener count, `data` shape), `clients.openWindow` / `focus` / `navigate` /
-`postMessage` calls seen during a replay, app navigation for 20 s after a click. Only event names, flags,
-counts and URL **paths with every id replaced by `:id`** are written; never message text, titles, bodies,
-cookies or tokens (`test/diagLog.test.js`). Remove or fold into the application log (section 5) once BUG-05
-is settled.
 - **No toast for the conversation being viewed (FR-05a):** the shell only surfaces calls Chat chose to
   make on this path, so Chat's own suppression stays in force. The fallback applies its own coarser rule.
 

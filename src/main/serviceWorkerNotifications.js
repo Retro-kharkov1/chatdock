@@ -1,7 +1,6 @@
 'use strict';
 
 const { isAllowedSender } = require('./originCheck');
-const { redactUrl } = require('./diagLog');
 
 // BUG-01-B, main-process half of the service-worker route (Electron 44.4.3).
 //
@@ -41,12 +40,10 @@ const CLICK_CHANNEL = 'notification:sw-click';
  * @param {(url: string, ctx: {scope: string}) => void} [opts.onOpen] A replayed click asked to open
  *   a URL (BUG-05). The URL is untrusted; the receiver decides where it goes.
  * @param {(msg: string, err?: unknown) => void} [opts.log]
- * @param {(event: string, fields?: object) => void} [opts.diag] BUG-05 attempt 2: temporary diagnostic
- *   trail (src/main/diagLog.js); receives event names and redacted shapes only, never message text.
  */
 function attachServiceWorkerNotifications(
   ses,
-  { preloadPath, allowedOrigins, onShow, onOpen = () => {}, log = () => {}, diag = () => {} }
+  { preloadPath, allowedOrigins, onShow, onOpen = () => {}, log = () => {} }
 ) {
   ses.registerPreloadScript({ type: 'service-worker', filePath: preloadPath });
 
@@ -68,12 +65,10 @@ function attachServiceWorkerNotifications(
     };
     worker.ipc.on(CHANNEL, (event, payload) => {
       const scope = allowedScope(event, 'notification');
-      diag('sw.show.received', { allowedScope: scope !== null });
       if (scope !== null) onShow(payload, { scope });
     });
     worker.ipc.on(OPEN_CHANNEL, (event, url) => {
       const scope = allowedScope(event, 'open request');
-      diag('sw.open.received', { allowedScope: scope !== null, url: typeof url === 'string' ? redactUrl(url, scope || undefined) : 'n/a' });
       if (scope !== null && typeof url === 'string') onOpen(url, { scope });
     });
   }
@@ -109,7 +104,6 @@ function attachServiceWorkerNotifications(
       const info = ses.serviceWorkers.getInfoFromVersionID(details.versionId);
       if (info && isAllowedSender(new URL(info.scope).origin, allowedOrigins)) {
         log(details.message);
-        diag('sw.console', { line: details.message.slice(0, 240) });
       }
     } catch {
       // unknown worker / unparseable scope: drop the line
@@ -132,18 +126,13 @@ function attachServiceWorkerNotifications(
     }
     if (!isAllowedSender(origin, allowedOrigins)) {
       log('[gcd] notification click not replayed: no allowed worker scope recorded');
-      diag('sw.click.deliver', { result: 'no-allowed-scope' });
       return;
     }
     try {
-      diag('sw.click.deliver', { result: 'starting-worker' });
       const worker = await ses.serviceWorkers.startWorkerForScope(scope);
-      diag('sw.click.deliver', { result: 'worker-started', hasWorker: Boolean(worker) });
       worker.send(CLICK_CHANNEL, record);
-      diag('sw.click.deliver', { result: 'sent' });
     } catch (err) {
       log('[gcd] notification click not replayed: worker unavailable', err && err.name);
-      diag('sw.click.deliver', { result: 'failed', error: err && err.name });
     }
   }
 
