@@ -43,8 +43,17 @@ own layout and z-index on every Google-side redesign, for no benefit; a second, 
 this app's control for theming, accessibility, and layout stability.
 
 - **Title**: "Google Chat Desktop — Settings"
-- **Size**: 380×460 CSS px, fixed (not resizable) — four short rows plus an About line do not need
-  reflow, and a fixed size avoids building responsive layout for content that never changes shape.
+- **Size**: width fixed at 380 (outer; not resizable by the user); **height follows the content**
+  (BUG-06). The renderer measures the `#app` root with a `ResizeObserver` and reports the height over
+  the one-way `settings:content-height` channel (`__gcdSettingsBridge.reportContentHeight`); main
+  validates it (finite positive number, sender must be this window), clamps it to the display's work
+  area minus the window chrome, and applies it in one `setBounds` call that keeps the top edge (the
+  window moves up only if the bottom would leave the work area). The window is created hidden and
+  shown on the first height report (centered, already at its final size; a 2 s fallback shows it if
+  the renderer never reports), so there is no jump on open. A vertical scrollbar can appear only if
+  the content is taller than the work area. Reason: toggles reveal extra lines (the muted note, the
+  start-at-login error with "Try again"), and a fixed 460 outer height left ~424 px of client area,
+  which the all-on state (~432 px, ~473 px with the error) overflowed.
 - **Window chrome**: standard OS title bar with a close (X) control only — no minimize, no maximize
   (`resizable: false, minimizable: false, maximizable: false`). It does **not** affect `isQuitting` and
   does **not** quit the app — quitting stays exclusively a tray "Exit" action per the
