@@ -92,6 +92,9 @@ createLinkRouter({ classifyLink, isOpenableExternalScheme, openCallWindow, openE
 - Call window: popups use `onWindowOpen`; navigations use the call window's own origin list (section 4).
   `openCallWindow` is the call window module's second-link entry (section 5).
 - All collaborators are injected, so the factory is unit-tested with fakes and no Electron.
+- FR-17 (2026-10-04) extends `route()` with two optional collaborators for Chat and Google-app links, applied
+  after the Meet test ([Google App Windows](google-app-windows.md) section 1). The call window's own routing
+  is unchanged.
 - `will-redirect` into Meet on the main window is not intercepted (NFR-07 scopes `will-navigate`); revisit
   only if Chat is observed to redirect to Meet.
 

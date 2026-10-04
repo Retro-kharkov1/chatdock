@@ -40,6 +40,8 @@ make a platform work that nobody will run was not justified.
   crashes, and a tray entry to bring the call window forward (FR-07, FR-16).
 - External links open in the system browser only for `http`, `https` and `mailto`; any other scheme is not
   opened (FR-16, NFR-07).
+- Links to Google services (Drive, Docs, Calendar and so on) opened in app-owned windows that share the signed-in
+  session, and a Chat conversation link loaded in the main window (FR-17).
 - A dedicated Settings window consolidating start-at-login, notification sound, mute, and icon
   blinking (FR-15).
 
@@ -51,8 +53,8 @@ make a platform work that nobody will run was not justified.
   directly. (Revisit only if the DOM/web-notification-bridge approach in FR-05 proves unable to
   detect new messages reliably — see FR-05's mechanism note and ADR-0002's fallback.)
 - Multi-account support, multi-window/tabs, or switching between different Chat spaces/URLs
-  beyond the one configured entry URL. (The Meet call window of FR-16 is the one accepted exception
-  to "one window"; it does not open other Google hosts in-app.)
+  beyond the one configured entry URL. (The accepted exceptions to "one window" are the Meet call window of
+  FR-16 and the per-link Google app windows of FR-17 (2026-10-04), which open only the fixed Google host list.)
 - Auto-update infrastructure (not requested; can be added later as a separate requirement).
 - Mobile builds.
 - Accessibility/localization work beyond what Chromium/the Google Chat web app already provides.
@@ -1400,6 +1402,170 @@ in the *Live call* definition, and the owner decides whether to accept that.
   assumption: yes.
 - Page load failure: see the open question above.
 
+### FR-17 — Links to Google services open in app-owned windows (UI-04)
+**Priority: Must** (owner request UI-04, 2026-10-04). Design: [Google App Windows](../architecture/google-app-windows.md),
+which holds the exact hostname lists; the security rule is the second exception in
+[project-rules.md](../architecture/project-rules.md).
+
+A link to a Google service clicked in Chat opens in a **separate app-owned window that shares the signed-in
+session** (FR-04), so the user does not sign in again.
+- **Which links:** `https` links whose hostname is exactly one on the fixed list (Drive, Docs/Sheets/Slides/Forms,
+  Calendar, and, as defaults awaiting owner confirmation, Gmail, Keep, Contacts, Sites; see the design). No
+  port, no userinfo, no suffix or wildcard match; a `www.google.com/url?q=` wrapper is unwrapped once.
+  `https://forms.gle/...` is followed only if it redirects to a listed host (a Google Forms page); otherwise it
+  opens in the system browser and no app window is ever shown.
+- **One window per link;** the same link again focuses the existing window; a link with a `#heading` to an open
+  document still on that page scrolls it to the heading. Closing a window destroys it and never quits the app or
+  touches the main window or tray.
+- **A Chat conversation link** (`https://chat.google.com`, conversation path) clicked in a Google app window loads
+  in the **main window** (shown and focused if hidden). Clicked in the main window itself, it only focuses the main
+  window (no reload) until the real pop-out addresses have been observed. Chat's own attachment/download opens
+  from the main window are **not** loaded into any window: they go to the save dialog; an attachment/download
+  address from an app window, and every other Chat-opened address, opens in the system browser. **Meet links**
+  still open the call window (FR-16).
+- **A short Forms link** (`forms.gle`) behaves the same whether clicked in Chat or inside a Google window.
+- **Everything else** (other hosts, `mailto`, other Google hosts not on the list such as Maps) opens in the system
+  browser by FR-16's scheme rule. Inside a Google window, navigation to a listed host (and
+  `accounts.google.com`, for signing in again) stays in the window; anything else goes to the system browser.
+- **Downloads** (for example Drive "Download", Docs export, and Chat attachments in the main window) always show a
+  save dialog and are never opened automatically. A download from an address the app does not allow is not silent:
+  a native "Download blocked" message appears (default button "Close", with a choice to open it in the browser);
+  a second blocked download while it is open does not stack a second message. A Google window that only ever
+  started a download closes by itself afterwards.
+- **Presenting:** Slides "Present" and Drive video can go fullscreen in a Google window.
+- The window contains only the Google page: no app-drawn UI, no preload, no camera/microphone/notification access.
+  Closing a window whose page objects to closing (unsaved changes) asks first through one native dialog; Exit from
+  the tray never waits.
+
+```
+Scenario: The owner's Drive example opens signed in
+  Given the app is signed in to Google Chat
+  And a chat message contains https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+  When the user clicks the link
+  Then a separate app window opens showing that Drive file
+  And no sign-in prompt appears
+  And the system browser is not opened
+  And the main window stays where it is   [manual-only]
+
+Scenario: A non-Google link still uses the system browser
+  When the user clicks https://example.org/ in Chat
+  Then it opens in the system browser and no app window is created   [automatable]
+
+Scenario: A lookalike host is not treated as Google
+  When the user clicks https://drive.google.com.evil.example/x or http://drive.google.com/x or https://drive.google.com:8443/x
+  Then each opens in the system browser and no app window is created   [automatable]
+
+Scenario: A Google host outside the list uses the browser
+  When the user clicks https://maps.google.com/ in Chat, or such a link inside a Google app window
+  Then it opens in the system browser and no app window is created   [automatable]
+
+Scenario: The same link twice
+  Given the Drive example is already open in an app window
+  When the user clicks it again
+  Then that window is raised and focused and no second window opens   [automatable]
+
+Scenario: A heading link to an open document
+  Given a Docs document is open in an app window and still on that page
+  When the user clicks a link to the same document with a #heading fragment
+  Then the same window is focused and scrolled to the heading and no second window opens   [automatable]
+
+Scenario: A short Forms link
+  When the user clicks a forms.gle link that redirects to docs.google.com/forms
+  Then the form opens in an app window and is shown only once it is on the listed host   [manual-only]
+  When the user clicks a forms.gle link that redirects anywhere else
+  Then no app window is shown and the destination opens in the system browser   [automatable]
+
+Scenario: A short Forms link that fails or never answers
+  When the user clicks a forms.gle link and the load fails or gives no answer within 10 seconds
+  Then no app window is ever shown and the original link opens in the system browser   [automatable]
+
+Scenario: A short Forms link clicked twice, or inside a Google window
+  When the user clicks the same forms.gle link again while it is still being resolved
+  Then no second window is created and nothing is shown or focused until it resolves   [automatable]
+  When a forms.gle link is clicked inside a Google window
+  Then it follows the same rule as from Chat, in a new window, and the current window is not navigated away   [automatable]
+
+Scenario: A Chat conversation link opens in the main window
+  Given the main window is hidden in the tray
+  When a link to a Chat conversation (https://chat.google.com/room/...) is opened from a Google window
+  Then the main window loads it, is shown and focused, and the system browser is not opened   [automatable]
+
+Scenario: A Chat conversation link clicked in the main window
+  When a conversation-shaped Chat address is opened by the main window itself (a Chat popup)
+  Then the main window is shown and focused, its current view is not reloaded, and the system browser is not opened   [automatable for the routing, manual-only for the real address]
+
+Scenario: A Chat attachment does not take over the main window
+  When Chat opens an attachment or download address (for example a get_attachment_url address)
+  Then the main window keeps its current view and a save dialog appears   [automatable for the routing, manual-only for the real address]
+
+Scenario: An attachment address from a Google window
+  When a link to a Chat attachment or download address is clicked inside a Google window
+  Then it opens in the system browser and the main window is untouched   [automatable]
+
+Scenario: Download asks where to save
+  Given a Drive file is open in an app window
+  When the user chooses Download
+  Then a save dialog appears and nothing is opened after the download finishes   [manual-only]
+
+Scenario: An export download asks where to save
+  Given a Docs document is open in an app window
+  When a download starts from the page (for example Download as)
+  Then a save dialog appears and nothing is opened afterwards   [automatable with a stand-in page; real Docs manual-only]
+
+Scenario: A large-file virus-scan confirm
+  Given a large Drive file whose download first shows Google's "can't scan this file for viruses" page
+  When the user chooses "Download anyway"
+  Then the save dialog appears and the file downloads, nothing is opened afterwards   [manual-only; automatable with a stand-in for the routing rule]
+
+Scenario: A download link that leaves an empty window
+  When a link such as https://drive.google.com/uc?export=download&id=... is clicked in Chat
+  Then a save dialog appears and, once the download ends, the Google window that only started it closes by itself   [automatable with a stand-in; real Drive manual-only]
+
+Scenario: A disallowed download is not silent
+  Given a download whose address, or any redirect step of it, is outside the allowed hosts
+  Then it is cancelled and a "Download blocked" message appears, whose default button is "Close", offering to open it in the browser   [automatable]
+
+Scenario: Closing the blocked-download message
+  Given a "Download blocked" message is shown
+  When the user presses Enter, Esc or "Close"
+  Then it closes and no browser is opened   [automatable]
+  And a second blocked download while it is open does not show a second message   [automatable]
+  And if the window it belongs to is closed meanwhile the message goes away, and if that window is hidden the message still appears on top   [automatable with stand-ins]
+
+Scenario: Signing in again inside a Google window
+  Given a Google window is showing a document and the session needs re-authentication
+  When the page goes to accounts.google.com
+  Then the sign-in stays inside the same window and the system browser is not opened   [automatable with a stand-in; real sign-in manual-only]
+
+Scenario: Closing a window whose page objects
+  Given a Google window whose page asks to confirm leaving (it registers a beforeunload objection)
+  When the user closes the window with the X button
+  Then one "Close this window?" message appears
+  And choosing "Keep window open" leaves the window as it was, and choosing "Close window" destroys it   [automatable with a stand-in page; real unsaved Docs changes manual-only]
+
+Scenario: Closing a window whose page does not object
+  When the user closes a Google window whose page raises no objection (or does not respond within about 3 seconds)
+  Then it closes with no message   [automatable]
+
+Scenario: Camera, microphone and notifications are refused
+  When a page in a Google window asks for the camera, microphone, screen capture or notifications
+  Then the request is denied and no picker or prompt appears   [automatable]
+
+Scenario: Copy link and Present work in Docs and Drive
+  When the user chooses Copy link, or Present in Slides, in a Docs or Drive window
+  Then the link is copied, or the slideshow enters fullscreen and Esc leaves it   [manual-only]
+
+Scenario: Exit is never blocked
+  Given one or more app windows are open
+  When the user chooses Exit from the tray
+  Then the application quits without a prompt   [automatable]
+```
+
+**Open questions (owner, all with a default in force):** (1) Gmail, Keep, Contacts and Sites are included by the
+orchestrator's choice, and `g.co`, Maps, Apps Script, Looker Studio and Groups stay in the system browser;
+confirm or change. (2) Google links clicked inside the Meet call window stay unchanged (system browser).
+(3) Main-window downloads now always ask where to save. See the design's open questions.
+
 ## Non-Functional Requirements
 
 ### NFR-01 — Cross-platform parity, with explicit exceptions
@@ -1813,6 +1979,7 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
 | FR-14 | Attention indicator on unread: blinking tray icon and flashing taskbar button (amended 2026-09-30) |
 | FR-15 | Settings window |
 | FR-16 | Google Meet calls in an app-owned call window (new 2026-09-30) |
+| FR-17 | Links to Google services open in app-owned windows (new 2026-10-04, UI-04) |
 | NFR-01 | Cross-platform parity, with explicit exceptions |
 | NFR-02 | Resource usage for an always-running tray app |
 | NFR-03 | Startup time |
@@ -1843,6 +2010,10 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
 
 ## Change log
 
+- **2026-10-04 (UI-04, FR-17)** — Owner request: links to Google services open in app-owned windows sharing
+  the signed-in session instead of the system browser; Chat links load in the main window. FR-17 added; the
+  "other Google hosts in-app" scope exclusion narrowed to the fixed list; the project rules' security baseline
+  gained a second exception. Design: [google-app-windows.md](../architecture/google-app-windows.md).
 - **2026-10-02 (Meet scope cut to the minimum)** — The Meet design set had grown well beyond what the owner
   asked for (23 mockup states, an app-owned view inside the call window, a status strip, a crash panel).
   The owner approved cutting it, under the *Design scaled to the wrapper* project rule (only surfaces the

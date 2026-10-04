@@ -18,7 +18,11 @@ doc for the *why*; this doc covers the concrete configuration). Rules cited as *
   are destroyed on close and never replace it: the **Settings window** (FR-15, local bundled HTML, own
   preload; see [Tray & Lifecycle](tray-lifecycle.md)) and the **Meet call window** (FR-16, third-party
   Meet page only: no preload and no app-owned view; its crash and close prompts are native dialogs; see
-  [Meet Call Window](meet-call-window.md)). At most one of each exists. While a screen share is being
+  [Meet Call Window](meet-call-window.md)). At most one of each exists. Links to Google services (Drive, Docs,
+  Calendar and so on) open in additional **Google app windows**, one per link, no preload, sharing the same
+  session partition ([Google App Windows](google-app-windows.md), FR-17, 2026-10-04); a Chat conversation link
+  opened from such a window loads in the main window (attachments go to the save dialog, other Chat addresses to
+  the system browser). The router order is Meet, Chat, Google app, system browser. While a screen share is being
   chosen, a third short-lived window exists: the modal source picker (a child of the call window, local
   HTML, own preload).
 - **Main renderer**: the main `BrowserWindow`, loading
