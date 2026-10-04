@@ -114,6 +114,21 @@
     if (key === 'notificationsMuted') updateBlinkNote();
   });
 
+  // BUG-06: report the content height to main (which sizes the window to it). Started only after
+  // the first real state is rendered, so the window is never shown at the loading-state height.
+  let lastReported = null;
+  function reportHeight() {
+    const height = Math.ceil(appRoot.getBoundingClientRect().height);
+    if (height > 0 && height !== lastReported) {
+      lastReported = height;
+      bridge.reportContentHeight(height);
+    }
+  }
+  function startReportingHeight() {
+    reportHeight();
+    new ResizeObserver(reportHeight).observe(appRoot);
+  }
+
   try {
     const all = await bridge.getAll();
     setSwitch('startAtLogin', all.startAtLogin);
@@ -125,9 +140,11 @@
     about.hidden = false;
     enableAllControls();
     appRoot.setAttribute('aria-busy', 'false');
+    startReportingHeight();
   } catch (err) {
     about.textContent = 'Settings unavailable — something went wrong loading preferences.';
     about.hidden = false;
     console.error('[gcd-settings] failed to load settings', err);
+    startReportingHeight();
   }
 })();

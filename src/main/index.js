@@ -75,7 +75,7 @@ function bootstrap() {
   const { createToastService } = require('./nativeToast');
   const { attachServiceWorkerNotifications } = require('./serviceWorkerNotifications');
   const { createSettingsStore, getSettingsPath } = require('./settingsStore');
-  const { openSettingsWindow, getSettingsWindow } = require('./settingsWindow');
+  const { openSettingsWindow, getSettingsWindow, registerSettingsWindowIpc } = require('./settingsWindow');
   const trayBlink = require('./trayBlink');
   const { readBuildInfo, buildVersionLabel } = require('./version');
   const { classifyLink, isOpenableExternalScheme } = require('./meetLink');
@@ -786,6 +786,10 @@ function bootstrap() {
     const all = settingsStore.getAll();
     return { ...all, version: versionLabel };
   });
+
+  // BUG-06: content-height reports from the Settings renderer (validated + sender-checked inside).
+  // `screen` is only usable once the app is ready; the handler runs long after, so resolve lazily.
+  registerSettingsWindowIpc(ipcMain, { screen: { getDisplayMatching: (b) => require('electron').screen.getDisplayMatching(b) } });
 
   ipcMain.handle('settings:set', async (event, payload) => {
     const { key, value } = payload || {};

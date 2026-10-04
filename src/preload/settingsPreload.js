@@ -9,6 +9,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('__gcdSettingsBridge', {
   getAll: () => ipcRenderer.invoke('settings:get'),
   set: (key, value) => ipcRenderer.invoke('settings:set', { key, value }),
+  // BUG-06: one-way, number only; main validates and clamps it (never trusts the value).
+  reportContentHeight: (height) => ipcRenderer.send('settings:content-height', height),
   onChanged: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('settings:changed', listener);
