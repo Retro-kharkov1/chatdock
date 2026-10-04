@@ -97,6 +97,105 @@ function installPatches() {
       };
     }
   }
+
+  // 3) BUG-05 attempt 2 DIAGNOSTICS (temporary, see src/main/diagLog.js). Only event names, counts and
+  // redacted URL paths go to the console - never message text, titles or ids. Each line is picked up
+  // by the main process through the `[gcd-sw]` console prefix.
+  if (!self.__gcdDiagInstalled) {
+    self.__gcdDiagInstalled = true;
+    const KNOWN = ['', 'room', 'dm', 'space', 'chat', 'app', 'u', 'mole', 'thread', 'frame', 'api', 'home', 'welcome'];
+    const d = (msg) => {
+      try {
+        console.log('[gcd-sw] diag ' + msg);
+      } catch (e) {
+        // never break the worker
+      }
+    };
+    const redact = (u) => {
+      try {
+        const x = new URL(String(u), self.registration.scope);
+        const keys = [];
+        x.searchParams.forEach((_v, k) => keys.push(k));
+        return x.origin + x.pathname.split('/').map((s) => (KNOWN.indexOf(s) !== -1 ? s : ':id')).join('/') +
+          (keys.length ? '?' + keys.slice(0, 8).join('&') : '') + (x.hash ? '#frag' : '');
+      } catch (e) {
+        return '<unparseable>';
+      }
+    };
+    const shape = (v, depth) => {
+      if (v === null) return 'null';
+      const t = typeof v;
+      if (t === 'string') return /^(https?:\/\/|\/)/.test(v) ? 'url(' + redact(v) + ')' : 'str(' + v.length + ')';
+      if (t !== 'object') return t;
+      if (depth >= 3) return '{...}';
+      if (Array.isArray(v)) return '[' + v.length + ']';
+      return '{' + Object.keys(v).slice(0, 12).map((k) => k.slice(0, 24) + ':' + shape(v[k], depth + 1)).join(',') + '}';
+    };
+    self.__gcdDiag = { d, redact, shape };
+    const active = () => typeof self.__gcdSwReplayUntil === 'number' && Date.now() < self.__gcdSwReplayUntil;
+    self.__gcdListenerCount = 0;
+    const origAdd = self.addEventListener;
+    if (typeof origAdd === 'function') {
+      self.addEventListener = function (type) {
+        if (type === 'notificationclick') {
+          self.__gcdListenerCount += 1;
+          d('listener added type=notificationclick total=' + self.__gcdListenerCount);
+        }
+        return origAdd.apply(this, arguments);
+      };
+    }
+    if (clientsProto && typeof clientsProto.matchAll === 'function') {
+      const origMatch = clientsProto.matchAll;
+      clientsProto.matchAll = function (opts) {
+        const p = origMatch.apply(this, arguments);
+        if (active()) {
+          d('clients.matchAll during replay');
+          try {
+            p.then((list) => d('clients.matchAll resolved count=' + (list ? list.length : -1)), () => d('clients.matchAll rejected'));
+          } catch (e) {
+            // diagnostics only
+          }
+        }
+        return p;
+      };
+    }
+    const clientProto = self.Client && self.Client.prototype;
+    if (clientProto && typeof clientProto.postMessage === 'function') {
+      const origPost = clientProto.postMessage;
+      clientProto.postMessage = function (msg) {
+        if (active()) d('client.postMessage during replay shape=' + shape(msg, 0));
+        return origPost.apply(this, arguments);
+      };
+    }
+    // observe focus/navigate/openWindow reaching the (already patched) methods
+    if (clientsProto && typeof clientsProto.openWindow === 'function') {
+      const patchedOpen = clientsProto.openWindow;
+      clientsProto.openWindow = function (url) {
+        d('clients.openWindow called replay=' + active() + ' url=' + redact(url));
+        return patchedOpen.apply(this, arguments);
+      };
+    }
+    if (wcProto && typeof wcProto.focus === 'function') {
+      const patchedFocus = wcProto.focus;
+      wcProto.focus = function () {
+        d('windowClient.focus called replay=' + active());
+        return patchedFocus.apply(this, arguments);
+      };
+    }
+    if (wcProto && typeof wcProto.navigate === 'function') {
+      const patchedNav = wcProto.navigate;
+      wcProto.navigate = function (url) {
+        d('windowClient.navigate called replay=' + active() + ' url=' + redact(url));
+        return patchedNav.apply(this, arguments);
+      };
+    }
+    self.addEventListener('error', function (e) {
+      if (active()) d('worker error during replay name=' + (e && e.error && e.error.name));
+    });
+    self.addEventListener('unhandledrejection', function (e) {
+      if (active()) d('unhandled rejection during replay name=' + (e && e.reason && e.reason.name));
+    });
+  }
 }
 
 function replayClick(record) {
@@ -121,7 +220,13 @@ function replayClick(record) {
     // promises are simply allowed to run on.
     Object.defineProperty(event, 'waitUntil', { value: function () {} });
     self.__gcdSwReplayUntil = Date.now() + 10000;
+    const dg = self.__gcdDiag;
+    if (dg) {
+      dg.d('replay start listeners=' + self.__gcdListenerCount + ' onnotificationclick=' + (typeof self.onnotificationclick) +
+        ' dataShape=' + dg.shape(notification.data, 0) + ' tagLen=' + notification.tag.length);
+    }
     self.dispatchEvent(event);
+    if (dg) dg.d('replay dispatched');
   } catch (err) {
     console.warn('[gcd-sw] notificationclick replay failed', err && err.name);
   }

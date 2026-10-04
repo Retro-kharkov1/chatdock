@@ -67,9 +67,41 @@ Everything Electron-shaped is injected. Rules, in the order they are applied to 
   ("N more notifications"), which is itself mute-aware.
 - **Mute (FR-12):** a muted request creates no toast but still counts as an arrival (the attention
   controller applies mute itself). **Sound (FR-11):** `silent` is forced when sound is off.
-- **Click:** the toast's `click` calls `focusMainWindow()` (restore, show, focus), then replays the click
-  into the originating worker (BUG-05, above).
-  Live toast objects are held until closed so they are not garbage-collected before a click.
+- **Click:** every Windows toast is built with a custom toast XML carrying `activationType="protocol"` and a
+  launch URL `gcd-chat://toast/<id>` (`gcd-chat-dev` in a dev run; `src/main/toastActivation.js`,
+  `src/main/appIdentity.js`). The record (worker scope + Chat's `data`) is kept in memory under `<id>`. A click
+  resolves through one function (`handleToastClick` in `index.js`): focus the window, then replay the click
+  into the originating worker (BUG-05, above). Two signals can deliver it and a 1.5 s de-duper collapses
+  the pair: the in-process `click` event of the (still referenced) `Notification`, and the `second-instance`
+  argv carrying the URL (the only signal a cold start has; the record is gone then, so it only focuses).
+  Toast objects are **not** released on `close` (Windows fires `close` when the pop-up merely times out into
+  the Action Center, where the toast is still clickable); they are bounded to the newest 100 and released on
+  same-tag replacement or failure. A rejected custom XML falls back to Electron's own toast.
+
+### Why attempt 1 failed (measured 2026-10-02, Electron 44.4.3, Windows 11)
+
+Attempt 1 kept the default toast. A default (activationType `foreground`) toast **never delivers a click to
+the app**: no `click` event on the `Notification` (kept alive or not), no `Notification.handleActivation`
+callback, from the live pop-up or from the Action Center. Windows instead COM-activates the app as
+`<app>.exe -Embedding`, a new process that quits on the single-instance lock; `second-instance` then
+focused the window. That is why a click only ever brought the window forward and the SW replay never ran
+(the replay was never reached; it was verified only against a loopback worker, by calling the function
+directly). A toast with `activationType="protocol"` does deliver the in-process `click` (pop-up and Action
+Center, as long as the object is referenced) and launches `<app>.exe <url>`. Verified end to end in a dev
+run against a loopback service worker (click from the Action Center -> worker started -> `notificationclick`
+replayed -> `clients.openWindow` intercepted -> app window navigated to the conversation URL). **Still
+not verified against a real signed-in Chat** (what Chat's handler does with the replay is [U]); the diagnostic
+trail below exists to settle that from one real run.
+
+### Diagnostic trail (temporary, BUG-05)
+
+`src/main/diagLog.js` appends one line per hop to `<userData>/logs/notification-diag.log` (256 KB cap, then
+truncated): process start/lock, protocol registration, toast shown, toast click, click resolution, worker
+start/send, worker-side replay (listener count, `data` shape), `clients.openWindow` / `focus` / `navigate` /
+`postMessage` calls seen during a replay, app navigation for 20 s after a click. Only event names, flags,
+counts and URL **paths with every id replaced by `:id`** are written; never message text, titles, bodies,
+cookies or tokens (`test/diagLog.test.js`). Remove or fold into the application log (section 5) once BUG-05
+is settled.
 - **No toast for the conversation being viewed (FR-05a):** the shell only surfaces calls Chat chose to
   make on this path, so Chat's own suppression stays in force. The fallback applies its own coarser rule.
 

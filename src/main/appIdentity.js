@@ -25,4 +25,16 @@ function resolveAppUserModelId({ isPackaged }) {
   return isPackaged ? APP_ID : `${APP_ID}${DEV_SUFFIX}`;
 }
 
-module.exports = { resolveAppUserModelId };
+// BUG-05 attempt 2: the URL scheme a toast's protocol activation launches (toastActivation.js). A dev run
+// gets its own scheme so it never takes over the installed app's registration.
+const PROTOCOL_SCHEME = 'gcd-chat';
+
+/**
+ * @param {{isPackaged: boolean}} opts `app.isPackaged`.
+ * @returns {string}
+ */
+function resolveProtocolScheme({ isPackaged }) {
+  return isPackaged ? PROTOCOL_SCHEME : `${PROTOCOL_SCHEME}-dev`;
+}
+
+module.exports = { resolveAppUserModelId, resolveProtocolScheme };
