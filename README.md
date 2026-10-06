@@ -29,7 +29,7 @@ If this app saves you time, consider supporting its development:
 ## Install
 
 Download the latest installer for your platform from the
-[Releases](https://github.com/Retro-kharkov1/google-chat-desktop/releases) page.
+[Releases](https://github.com/Retro-kharkov1/chatdock/releases) page.
 
 - **Windows**: run `Google Chat Desktop Setup <version>.exe`.
 - **Linux**: either run the `.AppImage` directly (mark it executable first:

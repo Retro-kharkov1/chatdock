@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "description": "Electron desktop client for Google Chat - persistent Google login, native system notifications, tray-minimize.",
   "author": "Retro-kharkov1",
-  "homepage": "https://github.com/Retro-kharkov1/google-chat-desktop",
+  "homepage": "https://github.com/Retro-kharkov1/chatdock",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Retro-kharkov1/google-chat-desktop.git"
+    "url": "https://github.com/Retro-kharkov1/chatdock.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Retro-kharkov1/chatdock/issues"
   },
   "private": true,
   "license": "MIT",
@@ -41,7 +44,9 @@
       "build-info.json"
     ],
     "publish": {
-      "provider": "github"
+      "provider": "github",
+      "owner": "Retro-kharkov1",
+      "repo": "chatdock"
     },
     "win": {
       "target": [
