@@ -1,46 +1,18 @@
-# Build for Linux in Docker
+# Linux package notes
 
-Builds the Linux artifacts (AppImage and deb, x64) from the current working tree inside a
-container. The only host requirement is Docker (Docker Desktop with the WSL2 backend on Windows).
+How to build: see [Build with Docker](build-with-docker.md)
+(`scripts/docker-build.sh linux` or `scripts/docker-build.ps1 -Target linux`). That guide covers
+prerequisites, versioning and troubleshooting; this page keeps the notes about the Linux
+artifacts themselves.
 
-## Command
+The builder applies the existing `build` / `linux` config in `package.json`; there is no second
+build definition. The one Linux-only difference is `-c.productName=GoogleChatDesktop` on the
+command line (see "Install path and names"), set in `build/docker/entrypoint.sh` and in the Linux
+matrix entry of `release.yml`.
 
-```powershell
-powershell -File scripts/build-linux-docker.ps1
-```
-
-Optional: `-Image` selects another builder image. There is no version parameter: the version always
-comes from GitVersion (see "Version" below).
-
-Host requirements: Docker, Node.js and the .NET SDK (the last only to run GitVersion on the host).
-
-Output goes to `release/` (git-ignored; the script first removes only previous Linux artifacts - `*.AppImage`, `*.deb`, `latest-linux.yml`, `linux-unpacked` - and leaves other platforms' files such as the Windows installer): `Google-Chat-Desktop-<version>.AppImage`,
-`google-chat-desktop_<version>_amd64.deb`, `latest-linux.yml`. For example
-`Google-Chat-Desktop-0.0.1-61.AppImage` and `google-chat-desktop_0.0.1-61_amd64.deb`.
-
-## Version
-
-The same GitVersion configuration as CI (`GitVersion.yml`; tool pinned in `dotnet-tools.json`) runs on
-the **host**, because the container has neither `.git` nor the .NET SDK. The script runs
-`node scripts/generate-build-info.js`, which writes `build-info.json`; that file is copied into the
-container and `node scripts/build.js --from-build-info` stamps its `version` into the artifact names,
-`latest-linux.yml` and `app.getVersion()`, then fails the build if any produced name or manifest lacks it.
-If GitVersion cannot run, the script stops before Docker starts. Full flow:
-[packaging-release.md](../architecture/packaging-release.md), "Version flow".
-
-## How it works
-
-- Uses the existing `build` / `linux` config in `package.json`; no second build definition. The one
-  Linux-only difference is `-c.productName=GoogleChatDesktop` on the command line (see
-  "Install path and names").
-- Image: `electronuserland/builder:24`, per
-  <https://www.electron.build/docs/features/multi-platform-build/>.
-- The repo is mounted read-only and copied into the container without `node_modules/`,
-  `release/` and `.git/` (`build-info.json` is copied on purpose, see "Version"). Dependencies are installed in the container
-  (`npm ci`), so Windows-built `node_modules` are never reused and CRLF/permission issues of the
-  bind mount do not affect the build. `npm test` runs before packaging.
-- Electron and electron-builder downloads are cached in the named volumes
-  `gcd-electron-cache`, `gcd-electron-builder-cache` and `gcd-npm-cache`.
+> The older `scripts/build-linux-docker.ps1` (version resolved on the host, Docker needing Node and
+> .NET on the host) is superseded by `scripts/docker-build.ps1` and kept only until the tests that
+> still reference it are updated.
 
 ## Release notes: unsigned artifacts
 
@@ -50,7 +22,7 @@ in a signed apt repository, so `electron-updater` update verification relies on 
 
 ## Notes on running the result
 
-Linux verification target: WSL2 with WSLg on the owner's workstation, see
+Linux verification target: WSL2 + WSLg on Windows 11, see
 [verify-on-linux-wslg.md](verify-on-linux-wslg.md) (including what it cannot prove).
 
 - The deb installs to `/opt/GoogleChatDesktop/` (no spaces) and ships `chrome-sandbox`, which the
@@ -65,7 +37,7 @@ Linux verification target: WSL2 with WSLg on the owner's workstation, see
   `productName` feeds that; `linux.executableName` changes the binary, desktop-entry and icon
   names only. The earlier `/opt/Google Chat Desktop/` path made the SUID sandbox launch die with
   `failed to execvp: /opt/Google`. Linux builds therefore pass `-c.productName=GoogleChatDesktop`
-  (in `scripts/build-linux-docker.ps1` and the Linux matrix entry of `release.yml`). The Windows
+  (in `build/docker/entrypoint.sh` and the Linux matrix entry of `release.yml`). The Windows
   build does not pass it, so the NSIS installer, install directory and `productName` are unchanged.
 - The runtime app name (and so the user-data directory) comes from `package.json`, which the
   override does not touch. The desktop entry keeps `Name=Google Chat Desktop` via

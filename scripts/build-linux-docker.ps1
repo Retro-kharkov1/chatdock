@@ -2,6 +2,11 @@
 .SYNOPSIS
   Builds the Linux artifacts (AppImage + deb, x64) inside an electron-builder Docker container.
 
+  SUPERSEDED by scripts/docker-build.ps1 / scripts/docker-build.sh (docs/development/build-with-docker.md),
+  which need only Docker on the host and also build the Windows installer. This script is kept
+  because test/buildVersionWiring.test.js and test/packaging-config.test.js still assert on it;
+  remove it together with those assertions.
+
 .DESCRIPTION
   Reuses the electron-builder config already in package.json ("build" / "linux") - no parallel
   build definition. Uses the image documented at

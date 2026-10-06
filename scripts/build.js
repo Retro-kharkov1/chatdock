@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { generateBuildInfo, OUTPUT_PATH } = require('./generate-build-info.js');
+const { generateHelp } = require('./build-help.js');
 const { findArtifactsMissingVersion, VersionResolutionError } = require('./lib/versionResolver.js');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -60,6 +61,10 @@ function main() {
     return fail(err.message);
   }
   console.log(`[build] version ${info.version} (${info.shortSha}, ${info.buildSource})`);
+
+  // UI-06: regenerate the Help page from docs/user-guide.md so the package carries the current guide.
+  // (docs/ is not packaged; src/renderer/help/help.html is, through the `src/**/*` files entry.)
+  generateHelp();
 
   const before = snapshot();
   const cli = require.resolve('electron-builder/out/cli/cli.js');

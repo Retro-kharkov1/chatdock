@@ -1,0 +1,4 @@
+# Scripts executed on Linux (inside the Docker builder, or on a Linux host) must keep LF endings
+# even when checked out on Windows with core.autocrlf.
+*.sh text eol=lf
+build/docker/Dockerfile text eol=lf

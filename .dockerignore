@@ -1,0 +1,17 @@
+# The builder image never contains the repository (the source is mounted at run time), and its
+# build context is build/docker only. This file protects any `docker build` run from the repo root.
+node_modules
+**/node_modules
+release
+dist
+.git
+build-info.json
+spike/**/.profile
+spike/**/out
+.env
+.env.*
+*.pem
+*.pfx
+*.p12
+*.key
+*.log

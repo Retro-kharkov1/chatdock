@@ -16,7 +16,8 @@ npm test        # run the test suite
 
 Building installers is described in [packaging-release.md](docs/architecture/packaging-release.md)
 (`npm run dist`, needs the .NET SDK for versioning) and
-[build-linux-in-docker.md](docs/development/build-linux-in-docker.md) (Linux artifacts in a container).
+[build-with-docker.md](docs/development/build-with-docker.md) (Windows and Linux artifacts in a
+container, no local toolchain needed).
 
 ## Tests
 
