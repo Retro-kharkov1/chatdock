@@ -95,7 +95,7 @@ touches the `close` handler at all.** Left at Electron's default, the quit-only-
 above is false the moment the app launches, regardless of how correct the tray/close wiring is,
 because a second, unguarded quit path already exists by default before this app adds a single line
 of its own menu code. This is why [requirements.md](../business/requirements.md) ("No native OS
-application menu — decided") rejected `ux-ui-designer`'s proposed native `Settings…` menu entry
+application menu — decided") rejected the designer's proposed native `Settings…` menu entry
 outright rather than accepting a hand-built menu template that simply omits a Quit item: a template
 without Quit is still a menu, still one edit away from regaining one, and still adds a discoverable
 path this app does not want. The only guarantee strong enough to satisfy the *Quit only from the tray* project rule is
@@ -124,7 +124,7 @@ installed, these keyboard shortcuts stop reaching `webContents.copy()`/`paste()`
 context-menu copy/paste on an editable field is unaffected — that is Chromium's own native context
 menu and does not depend on Electron's application menu at all; only the *keyboard* accelerators do).
 For a chat app, losing Ctrl+C/Ctrl+V in the compose box or in a copied message is a real, user-visible
-regression the owner would hit immediately, not a theoretical one.
+regression the maintainer would hit immediately, not a theoretical one.
 
 **Fix, without reintroducing any menu:** bind these five/six accelerators explicitly via
 `before-input-event` on the main window's `webContents`, dispatching straight to the corresponding
@@ -162,12 +162,13 @@ Context menu, in order:
 
 | Entry | Type | Action | Why it earns its place |
 |---|---|---|---|
-| Show call window — **conditional on a call window existing; owner-approved 2026-10-01 (P3, FR-07)** | action, first entry | present only while a call window exists, **in every one of its states** (opening, error, crashed, sign-in, Meet page); restores, raises and focuses the **call window**, and **when the source picker is open focus goes to the picker**; never touches the main window. **No tooltip change.** The menu is rebuilt (`refreshMenu`, event-driven, not from the blink tick, so NFR-06 holds) when the call window is created and destroyed. See [meet-call-window.md](meet-call-window.md) §4 and §7. | Buried call windows are otherwise reachable only by the OS window switcher. Additive to FR-07's "at minimum" list; recorded in FR-07. |
-| Show/Hide Google Chat | action | toggles the **main window only** (`toggleShowHide` in `src/main/index.js`): `hide()` vs restore/`show()`/`focus()`. While a call window is open it never hides, closes or focuses the call (recommended default, not an owner decision; see [meet-call-window.md](meet-call-window.md)). | FR-07's explicit requirement: close-to-tray removes the taskbar path back in on some platforms/configs, so the tray needs its own way in. |
-| Mute notifications | checkbox | see "Notification sound, mute, and icon blinking" below | Owner-requested (FR-12). The **only** preference checkbox still on the tray — Start at login and Notification sound moved to the Settings window (FR-15); see that section. |
+| Show call window — **conditional on a call window existing; maintainer-approved 2026-10-01 (P3, FR-07)** | action, first entry | present only while a call window exists, **in every one of its states** (opening, error, crashed, sign-in, Meet page); restores, raises and focuses the **call window**, and **when the source picker is open focus goes to the picker**; never touches the main window. **No tooltip change.** The menu is rebuilt (`refreshMenu`, event-driven, not from the blink tick, so NFR-06 holds) when the call window is created and destroyed. See [meet-call-window.md](meet-call-window.md) §4 and §7. | Buried call windows are otherwise reachable only by the OS window switcher. Additive to FR-07's "at minimum" list; recorded in FR-07. |
+| Show/Hide Google Chat | action | toggles the **main window only** (`toggleShowHide` in `src/main/index.js`): `hide()` vs restore/`show()`/`focus()`. While a call window is open it never hides, closes or focuses the call (recommended default, not a maintainer decision; see [meet-call-window.md](meet-call-window.md)). | FR-07's explicit requirement: close-to-tray removes the taskbar path back in on some platforms/configs, so the tray needs its own way in. |
+| Back to Chat — **conditional on the main window's sign-in mode being on (FR-19); shipped** | action, directly after Show/Hide Google Chat | present only while the sign-in mode is on; cancels the mode, loads the Chat start page (overriding the page's `beforeunload`), then shows, raises and focuses the main window. No tooltip change, no confirm. Rebuilt event-driven on mode change, not from the blink tick. Wording spec only; see [sign-in-flow.md](sign-in-flow.md) section 3a. | The only way out of a wrong page in the sign-in window, which has no address bar or in-page control. |
+| Mute notifications | checkbox | see "Notification sound, mute, and icon blinking" below | Maintainer-requested (FR-12). The **only** preference checkbox still on the tray — Start at login and Notification sound moved to the Settings window (FR-15); see that section. |
 | Settings… | action | opens/focuses the Settings `BrowserWindow` — see "Settings window (FR-15)" below | New entry point for Start at login, Notification sound, and Icon blinking (the setting label is under redesign, see [design docs](../design/00-settings-surface-spec.md)), added so the tray menu stops growing with every new preference (FR-15). |
-| Exit | action | `app.quit()` (`isQuitting` is set by `before-quit`, see above). **Owner-approved 2026-10-01 (P2, FR-07):** if a call window exists, Exit first **probes it as a close attempt**; only if Meet's page objects (a live call) does an asynchronous native confirm "Exit Google Chat Desktop?" (`dialog.showMessageBox`) appear, and `app.quit()` then runs only on "Exit"; a non-objecting call window is destroyed and Exit proceeds with no dialog; a crashed call window (its crash dialog open) never blocks Exit; see [meet-call-window.md](meet-call-window.md) §8. | The **only** path that terminates the process — no in-page Exit control exists (the *Quit only from the tray* project rule, FR-07). |
-| *(separator)* — build/version label | disabled, non-clickable | none | Owner-requested mid-incident (2026-09-22), see "Build/version diagnostic line" below (FR-13). |
+| Exit | action | `app.quit()` (`isQuitting` is set by `before-quit`, see above). **Maintainer-approved 2026-10-01 (P2, FR-07):** if a call window exists, Exit first **probes it as a close attempt**; only if Meet's page objects (a live call) does an asynchronous native confirm "Exit Google Chat Desktop?" (`dialog.showMessageBox`) appear, and `app.quit()` then runs only on "Exit"; a non-objecting call window is destroyed and Exit proceeds with no dialog; a crashed call window (its crash dialog open) never blocks Exit; see [meet-call-window.md](meet-call-window.md) §8. | The **only** path that terminates the process — no in-page Exit control exists (the *Quit only from the tray* project rule, FR-07). |
+| *(separator)* — build/version label | disabled, non-clickable | none | Maintainer-requested mid-incident (2026-09-22), see "Build/version diagnostic line" below (FR-13). |
 
 **Amended per FR-15/Wireframe F** (supersedes the 7-item menu this table originally described):
 "Start at login" and "Notification sound" checkboxes are removed from this menu — they are now
@@ -180,9 +181,9 @@ macOS's different menu-bar convention is moot, out of scope per ADR-0003).
 ### Build/version diagnostic line (FR-13)
 
 A disabled (non-clickable), visually de-emphasized menu entry, placed last and after a separator so
-it never competes with the actual controls above it. Requested by the owner mid-investigation of
-the notification bug this ADR-0002 revision records: a colleague testing an installed build and the
-owner testing a dev run from source were, for a time, unknowingly looking at different code, and
+it never competes with the actual controls above it. Requested by the maintainer mid-investigation of
+the notification bug this ADR-0002 revision records: a tester using an installed build and the
+maintainer testing a dev run from source were, for a time, unknowingly looking at different code, and
 resolving that ambiguity by hand (process-start-time/source-mtime archaeology) cost a full
 diagnostic round. A bare `app.getVersion()` does not answer "is this the current build?" — every dev
 run and every packaged build shares the same `package.json` version between releases.
@@ -192,7 +193,7 @@ The label is built by `buildVersionLabel(buildInfo)` in `src/main/version.js` fr
 `<version> (<shortSha>, <ci|local>)`, or `build info unavailable`. **This differs from FR-13's wording**
 (version, "packaged" or "source", and a build timestamp taken from the entry file's mtime), which is
 authoritative for the requirement: the code has moved to a build-info source and the requirement text has
-not been updated. Recorded as a discrepancy for the business-analyst rather than resolved here; the tray
+not been updated. Recorded as a discrepancy for the requirements author rather than resolved here; the tray
 line's content is FR-13's, and this document does not define a third format.
 
 **The Settings window's About line is a different, narrower thing (FR-15, ratified): the app name and the
@@ -200,7 +201,7 @@ version number only**, with no build timestamp, no packaged/source word and no S
 tray string. See FR-13 in [requirements.md](../business/requirements.md) for the acceptance criteria.
 
 ### Start at login (FR-10)
-**First-run default (owner decision 2026-09-30): ON.** After a fresh install every setting is on —
+**First-run default (maintainer decision 2026-09-30): ON.** After a fresh install every setting is on —
 Start at login, Notification sound, Icon blinking; Mute stays off (on would silence the app). The
 app itself applies it, once, in `createSettingsStore` (`settingsStore.js`): when `settings.json`
 does not exist yet and the build is packaged (`enableStartAtLoginOnFirstRun: app.isPackaged`) it calls
@@ -261,7 +262,7 @@ Start at login (not a "need this in the next two seconds" control).
 **Mute notifications is the one setting exposed on *both* the tray menu and the Settings window**
 (FR-12/FR-15) — see "Settings window (FR-15)" below for the exact two-way sync wiring.
 
-**Icon blinking (`blinkOnUnread`) is Settings-window-only (FR-14/FR-15)** and, by the owner-approved
+**Icon blinking (`blinkOnUnread`) is Settings-window-only (FR-14/FR-15)** and, by the maintainer-approved
 default, is **one setting for both the tray blink and the taskbar flash**; the persisted key keeps its
 name, only the user-facing label changes (design task). See "Attention indicators (FR-14)" below for the
 timer/flash wiring; this section only owns the persisted flag.
@@ -277,9 +278,9 @@ only owns where the flags come from and how they're persisted.
 
 Muting does **not** affect the unread indicator — that stays driven by `page-title-updated`
 independent of these flags, per FR-12. Muting **does** stop any active tray blink immediately (FR-14's
-"poking" rule, decided by the owner for the blink). That muting also stops the **taskbar flash** is a
-**working assumption** in FR-14, not an owner decision; the design implements it and it is one line to
-change if the owner disagrees. The one notification that will ignore mute is the app-status "A call is
+"poking" rule, decided by the maintainer for the blink). That muting also stops the **taskbar flash** is a
+**working assumption** in FR-14, not a maintainer decision; the design implements it and it is one line to
+change if the maintainer disagrees. The one notification that will ignore mute is the app-status "A call is
 already open" notification of FR-16 (Meet is not built yet), which is not a chat message.
 
 **Tray glyph precedence (fixed):** `resolveIconState` (`src/main/tray.js`) now returns `'unread'` before
@@ -289,7 +290,7 @@ is the only unread signal (FR-05a, FR-12). The muted glyph shows only when nothi
 ## Settings window (FR-15)
 
 Full surface/layout/interaction design lives in `docs/design/00-settings-surface-spec.md` (owned by
-`ux-ui-designer`) — this section is only the wiring an implementer cannot find there: the window's
+the designer) — this section is only the wiring an implementer cannot find there: the window's
 place in the process model, the IPC channels, who owns the authoritative state, and how a change
 made on one surface reaches the other without an echo loop.
 
@@ -390,7 +391,7 @@ scenario this wiring exists for.
 FR-14 (`requirements.md`) is the single authority for when the indicators start and stop; this section
 describes how the code wires it (`src/main/attention.js`, `src/main/trayBlink.js`,
 `src/main/unreadTracker.js`, `src/main/index.js`; verified 2026-09-30 after the BUG-01 fix, re-read the file
-before relying on a detail). Owner-approved defaults applied: **one** setting (`blinkOnUnread`) governs both
+before relying on a detail). Maintainer-approved defaults applied: **one** setting (`blinkOnUnread`) governs both
 the blink and the flash, and new-message indicators continue while the user is in the Meet call window or
 the Settings window (they are not the main Chat window, so the main window is still "not focused").
 
@@ -438,11 +439,11 @@ hidden and minimized as not focused. The same predicate gates the generic-toast 
   the indicator in that state, and the code never shows the window just to flash it. This is the limit that
   the earlier design flagged, now the implemented behaviour, and it means FR-14's "taskbar button flashes"
   scenario for the **hidden-to-tray** state is met by the tray blink only. Whether that is acceptable, or the
-  owner wants a minimized taskbar button instead (which changes FR-06's close-to-tray), is an **owner decision**.
+  maintainer wants a minimized taskbar button instead (which changes FR-06's close-to-tray), is an **maintainer decision**.
 - `stop()` always calls `flashFrame(false)` explicitly rather than relying on the OS to end the flash at
   focus. Linux: `flashFrame` maps to a window-manager urgency hint, desktop-dependent, best-effort, verified on
   a real Linux desktop.
-- Mute also stopping the flash is a **working assumption** in FR-14 (the owner decided mute for the tray blink
+- Mute also stopping the flash is a **working assumption** in FR-14 (the maintainer decided mute for the tray blink
   only); it is implemented and is one line to change.
 - WCAG 2.3.1's flash threshold applies to the ~1 Hz tray alternation the app controls; the OS taskbar flash
   rate is not app-controlled, so no rate claim is made for it.

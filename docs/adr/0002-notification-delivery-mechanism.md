@@ -2,7 +2,7 @@
 
 **Date**: 2026-09-22
 **Status**: accepted (superseded on the `backgroundThrottling` point — see "Revision 3" below)
-**Deciders**: tech-lead
+**Deciders**: maintainers
 
 > **Status update, 2026-09-30 (pointer only; the decision text below is not rewritten).** Piece 1 and
 > Revision 3 (`backgroundThrottling`, Page Visibility) stand for any **page-level** notification. **Piece 2
@@ -77,8 +77,8 @@ being clicked, so this half of FR-05 needs its own, narrowly-scoped bridge.
 **What was decided above, restated plainly:** to guard against Electron issue `#31016` (a feared
 freeze of a hidden window's JS on Windows), this ADR set `webPreferences.backgroundThrottling:
 false` on the single `BrowserWindow`. That decision is **reverted**. It was implemented, and in
-the owner's real test — a colleague sent a message to a hidden window — **no notification
-appeared.** `electron-developer` traced the cause.
+a real-world test — another user sent a message to a hidden window — **no notification
+appeared.** The cause was traced.
 
 **Root cause: the mitigation caused the exact class of failure it was defending against, by a
 different mechanism than the one it guarded against.** Per Electron's own `BrowserWindow` docs,
@@ -156,7 +156,7 @@ Two independent mechanisms, kept separate because they solve different halves of
    permission) so no in-app permission prompt is needed for a single-purpose app whose whole value
    is notifications. Nothing about content, sender, or preview text is touched — Google Chat's own
    page produces it exactly as it would in a background browser tab.
-2. **Click → window focus AND landing on the specific conversation** (sharpened by the owner this
+2. **Click → window focus AND landing on the specific conversation** (sharpened by the maintainer this
    pass — "jump into the chat to that message," their own framing of exactly this mechanism as
    "hooks") — a minimal main-world script injected via `webContents.executeJavaScript()` on
    `dom-ready` (and re-injected on `did-finish-load`, since Google Chat is an SPA and may recreate

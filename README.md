@@ -46,6 +46,11 @@ Windows SmartScreen will therefore show **"Windows protected your PC"** with an 
 warning. Click **More info**, then **Run anyway**. The Linux artifacts are unsigned too; update
 integrity relies on the checksums published with each release.
 
+## User guide
+
+How to use every feature (tray, notifications, Meet calls, links, settings, troubleshooting):
+[User guide](docs/user-guide.md).
+
 ## Build from source
 
 Requirements: Node.js 20 or newer. The Windows build also needs the .NET SDK, because the release
@@ -58,8 +63,16 @@ npm test           # unit tests
 npm run dist       # build the installer for the current OS into release/
 ```
 
-Linux artifacts can be built in a container from any host with Docker; see
-[Build for Linux in Docker](docs/development/build-linux-in-docker.md).
+To build the installers without installing Node.js or .NET, use Docker (Windows, Linux or macOS
+host; produces the Windows installer and the Linux AppImage + deb):
+
+```
+scripts/docker-build.sh all                              # Linux / macOS
+powershell -File scripts/docker-build.ps1 -Target all    # Windows (Docker Desktop)
+```
+
+See [Build with Docker](docs/development/build-with-docker.md) for prerequisites, versioning and
+troubleshooting.
 
 ## Documentation
 

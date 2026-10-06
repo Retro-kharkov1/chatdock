@@ -4,8 +4,8 @@
 The decision and its tradeoffs live in
 [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md) — read that first. This doc is the
 concrete `electron-builder` configuration and CI shape. **Target platforms: Windows and Linux only**
-— macOS is out of scope, an owner decision recorded in ADR-0003 (code signing required for macOS
-notifications to work at all, and the owner doesn't use macOS, so there is no one to benefit from
+— macOS is out of scope, a maintainer decision recorded in ADR-0003 (code signing required for macOS
+notifications to work at all, and the maintainer doesn't use macOS, so there is no one to benefit from
 the recurring Apple Developer Program cost).
 </overview>
 
@@ -66,7 +66,7 @@ back is a `mac: { target: ["dmg"] }` entry plus the signing secrets, not a redes
 - **AppImage** — a single self-contained executable that runs on any modern distro without
   installation; the "works everywhere, no package manager involved" option.
 - **deb** — a proper `apt`/`dpkg`-installable package for Debian/Ubuntu-family systems, which is
-  the Linux the owner is actually likely to run. It integrates with the system's application menu
+  the Linux the maintainer is actually likely to run. It integrates with the system's application menu
   and package database the way AppImage deliberately does not.
 
 Building a `.deb` requires two `linux` keys that AppImage does not need — they are **load-bearing,
@@ -86,7 +86,7 @@ shipped: it is overridden at pack time. There is **no fallback** (no `git descri
 | Path | How GitVersion runs | Entry point |
 |---|---|---|
 | Windows, local | `dotnet tool run dotnet-gitversion`, tool pinned in `dotnet-tools.json` (6.8.2; CI uses `6.8.x`). Needs the .NET SDK on PATH and a full checkout. `dotnet tool restore` is run automatically. | `npm run dist` / `npm run pack` |
-| Linux, Docker | On the **host** (the container has no `.git` and no .NET SDK), then `build-info.json` is copied in and validated, not re-derived. | `scripts/build-linux-docker.ps1` |
+| Docker (Windows and Linux targets) | **Inside** the builder image (.NET SDK + the same pinned tool), from a copy of the repository's `.git`; the host needs only Docker. See [build-with-docker.md](../development/build-with-docker.md). | `scripts/docker-build.sh` / `scripts/docker-build.ps1` |
 | CI | `gittools/actions/gitversion/execute` exports `GitVersion_*`; the script reads them. | `node scripts/build.js` in `release.yml` |
 
 Why a local .NET tool rather than GitVersion's Docker image: Windows `npm run dist` would then need
@@ -115,7 +115,7 @@ Follow the standard Electron CI matrix shape (one job per OS, each building
 natively on its own runner), scoped to the two in-scope platforms: `windows-latest` and
 `ubuntu-latest`. No `macos-latest` job. This is a structural choice, not a shortcut: keeping the
 matrix as one-job-per-OS (rather than collapsing to a single combined job) means a `macos-latest`
-entry could be added later without restructuring the workflow, if the owner's situation changes —
+entry could be added later without restructuring the workflow, if the maintainer's situation changes —
 just a new matrix entry plus ADR-0003's signing secrets. For this repo's initial release, the
 Windows signing-related env var (`CSC_LINK`, etc.) is **omitted**, which is what makes that build
 unsigned.
@@ -141,11 +141,11 @@ not be assumed verified before the first tagged release completes.
 | Linux | `.AppImage` and `.deb` | N/A — no signing concept for either format | AppImage runs directly once marked executable (`chmod +x`); some distros show a first-run "untrusted executable" dialog depending on the desktop environment. `.deb` installs via the distro's normal package manager (`apt install ./*.deb` or a GUI installer) with no first-run warning at all. Neither is an electron-builder concern. | No signing dependency for either artifact. Real delivery (libnotify) has never been verified in this repo. |
 
 macOS is not built — see [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md) for why
-(code signing is required for macOS notifications to function at all; the owner doesn't use macOS,
+(code signing is required for macOS notifications to function at all; the maintainer doesn't use macOS,
 so paying for it was not justified).
 
 Every release's notes state this table's rows explicitly, per the
-*Installers are part of done* project rule — never let the owner discover the SmartScreen warning by
+*Installers are part of done* project rule — never let the maintainer discover the SmartScreen warning by
 surprise.
 
 ### Release notes must also state (2026-09-30 requirements)

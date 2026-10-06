@@ -2,7 +2,7 @@
 
 **Date**: 2026-09-22
 **Status**: accepted (escalation clause in Risks amended by [ADR-0004](0004-desktop-shell-technology-and-electron-retention.md), proposed)
-**Deciders**: tech-lead
+**Deciders**: maintainers
 
 ## Context
 
@@ -132,7 +132,7 @@ client involved (the app does not talk to Google's API directly, per the
 
 ### Risks
 - **Escalation boundary — this is now a load-bearing decision record, not just an internal hedge.**
-  The owner directly asked whether Electron was the right framework choice for this app at all, and
+  The maintainer directly asked whether Electron was the right framework choice for this app at all, and
   specifically whether a VS Code extension would be a better base. Answered and recorded here so
   the reasoning survives past that one conversation: **VS Code is itself built on Electron** — it is
   the same underlying technology, not an alternative to it. A VS Code-extension form of this app
@@ -141,7 +141,7 @@ client involved (the app does not talk to Google's API directly, per the
   always-available-tray-app model — and (b) VS Code extension notifications are in-editor toast
   UI, not OS-native notifications, which fails FR-05 outright (the single core requirement this
   whole app exists for). **Decision: stay on plain Electron.** This is not a default-by-omission;
-  it was evaluated against the concrete alternative the owner raised and rejected on requirement
+  it was evaluated against the concrete alternative the maintainer raised and rejected on requirement
   grounds, not convenience.
 
   Separately — the actual escalation path, if both the primary and the cookie-import fallback in
@@ -153,11 +153,11 @@ client involved (the app does not talk to Google's API directly, per the
   *(Amended by [ADR-0004](0004-desktop-shell-technology-and-electron-retention.md), proposed: the
   escalation is now defined by triggers T1/T2 there, and Tauri's Meet-on-Linux status is an open
   question, not a settled fix.)*
-  Escalating to Tauri is a scope decision for the owner, not something to improvise
+  Escalating to Tauri is a scope decision for the maintainer, not something to improvise
   mid-implementation. If this happens, treat it as "the documented risk fully materialized," not a
   fresh crisis — and note precisely what would trigger it: Google's sign-in block reproducing on
   the *primary* `BrowserWindow` path **and** the cookie-import fallback also failing (e.g. because
-  the owner's default browser sign-in itself gets blocked, or cookie import proves unreliable in
+  the maintainer's default browser sign-in itself gets blocked, or cookie import proves unreliable in
   practice) — not merely one tier being imperfect.
 - **Verification is mandatory, not optional**: per the *Verify on a real desktop* project rule, the
   implementer must perform a real sign-in (not a pre-seeded dev session) during initial build-out

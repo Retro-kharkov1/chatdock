@@ -6,7 +6,7 @@ for a single-user background app**, not a product settings page — it should re
 Settings / a menu-bar-app preferences window: quiet, native-feeling, four rows and done, no marketing
 chrome, no empty states to fill. Covers the surface for the controls in
 [requirements.md](../business/requirements.md) FR-10 (start at login), FR-11 (notification sound),
-FR-12 (mute notifications), plus the new **blink tray icon on unread** control the owner asked for.
+FR-12 (mute notifications), plus the new **blink tray icon on unread** control the maintainer asked for.
 See [Rationale](02-rationale.md) for why this surface exists instead of an ever-growing tray menu,
 and [Wireframes](01-settings-wireframes.md) for the layouts referenced throughout.
 
@@ -22,10 +22,10 @@ criteria cited inline in the Accessibility section.
 <architecture>
 > **Status after the 2026-09-30 requirements change (FR-14 amended, FR-16 added).** This spec is otherwise
 > unchanged, but it predates two approved decisions and is corrected only where it contradicts them:
-> (1) the "blink" control now governs **both the tray blink and the taskbar flash** (owner-approved
+> (1) the "blink" control now governs **both the tray blink and the taskbar flash** (maintainer-approved
 > default), and both start on "the main window is **not focused**" and stop when it **gains focus**
 > (not "hidden" / "becomes visible"); (2) mute also suppresses the flash (a working assumption in FR-14,
-> not an owner decision). **Marked REDESIGN NEEDED (ux-ui-designer, not done here):** the row label and
+> not a maintainer decision). **Marked REDESIGN NEEDED (designer, not done here):** the row label and
 > helper text of the blink control (section 3, wireframes A, B, D), because "Blink tray icon on unread"
 > no longer describes what the control does. The Meet call window and screen-share picker are drawn
 > separately; nothing in this document covers them.
@@ -67,7 +67,7 @@ this app's control for theming, accessibility, and layout stability.
   used rarely. Destroying also removes an entire class of stale-state bug for free: a **hidden** window
   would carry forward its previous scroll position, focus target, and — critically — any inline error
   state (e.g. a failed "Start at login" toggle, §5/§6) into the *next* open, where it would read as if
-  that failure just happened again, confusing the owner about whether the retry actually worked. A
+  that failure just happened again, confusing the maintainer about whether the retry actually worked. A
   destroyed window is guaranteed to start from a fresh `Loading` state (§5, Wireframe E) every time it
   opens, which is both simpler to reason about and matches the "reflects actual current OS-level state,
   never cached" rule this spec already applies to Start at login (§3) — extending "always re-read the
@@ -98,8 +98,8 @@ this app's control for theming, accessibility, and layout stability.
 
 **Decided: no native OS application-menu entry point.** An earlier revision of this spec proposed a
 second entry point — a plain Electron application menu with a "Settings…" item (`Ctrl+,`) — flagged
-there for `business-analyst` to ratify since it wasn't sourced from any FR. It was not ratified; it is
-removed. Reasoning, recorded here rather than just silently dropped: the owner never asked for a
+there for the requirements author to ratify since it wasn't sourced from any FR. It was not ratified; it is
+removed. Reasoning, recorded here rather than just silently dropped: the maintainer never asked for a
 second way into Settings, the tray already carries "Settings…" and is reachable in exactly the same
 number of steps, and a native application menu is the single surface most likely to reintroduce a
 second quit path — Electron's default app-menu role and its `role: 'quit'`/`role: 'close'` template
@@ -116,7 +116,7 @@ full record.
 The tray icon is a pointer target (mouse, touch, or equivalent) — Electron's `Tray` has no built-in
 way to reach it purely by keyboard, so the only route into the Settings window requires a pointer. A
 system-wide `globalShortcut` accelerator was considered as a recovery and was **rejected by the
-project owner** — see [Rationale §7](02-rationale.md#7-rejected-a-native-application-menu-entry-point)
+project maintainer** — see [Rationale §7](02-rationale.md#7-rejected-a-native-application-menu-entry-point)
 for the full reasoning (in short: the whole tray surface — Exit, Mute, Show/Hide — is already
 pointer-only, so this is consistent with existing UX rather than a new gap, and a system-wide shortcut
 is disproportionate to a rarely-opened settings window on a single-user utility). **This is a
@@ -229,7 +229,7 @@ take" case in §5 is actually implementable rather than decorative:
   environment that doesn't fully implement the XDG autostart spec. Read-back verification confirms the
   file/registry-key state the app itself controls, not a third-party DE's future behavior — no
   proactive warning is shown for that narrower case, since a warning the app can't actually confirm
-  would itself be a false/uncertain signal. If the owner hits this in practice, the fix is a targeted
+  would itself be a false/uncertain signal. If the maintainer hits this in practice, the fix is a targeted
   follow-up (detect the specific DE and adjust), not speculative UI now.
 
 ## 7. Visual design tokens
@@ -327,8 +327,8 @@ From **Attention active**, three triggers each stop both indicators, independent
    Both stop and the badge clears in the same step → **Idle**.
 3. **A setting changes.** The blink setting turned off, or `notificationsMuted` turned on, stops both
    immediately; the badge stays if unread > 0 → **Unread (static)**, otherwise **Idle**. (Muting stopping
-   the **blink** is an owner decision; muting also stopping the **flash** is only a working assumption in
-   FR-14, pending the owner.)
+   the **blink** is a maintainer decision; muting also stopping the **flash** is only a working assumption in
+   FR-14, pending the maintainer.)
 
 **Resume — memoryless:** in **Unread (static)** any **new** arrival while the window is not focused, the
 blink setting is on and not muted restarts both indicators, even if the still-unread conversation that

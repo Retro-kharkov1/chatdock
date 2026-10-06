@@ -32,26 +32,26 @@ small, static HTML document.
 
 ## 2. Tray menu keeps ONE quick toggle (Mute); everything else moves to Settings
 
-**This decision overrides existing tray UX the owner already uses, and that override was checked
-with the owner before being finalized — not asserted unilaterally.** The project carries a standing
-rule that UX the owner already uses is not removed without asking. Moving "Start at login" and
-"Notification sound" out of the tray menu, where the owner currently reaches them today, is exactly
+**This decision overrides existing tray UX the maintainer already uses, and that override was checked
+with the maintainer before being finalized — not asserted unilaterally.** The project carries a standing
+rule that UX the maintainer already uses is not removed without asking. Moving "Start at login" and
+"Notification sound" out of the tray menu, where the maintainer currently reaches them today, is exactly
 that kind of removal — so this design did not silently apply its own "urgency" heuristic and treat
-that as sufficient license to override the rule. The proposal (below) was put to the owner directly,
+that as sufficient license to override the rule. The proposal (below) was put to the maintainer directly,
 who was asked to choose between keeping the full checkbox set on the tray vs. shrinking it to Mute
-only; the owner chose the smaller tray. That answer, not the heuristic on its own, is why the layout
+only; the maintainer chose the smaller tray. That answer, not the heuristic on its own, is why the layout
 in [Wireframe F](01-settings-wireframes.md#f-tray-context-menu--updated-replaces-the-fr-07-tables-current-7-item-menu)
 stands.
 
 The tension named in the brief is real: the tray is the fastest path to "mute right now," but every
 control mirrored in two places is a control that can drift (checkbox says one thing, settings window
 says another, because one write path was missed). The urgency reasoning below is why this design
-*proposed* the smaller tray to the owner — it is not, on its own, why the rule was allowed to be
-overridden; the owner's explicit choice is what did that:
+*proposed* the smaller tray to the maintainer — it is not, on its own, why the rule was allowed to be
+overridden; the maintainer's explicit choice is what did that:
 
 - **Mute notifications stays on the tray**, because it's the one control with a plausible "I need
   this to happen in the next two seconds, without stopping what I'm doing" use case (a call starting,
-  a meeting) — exactly the scenario the owner's own "quiet hours" phrasing described. It is
+  a meeting) — exactly the scenario the maintainer's own "quiet hours" phrasing described. It is
   **live-synced** with the same control in Settings (one `notificationsMuted` boolean, two rendered
   views, one write path) rather than being a second independent setting — see spec §4. This avoids
   the drift risk while keeping the fast path.
@@ -60,7 +60,7 @@ overridden; the owner's explicit choice is what did that:
   login, sound/blink preferences are "set once and forget." Leaving them in the tray menu too would
   be duplication with no corresponding urgency to justify the drift risk. This also **shrinks the
   tray menu** from 7 entries (today: Show/Hide, 3 checkboxes, Exit, separator, version) to 5 (Show/
-  Hide, 1 checkbox, Settings…, Exit, separator, version) — directly answering the owner's own framing
+  Hide, 1 checkbox, Settings…, Exit, separator, version) — directly answering the maintainer's own framing
   ("so that all this can be managed") that the tray menu was becoming the wrong place to manage a
   growing list of preferences.
 
@@ -84,7 +84,7 @@ neither applies here.
 
 Already covered in the spec (§5 states table, §6). The summary rule: **attempt, then show success
 silently or failure explicitly** — never a toggle that flips back to its old position with no
-explanation (a genuine dead-end interaction the skeptic gate would rightly reject), and never a
+explanation (a genuine dead-end interaction the review gate would rightly reject), and never a
 toggle presented as "on" when the underlying OS state disagrees (which is exactly the bug FR-10's own
 acceptance criteria already guard against by requiring the checkbox to "reflect the actual current
 OS-level state," not a cached preference). Design carries this rule through Start at login being the
@@ -97,7 +97,7 @@ one control that can genuinely fail per-platform.
   designing around (§4 above).
 - Notification sound (FR-11) — explicitly requested.
 - Mute notifications (FR-12) — explicitly requested, the one control kept on the tray too.
-- Blink tray icon on unread — the owner's literal ask ("blink the tray icon... like in the old
+- Blink tray icon on unread — the maintainer's literal ask ("blink the tray icon... like in the old
   days"), and the reason a Settings surface was requested at all.
 - **About/version line** — the only addition not directly requested. **Corrected 2026-09-30:** this
   rationale originally said the line mirrored the tray's FR-13 diagnostic string. FR-15 (ratified) is
@@ -109,14 +109,14 @@ one control that can genuinely fail per-platform.
   [ADR-0002](../adr/0002-notification-delivery-mechanism.md).
 
 **Deliberately NOT built (argued against, not silently omitted):**
-- **Scheduled "quiet hours"** (auto-mute on a time window/per-day schedule) — the owner's own phrasing
+- **Scheduled "quiet hours"** (auto-mute on a time window/per-day schedule) — the maintainer's own phrasing
   suggested this, but `requirements.md`'s FR-12 already resolved it as out of scope in favor of a
   manual toggle, and this design does not reopen that call. A time-picker UI, per-day schedules, and
   timezone handling are real added surface for a personal single-user utility with no stated need for
   automation.
 - **A second "reduce motion"/"disable blink" control** — redundant with the blink switch itself, which
   already *is* the opt-out (spec §8, WCAG 2.3.1) and, since 2026-09-30, also switches off the taskbar flash
-  (owner-approved default: one setting for both; a separate flash setting would be a new control needing a
+  (maintainer-approved default: one setting for both; a separate flash setting would be a new control needing a
   wireframe, and is not provided). Adding a second control
   for the same effect would only add confusion ("which one do I turn off?").
 - **Custom notification sound file picker / volume control** — FR-11's own scope note already rules
@@ -134,14 +134,14 @@ one control that can genuinely fail per-platform.
 Net: the settings surface stays at exactly the four controls asked for/justified, plus one read-only
 info line. Nothing padded in.
 
-## 6. Reconciliation with requirements.md — proposed IDs (business-analyst to confirm/assign)
+## 6. Reconciliation with requirements.md — proposed IDs (requirements author to confirm/assign)
 
-This document does not edit `requirements.md` (out of this task's boundary — `business-analyst` owns
+This document does not edit `requirements.md` (out of this task's boundary — the requirements author owns
 that file and is actively writing it in parallel). Flagging here what that document will need to
 reflect once this design is accepted:
 
 > **Superseded 2026-09-30.** The proposals below became FR-14 and FR-15, and FR-14 was then amended by the
-> owner: the attention indicator is the tray blink **and** the taskbar flash, starts while the main window
+> maintainer: the attention indicator is the tray blink **and** the taskbar flash, starts while the main window
 > is **not focused** (hidden, minimized, or visible without focus) and stops when it **gains focus** (the
 > "shown/focused" wording in the first bullet was imprecise; "becomes visible" is no longer a stop
 > trigger). The text below is kept as the record of what the design proposed; `requirements.md` FR-14 is
@@ -172,11 +172,11 @@ with it).
 
 An earlier revision of this design proposed a second Settings entry point — a plain Electron
 application menu with a "Settings…" item and a `Ctrl+,` accelerator — and flagged it for
-`business-analyst` to ratify, since it wasn't sourced from any existing FR. It was not ratified;
+the requirements author to ratify, since it wasn't sourced from any existing FR. It was not ratified;
 the entry point is removed (see spec §2). Recording the decision and its reasoning here, not just the
 outcome, so it isn't silently re-added later:
 
-- **The owner never asked for a second way in.** The tray's "Settings…" is already a single click
+- **The maintainer never asked for a second way in.** The tray's "Settings…" is already a single click
   away at all times the app is running; an application menu would add a second, redundant path for a
   need nobody named.
 - **A native application menu is the single most likely surface to reintroduce a second quit path.**
@@ -200,7 +200,7 @@ genuine limitation relative to the earlier draft, not a neutral simplification, 
 such rather than glossed over.
 
 **Proposed recovery considered — a global keyboard shortcut via Electron's `globalShortcut` module —
-was rejected by the project owner.** The proposal was: bind a system-wide accelerator (e.g.
+was rejected by the project maintainer.** The proposal was: bind a system-wide accelerator (e.g.
 `Ctrl+Shift+,`) directly to the same "open/focus Settings window" handler the tray item calls, on the
 reasoning that `globalShortcut` carries no `role`-based menu items and therefore none of the
 application-menu's quit-path risk. **Decision: rejected, not built.** Reasoning:
@@ -217,7 +217,7 @@ application-menu's quit-path risk. **Decision: rejected, not built.** Reasoning:
   already holds the same key combination — a failure mode with no good UI answer for a settings window
   that is opened rarely, since there is nowhere in this app's surface to even notice or report that the
   registration silently failed.
-- **This is a single-user personal utility** whose owner already reaches every other tray action with a
+- **This is a single-user personal utility** whose maintainer already reaches every other tray action with a
   mouse; a keyboard-only route serves a use case this app does not otherwise support anywhere.
 
 **Recorded plainly, not softened into a promise:** reaching Settings requires a pointer (mouse, touch,

@@ -1,6 +1,6 @@
 # Verify on Linux (WSL2 + WSLg)
 
-The Linux verification target is **WSL2 with WSLg on the owner's Windows workstation** (decision
+The Linux verification target is **WSL2 + WSLg on Windows 11** (decision
 2026-09-30). It runs a real Linux userland and kernel with a GUI shown on the Windows desktop.
 Linux packages are built in Docker ([build-linux-in-docker.md](build-linux-in-docker.md)); this page
 covers running and probing them.
@@ -9,7 +9,7 @@ covers running and probing them.
 
 WSLg is **not a native Linux desktop**. Weston (a Wayland compositor) plus Xwayland run inside a
 system distro and project windows to Windows over RDP. Consequences, checked on 2026-10-02
-(WSLg 1.0.73.2, Ubuntu 24.04, Electron 44.4.3):
+(WSL2 + WSLg on Windows 11):
 
 | Area | In WSLg | Effect on verification |
 |---|---|---|
@@ -55,7 +55,7 @@ Copy `spike/meet/{main.js,picker.html,picker-preload.js,package.json}` and
 cd ~/spike-b && export PATH=~/node22/bin:$PATH
 npm i electron@44.4.3
 ./node_modules/.bin/electron spike/meet --mode=auto --ozone-platform=x11      # or wayland
-./node_modules/.bin/electron spike/meet --ozone-platform=x11                  # live, owner checklist
+./node_modules/.bin/electron spike/meet --ozone-platform=x11                  # live, maintainer checklist
 ```
 
 Results land in `spike/meet/out/` (`auto-results.json`, `spike-b.log`). Camera and microphone release

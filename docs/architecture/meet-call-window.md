@@ -7,7 +7,7 @@ The behaviour is specified by [FR-16 and NFR-07](../business/requirements.md); t
 "Spike B, Linux half" (WSLg), cited below as **Spike B**. The standing rules (security baseline, quit only
 from the tray, wrapper not a rewrite) are in [Project Rules](project-rules.md) and are not restated here.
 
-**Scope is deliberately minimal (owner decision 2026-10-02).** The call window shows **only the Meet page**.
+**Scope is deliberately minimal (maintainer decision 2026-10-02).** The call window shows **only the Meet page**.
 The app draws exactly **one** surface: the screen-share source picker. There is no app-owned view inside
 the call window, no status strip, no loading/error/crash panel, no preload on the Meet page and no
 window-state persistence. Everything the user must be told (live-call close, Exit, a crash) is a **native
@@ -111,7 +111,7 @@ assert the options the window is **created with**, not only the live contents (N
   `https://meet.google.com` and `https://accounts.google.com` (compared via `new URL(x).origin`); anything
   else is `preventDefault()`ed and routed by the link router (`route(url)`: allow-listed schemes go to the
   system browser). Sub-frame navigation is not restricted (Meet embeds frames). Do not widen the list
-  without evidence and an owner decision. Whether Meet legitimately needs another Google host during a call
+  without evidence and a maintainer decision. Whether Meet legitimately needs another Google host during a call
   is [U]; it shows up as a blocked navigation in the manual run.
 - **Popups:** `setWindowOpenHandler` always returns `{ action: 'deny' }` (no popup window is ever created).
   The target is routed: non-Meet → system browser through the scheme allow-list; Meet → the second-link
@@ -250,7 +250,7 @@ Without a `will-prevent-unload` listener (or with one that does not call `preven
 reload and **`app.quit()`** (for quit: `before-quit` fires, `will-quit` never does, window and process stay),
 on Windows and Linux alike, even with no user activation. A listener that calls `event.preventDefault()`
 synchronously lets close, reload and quit proceed. Whether real Meet registers `beforeunload` during a call is
-not observed (owner run).
+not observed (maintainer run).
 
 ### Rules
 1. **`will-prevent-unload` is registered at window creation, always, on the call window's Meet contents and on
@@ -336,7 +336,7 @@ script that calls `ses.setUserAgent(<desktop Chrome UA>)` (or `app.userAgentFall
 default UA, or with `example.org` / `www.google.com` under the custom UA, exits in about 1 s. `process.kill(
 process.pid)` from the `quit` event ends it. The app has always set that UA (`session.js`).
 
-**Fixed 2026-10-02 (owner decision: flush, then force-terminate)** in `src/main/quitTerminator.js`, wired in
+**Fixed 2026-10-02 (maintainer decision: flush, then force-terminate)** in `src/main/quitTerminator.js`, wired in
 `index.js`: `will-quit` #1 is prevented and the persistent partition (`PARTITION`) is flushed -
 `cookies.flushStore()` and `flushStorageData()`, concurrently, bounded by 3 s overall (a stuck flush logs
 "timed out" and the quit proceeds); then `app.quit()` is re-issued, `will-quit` #2 passes, and on `quit` the
@@ -424,9 +424,9 @@ close; behaviour of the crash dialog; the post-quit hang.
    implementer measures them.
 2. **`signal` dismissal** of an open message box: documented, unverified on 44.4.3 (section 8); fallback
    specified.
-3. **System-audio capture** in screen share is not offered (video only); revisit if the owner wants it.
+3. **System-audio capture** in screen share is not offered (video only); revisit if the maintainer wants it.
 4. **Blocked navigation observed in a real call** to a Google host other than the two allowed: extend the
-   list only with evidence and an owner decision.
+   list only with evidence and a maintainer decision.
 </architecture>
 
 <topics>

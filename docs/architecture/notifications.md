@@ -12,7 +12,7 @@ page-`Notification` design and of the `backgroundThrottling` incident.
 **Status.** The BUG-01 fix is implemented: Chat's service-worker and page-initiated
 `showNotification()` calls are intercepted and re-raised as main-process Electron toasts (mechanism **M2**),
 with an unread-count fallback (**M3**). What is **not** delivered: the specific-conversation click
-(FR-05c step 2) and any claim that the chat name is in the title (FR-05b), both still Spike C and an owner
+(FR-05c step 2) and any claim that the chat name is in the title (FR-05b), both still Spike C and a maintainer
 decision. Section 1 describes what the code does and cites the files; it is a description of the code as
 verified on 2026-09-30 after the fix, so re-read the named file before relying on a detail. Statements
 tagged **[U]** are unverified.
@@ -89,7 +89,7 @@ focused the window. That is why a click only ever brought the window forward and
 directly). A toast with `activationType="protocol"` does deliver the in-process `click` (pop-up and Action
 Center, as long as the object is referenced) and launches `<app>.exe <url>`. Verified end to end in a dev
 run against a loopback service worker (click from the Action Center -> worker started -> `notificationclick`
-replayed -> `clients.openWindow` intercepted -> app window navigated to the conversation URL). **Confirmed by the owner against a real signed-in Chat on build 0.0.1-96:** a click opens the conversation.
+replayed -> `clients.openWindow` intercepted -> app window navigated to the conversation URL). **Confirmed by the maintainer against a real signed-in Chat on build 0.0.1-96:** a click opens the conversation.
 
 - **No toast for the conversation being viewed (FR-05a):** the shell only surfaces calls Chat chose to
   make on this path, so Chat's own suppression stays in force. The fallback applies its own coarser rule.
@@ -114,6 +114,26 @@ toast, and only if the main window is not focused and the count is non-zero. Tha
 messages or conversations is unknown [U], so a wording that claims a message count may be false; the safe
 wording is "New message in Google Chat". Left for the implementer to confirm or change (open question 3).
 Content is generic by necessity: this path meets FR-05a but not FR-05b.
+
+### Origin gating of the whole pipeline (security hardening)
+
+The main window is not always on Chat: sign-in (`accounts.google.com`) and any redirect target load in it
+too. None of those may reach the notification pipeline or feed its state. The rule, enforced in code and
+specified in [ipc-contract.md](ipc-contract.md) "Origin gating":
+
+- **Page bridge injection** (`createNotificationBridgeInjector`, `src/main/notifications.js`): the origin
+  check is **inside** the injector (a no-op unless the main frame's URL origin is a notification origin:
+  chat, plus the loopback stand-in in a dev run), so every caller is covered: `dom-ready`, `did-finish-load`,
+  the tray Mute toggle and `settings:set`.
+- **Unread count:** both paths ignore a title unless the main frame is on the chat origin: the
+  `page-title-updated` listener re-evaluates the origin on **every** event (a missing predicate fails closed),
+  and the `did-finish-load` seed (`readTrustedUnreadCount`) returns `null`, so the baseline is not seeded.
+  Consequence: while the window sits on a sign-in page the tray/overlay keep the last Chat value rather than
+  following that page's title; the first chat-origin title after coming back replaces it.
+- **Channels:** `notification:clicked`, `:arrived` and `:show` are accepted only from the main window's main
+  frame on the chat origin (the sign-in origin is **no longer** accepted for `notification:clicked`).
+- **Service worker:** `__gcdSwBridge` and the `showNotification`/`clients` patches exist only in a worker
+  whose own origin is the chat origin; main still rejects other scopes (two layers).
 
 ### Permissions
 
@@ -155,7 +175,7 @@ service-worker path also consults visibility is unknown [U] (Spike C).
 
 **M2 does not deliver FR-05c step 2** (opening *that* conversation). That needs a further mechanism, for
 example driving Chat's router from an identifier, which is **not designed** here, touches the
-*Wrapper, not a rewrite* project rule, and is a separate owner decision (FR-05's open question) and a separate design.
+*Wrapper, not a rewrite* project rule, and is a separate maintainer decision (FR-05's open question) and a separate design.
 
 **One path per message.** The de-dup and the arrival-matching above are how a message avoids a second toast
 from the fallback; the page-created `window.Notification` toast is the browser's own and is never also
@@ -163,8 +183,13 @@ re-raised.
 
 ## 4. Tray unread indicator
 
-`page-title-updated` remains the unread-count source: it drives the Windows overlay badge, the tray glyph and
-the shared tracker. The tray glyph precedence is now **unread wins over muted** (`resolveIconState` in
+`page-title-updated` remains the unread-count source, **trusted only while the main frame is on the chat origin**
+(see "Origin gating of the whole pipeline" above): it drives the Windows overlay badge, the tray glyph and
+the shared tracker. `parseUnreadCount` (`src/main/notifications.js`) reads the title's leading count in the
+shapes Chat emits: `(3)`, `(99+)` (the `+` is dropped, so it reads as 99, "at least 99"; the tracker therefore
+sees no further rise above the cap), a thousands separator of comma, dot, space, NBSP, thin or narrow NBSP in
+groups of three (`(1,234)`, `(1.234)`, `(1 234)`), and leading whitespace before the `(`. Anything else, including a
+malformed group such as `(1,2)`, is 0 and never throws. The tray glyph precedence is now **unread wins over muted** (`resolveIconState` in
 `src/main/tray.js`): the static unread indicator is visible whenever anything is unread, independent of mute
 and focus, as FR-05a and FR-12 require; the muted glyph shows only when nothing is unread. (The earlier
 muted-first precedence hid unread on Linux.)
@@ -185,7 +210,8 @@ scope before being logged, so web-controlled text from other scopes is never sur
 - Page-bridge `executeJavaScript` injection failure (logged distinctly).
 - A service-worker preload or hook failure: logged; the page bridge and the unread fallback remain, so a
   broken worker path degrades to generic toasts rather than to nothing.
-- A worker request from a disallowed scope, or a page channel from a disallowed origin: rejected and logged.
+- A worker request from a disallowed scope, or a page channel from a disallowed origin, a sub-frame or another
+  webContents: rejected and logged (channel name and origin only, never the payload).
 - A click that cannot be resolved to a conversation (FR-05c): warning, window still comes forward (once the
   log exists).
 - Stale toast clicked after the app fully exited: no live process to receive it; a known limit.
@@ -201,7 +227,7 @@ what `(N)` counts.
 
 ## Open questions and assumptions
 
-1. **Owner:** FR-05 answer (a) or (b) for FR-05b and step 2 (bounded second source, or generic content and
+1. **Maintainer:** FR-05 answer (a) or (b) for FR-05b and step 2 (bounded second source, or generic content and
    focus-only click). M2 is in place either way.
 2. **Spike C (real Chat):** does the payload carry the chat name; is the worker actually the source; does the
    payload's `tag` name the sender or the conversation?

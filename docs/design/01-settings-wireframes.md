@@ -47,7 +47,7 @@ helper/error text. Window is fixed 380×460 CSS px in every state below.
 > icon on unread") and helper text ("Blinks on a new message; stops the moment you open the window.") no
 > longer match the requirement: the one setting now governs the tray blink **and** the taskbar flash, and
 > both stop when the window **gains focus**, not when it is opened. The boxes are left as drawn until
-> `ux-ui-designer` redraws the row; do not implement this copy. Everything else in A/B/D stands.
+> the designer redraws the row; do not implement this copy. Everything else in A/B/D stands.
 
 Tab order (top → bottom): Start at login → Notification sound → Mute notifications → Blink tray icon
 on unread. About line is static text, not in the tab sequence.
@@ -189,7 +189,7 @@ here. "Not focused" = hidden to tray, minimized, or visible without OS input foc
 | Idle → Unread (blinking) | new message arrives **while the main window is not focused**, the blink setting on, not muted |
 | Idle → Unread (static) | new message arrives, AND (`notificationsMuted` OR the blink setting off) — or the window is focused |
 | Unread (blinking) → Unread (static or Idle) | the main window **gains OS input focus** — stops both immediately, regardless of which conversation is shown or how much unread remains; being shown or restored without focus does **not** stop them; lands on Unread (static) if any unread remains elsewhere, Idle if that was the only unread |
-| Unread (blinking or static) → Idle | unread count returns to 0 while the window is still not focused (e.g. read on the owner's phone) — badge clears and both indicators stop in the same step |
+| Unread (blinking or static) → Idle | unread count returns to 0 while the window is still not focused (e.g. read on the maintainer's phone) — badge clears and both indicators stop in the same step |
 | Unread (blinking) → Unread (static) | the blink setting turned off, or `notificationsMuted` turned on, while active |
 | Unread (static) → Unread (blinking) | a **new** message arrives while unread > 0 and the window is not focused, the blink setting on, not muted — resumes **regardless of window-focus history**, including when the earlier stop was caused by focusing the window without viewing the still-unread conversation that triggered it |
 

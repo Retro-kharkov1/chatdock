@@ -12,8 +12,8 @@
 The implementation plan for the first shippable version of `google-chat-desktop`, covering all of
 FR-01…FR-15 and NFR-01…NFR-06. Read [Architecture](../architecture/README.md) and
 [ADRs](../adr/README.md) before starting — this plan sequences the work; the design docs define it.
-Written for the `electron-developer` agent. **Target platforms: Windows and Linux only** — macOS is
-out of scope (owner decision, see [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md)).
+Written for the implementer. **Target platforms: Windows and Linux only** — macOS is
+out of scope (maintainer decision, see [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md)).
 </overview>
 
 ## Toolchain choices
@@ -95,13 +95,13 @@ logic it covers) are considered done. Tasks 1–4 are sequential (each depends o
 4c, 5, 5b, 6, 7 can proceed in parallel once task 1 lands, but **5b depends on 5** (click-to-conversation
 needs the click-to-focus bridge already wired), **4b depends on 4** (the Mute checkbox needs
 the base tray menu), and **4c depends on 4** (the version line is a tray-menu entry). **4c is a
-later, owner-requested addition, already implemented and unit-tested — see its own entry below for
+later, maintainer-requested addition, already implemented and unit-tested — see its own entry below for
 what "done" means for it.** Task 5's done-criterion was re-scoped after a real incident surfaced a
 defect in its original mitigation (see task 5's own entry) — the fix is implemented, but the
 confirming real-desktop check (a real inbound message producing a real notification, post-fix) has
 not yet been run and is still this task's open item, same as **5b**, which has not been run at all.
 
-**FR-15 and FR-14 (owner-added after the original FR-01…FR-12 scope, see
+**FR-15 and FR-14 (maintainer-added after the original FR-01…FR-12 scope, see
 [requirements.md](../business/requirements.md)) are new tasks 4d and 4e, not folded into 4b.**
 4b now covers only FR-12's tray-side Mute checkbox plus the `settingsStore` foundation all of
 FR-10/FR-11/FR-12/FR-14 share — it does **not** cover FR-10 (start-at-login) or FR-11 (notification
@@ -116,7 +116,7 @@ FR-14/FR-15 — `blinkOnUnread` has no toggle to test against until the Settings
 8 depends on 2–7 (now also 4d/4e) being functionally complete; 9 is packaging; 10 is last.
 
 ### 0. Testable-surface unit-test net (coverage-first, before dependent tasks)
-**Satisfies**: supports FR-02, FR-05, FR-07/10/11/12, NFR-04 — routed to `qa-automation`.
+**Satisfies**: supports FR-02, FR-05, FR-07/10/11/12, NFR-04 — routed to QA.
 **Why this task exists**: every other task's done-criteria in this plan is hand-verification on a
 real desktop, which is correct and required (the *Verify on a real desktop* project rule) for anything
 touching actual OS/window/notification behavior — but it is not a substitute for a GREEN automated
@@ -200,7 +200,7 @@ also on the tray menu) is superseded — see [tray-lifecycle.md](../architecture
 "Amended per FR-15/Wireframe F" note and [requirements.md](../business/requirements.md) FR-07/FR-15.
 Those two checkboxes are removed from the tray menu entirely; **Mute notifications is the only
 preference checkbox that stays**. Do not add Start-at-login/Notification-sound checkboxes to the
-tray menu under this task — that would build the exact stale layout the owner overruled.
+tray menu under this task — that would build the exact stale layout the maintainer overruled.
 **Done when**:
 - `src/main/settingsStore.js` exists with the single `applySetting(key, value)` mutation entry
   point described in [tray-lifecycle.md](../architecture/tray-lifecycle.md)'s "Single source of
@@ -222,7 +222,7 @@ tray menu under this task — that would build the exact stale layout the owner 
 ### 4c. Build/version diagnostic line in the tray menu (FR-13) — STATUS: DONE
 **Satisfies**: FR-13.
 **Depends on**: task 4 (base tray menu exists).
-**Origin**: owner request, made mid-investigation of the FR-05 notification failure task 5 records
+**Origin**: maintainer request, made mid-investigation of the FR-05 notification failure task 5 records
 below — not part of the plan's original scope, added once the diagnostic need was real (see
 [ADR-0002](../adr/0002-notification-delivery-mechanism.md) Revision 3 and
 [requirements.md](../business/requirements.md) FR-13).
@@ -239,9 +239,9 @@ matches its actual state.
 ### 4d. Settings window (FR-15) — new task, not in the plan's original scope
 **Satisfies**: FR-15 in full; also carries FR-10 and FR-11's hand-verification (their only UI, per
 4b's amended scope above).
-**Origin**: owner request, made after the original FR-01…FR-12 scope — "so that all this can be
+**Origin**: maintainer request, made after the original FR-01…FR-12 scope — "so that all this can be
 managed... instead of an ever-growing tray menu" (`requirements.md` FR-15). Full surface/layout
-lives in `docs/design/00-settings-surface-spec.md` (owned by `ux-ui-designer`); this task implements
+lives in `docs/design/00-settings-surface-spec.md` (owned by the designer); this task implements
 the wiring `docs/architecture/tray-lifecycle.md`'s "Settings window (FR-15)" section defines.
 **Depends on**: task 4b (`settingsStore.applySetting` and all four persisted keys must already
 exist) and task 6 (Tray unread indicator — exercises the tray Mute checkbox this task's two-way sync
@@ -279,7 +279,7 @@ plumbing already in place).
 
 ### 4e. Blink tray icon on unread (FR-14) — new task, not in the plan's original scope
 **Satisfies**: FR-14 in full.
-**Origin**: owner request, added alongside FR-15 — "draw my eye when messages arrive, like the old
+**Origin**: maintainer request, added alongside FR-15 — "draw my eye when messages arrive, like the old
 days" (`requirements.md` FR-14). Implements
 [tray-lifecycle.md](../architecture/tray-lifecycle.md)'s "Blink tray icon on unread (FR-14)"
 section, which is itself the authoritative source for the start/resume and stop conditions below —
@@ -294,7 +294,7 @@ builds, extending it rather than adding a second handler).
   sections: `n > 0` while hidden and `blinkOnUnread`/not muted starts or resumes blinking; `n === 0`
   stops it (FR-14's second stop trigger — unread cleared elsewhere while still hidden); the window's
   `'show'`/`'restore'` events also stop it (FR-14's first stop trigger).
-- The `qa-automation`-owned fake-timer unit test described in tray-lifecycle.md's "NFR-06 as a
+- The test-suite-owned fake-timer unit test described in tray-lifecycle.md's "NFR-06 as a
   checkable property" section is green **before** this task is marked done (coverage-first, same
   discipline as task 0, even though this test lives alongside this task rather than in task 0 itself
   because `trayBlink.js`'s behavior isn't meaningfully testable until the module exists) — asserting
@@ -324,9 +324,9 @@ named the Windows `hide()` bug (`electron/electron#31016`) as the thing to spike
   1s `setInterval` was measured still firing every ~1s over 6s while the window was hidden. The
   hidden-page-freeze risk this task was written to spike on does not apply here.
 - `backgroundThrottling: false` was tried as the mitigation for that risk, and **caused a real
-  production-path failure**: a colleague's message to a hidden window produced no notification at
+  production-path failure**: another user's message to a hidden window produced no notification at
   all, because the flag pins `document.visibilityState` at `"visible"`, and Google Chat correctly
-  declines to notify a page it believes is visible. This was root-caused by `electron-developer` and
+  declines to notify a page it believes is visible. This was root-caused by the implementer and
   is recorded in full in [ADR-0002](../adr/0002-notification-delivery-mechanism.md) Revision 3. The
   flag is reverted; `backgroundThrottling` is left at Electron's default.
 - Do **not** re-open this task to re-litigate `backgroundThrottling` — that question is closed. Do
@@ -335,11 +335,11 @@ named the Windows `hide()` bug (`electron/electron#31016`) as the thing to spike
 
 **What genuinely remains unverified, and is the actual done-criterion for this task**: a real
 inbound message from another person, arriving while the window is hidden to tray, producing a real
-OS notification with sender + preview — the owner's own check, per the
+OS notification with sender + preview — the maintainer's own check, per the
 *Hidden window must stay live* project rule ("verified by actually hiding the window and observing a real
 incoming message produce a real OS notification — never by reading the code and reasoning that it
-should work"). This is not a code-reasoning question and nobody but the owner (or someone with a
-second Google account to message the owner's test account) can run it. **Done when**: window hidden
+should work"). This is not a code-reasoning question and nobody but the maintainer (or someone with a
+second Google account to message the a test account) can run it. **Done when**: window hidden
 to tray, a real message sent from another account, a real OS notification appears with sender +
 preview, on at least the platform(s) actually available to test. State plainly which platform(s)
 this ran on. If a notification is still missing or delayed under this condition (a genuinely new
@@ -358,7 +358,7 @@ the *bridge/IPC wiring*, not the now-closed spike framing task 5 originally carr
 5, on a real inbound message from another person while the window is hidden, since there is no way
 to trigger a real notification-click flow without one.
 **Why this is its own task, not folded into task 5**: this is the design's most fragile point (an
-injection into a page Google controls and can change at any time) and the owner's requirement here
+injection into a page Google controls and can change at any time) and the maintainer's requirement here
 is materially sharper than "the window comes back" — it must land on **that** conversation, with
 **that** message visible. Hand-verification is mandatory and cannot be inferred from task 5's
 success.
@@ -441,7 +441,7 @@ per the instruction not to bury them:
   aren't OS-native, failing FR-05) — see [ADR-0001](../adr/0001-google-sign-in-strategy.md).
 - **How "click a notification" actually reaches the OS window, and now the specific conversation**
   — see [ADR-0002](../adr/0002-notification-delivery-mechanism.md) and task 5b above.
-- **macOS dropped from scope entirely** (owner decision, signing-cost-vs-usage tradeoff) — see
+- **macOS dropped from scope entirely** (maintainer decision, signing-cost-vs-usage tradeoff) — see
   [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md).
 - **"Quiet hours" and "mute" treated as one manual toggle, not a scheduled time window** — see
   requirements.md's FR-12 design-decision note.

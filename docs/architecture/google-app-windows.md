@@ -9,7 +9,7 @@ and are not restated; this feature is the *second* exception to the baseline's "
 system browser", recorded there. It builds directly on [Meet Call Window](meet-call-window.md) (cited as
 **Meet doc**): same exact-origin discipline, same router, same close-probe and quit rules.
 
-**Scope is deliberately minimal (owner decision 2026-10-04).** Each opened link is a bare browser-like
+**Scope is deliberately minimal (maintainer decision 2026-10-04).** Each opened link is a bare browser-like
 window showing only the Google page. The app draws **nothing** in it: no toolbar, address bar, banner or
 progress UI, no preload, no IPC. The only app-drawn artefacts are three native OS dialogs (save dialog for
 downloads, one close confirmation, one blocked-download notice). No wireframes or mockups (*Design scaled to the wrapper*).
@@ -24,10 +24,10 @@ downloads, one close confirmation, one blocked-download notice). No wireframes o
   the system browser, where the user signs in separately. (`forms.gle` is followed only when it redirects to a
   listed host, section 2.)
 
-**Status of the host lists.** Drive, Docs (Docs/Sheets/Slides/Forms) and Calendar are the owner's stated need.
-Mail, Keep, Contacts and Sites are **orchestrator-chosen defaults awaiting owner confirmation** (open question 1);
-removing one is deleting a row and its tests. Hosts the orchestrator left out (`g.co`, Maps, Apps Script, Looker
-Studio, Groups) are likewise owner-confirmable.
+**Status of the host lists.** Drive, Docs (Docs/Sheets/Slides/Forms) and Calendar are the maintainer's stated need.
+Mail, Keep, Contacts and Sites are **defaults awaiting maintainer confirmation** (open question 1);
+removing one is deleting a row and its tests. Hosts left out (`g.co`, Maps, Apps Script, Looker
+Studio, Groups) are likewise maintainer-confirmable.
 </overview>
 
 <architecture>
@@ -65,22 +65,22 @@ Four lists plus one narrow rule, in one pure module (section 7). **Link list** =
 open in a Google app window. **In-window navigation list (nav list)** = hosts an already-open app window may
 move between (link list plus `accounts.google.com`). **Entry-hop list** = `forms.gle` only. **Download-chain
 hosts** = extra exact hosts tolerated **only as an intermediate or final hop of an app-window download chain**
-(section 4); **initially empty**, filled only from spike evidence (section 10 step 1) plus an owner decision, never
+(section 4); **initially empty**, filled only from spike evidence (section 10 step 1) plus a maintainer decision, never
 a pattern, and never also added to the nav list. The **download-hop rule** (below) is not a list membership:
 `drive.usercontent.google.com` is **not on the nav list**.
 
 | Host | Link list | Nav list | Why |
 |---|---|---|---|
-| `drive.google.com` | yes | yes | Files, folders, the owner's example (`/file/d/<id>/view`). |
+| `drive.google.com` | yes | yes | Files, folders, a shared-file link (`/file/d/<id>/view`). |
 | `docs.google.com` | yes | yes | One host serves Docs (`/document`), Sheets (`/spreadsheets`), Slides (`/presentation`), Forms (`/forms`) and Drawings; there are no separate `sheets.`, `slides.` or `forms.` hosts, so none are listed. |
 | `calendar.google.com` | yes | yes | Event links. |
-| `mail.google.com` | yes (default, to confirm) | yes | Gmail links. Orchestrator-chosen. |
-| `keep.google.com` | yes (default, to confirm) | yes | Notes. Orchestrator-chosen. |
-| `contacts.google.com` | yes (default, to confirm) | yes | Contacts. Orchestrator-chosen. |
-| `sites.google.com` | yes (default, to confirm) | yes | New Google Sites (`/view/...`). Custom-domain sites go to the browser. Orchestrator-chosen. |
+| `mail.google.com` | yes (default, to confirm) | yes | Gmail links. Default, to be confirmed. **Exception:** Gmail-integrated Chat paths are Chat targets, not Gmail links (section 3, "Gmail-integrated Chat"). |
+| `keep.google.com` | yes (default, to confirm) | yes | Notes. Default, to be confirmed. |
+| `contacts.google.com` | yes (default, to confirm) | yes | Contacts. Default, to be confirmed. |
+| `sites.google.com` | yes (default, to confirm) | yes | New Google Sites (`/view/...`). Custom-domain sites go to the browser. Default, to be confirmed. |
 | `accounts.google.com` | **no** | yes | Re-authentication and consent inside an app window. Never an entry point: a sign-in page from a chat message is a phishing shape, so a Chat link to it goes to the system browser. |
-| `forms.gle` | **entry-hop only** | **no** | Google Forms short link (owner-confirmed 2026-10-04). Followed **only if its redirect lands on a nav-list host** (in practice `docs.google.com/forms/...`); otherwise it goes to the system browser. Mechanism below. |
-| *(none yet)* | no | no | **Download-chain hosts** (empty list, `DOWNLOAD_CHAIN_HOSTS = []`, frozen). Exact hostnames only; added with spike evidence and an owner decision. |
+| `forms.gle` | **entry-hop only** | **no** | Google Forms short link (maintainer-confirmed 2026-10-04). Followed **only if its redirect lands on a nav-list host** (in practice `docs.google.com/forms/...`); otherwise it goes to the system browser. Mechanism below. |
+| *(none yet)* | no | no | **Download-chain hosts** (empty list, `DOWNLOAD_CHAIN_HOSTS = []`, frozen). Exact hostnames only; added with spike evidence and a maintainer decision. |
 
 **Entry-hop (`forms.gle`).** The classifier returns `app-window` with `hop: true`. The same hop applies whether the
 link came from Chat or was clicked (popup or navigation) inside an app window: `forms.gle` is not on the nav
@@ -139,7 +139,7 @@ session. It is permitted only by the **download-hop rule**, evaluated on the mai
 Not listed, deliberately: Tasks (no standalone web host; it lives inside Calendar/Gmail), `chat.google.com`
 (main window, section 3), `meet.google.com` (call window), `myaccount.google.com`, `accounts.youtube.com`,
 `www.google.com` (only as the unwrap wrapper), `g.co` and other shorteners, Maps, Apps Script, Looker Studio,
-Groups (all owner-confirmable, open question 1).
+Groups (all maintainer-confirmable, open question 1).
 
 **`*.googleusercontent.com` decision: not navigable, not wildcarded.** These are *content* hosts
 (`lh3.`, `doc-xx-xx-docs.`, `*.sites.`, and per-user sandboxed origins) that serve user-uploaded bytes and
@@ -151,7 +151,7 @@ matching. A main-frame navigation or redirect to one is `preventDefault()`ed and
 Consequence to verify in the manual run [U]: whether a Drive/Docs download or export still reaches the
 `will-download` handler (section 5) without a top-level hop to an unlisted `googleusercontent` host.
 If a download-only hop is observed, add that **exact** hostname to the **download-chain hosts** list (not the nav
-list) with evidence and an owner decision (Meet doc open question 4 discipline), never a pattern. Only a host that
+list) with evidence and a maintainer decision (Meet doc open question 4 discipline), never a pattern. Only a host that
 must render a page in the window goes on the nav list, with its own evidence and decision.
 
 `accounts.youtube.com` (cross-domain cookie sync) normally runs in sub-frames; if a real re-authentication
@@ -183,6 +183,28 @@ conversation shape (for example `/room/x/attachment/1`) is a **download**: downl
 they are defined in `googleLink.js` as data, and the manual run records what Chat really opens (pop-out,
 attachment, "open in new window", message permalink) before they are frozen. A shape not on any list defaults to
 the system browser, never the main window.
+
+**Gmail-integrated Chat.** A `https://mail.google.com/...` URL is a **Chat target** (outcome `main-window` from
+`classifyGoogleLink`, so it reaches `classifyChatTarget` instead of opening a bare Gmail app window)
+when, after an optional `/mail` and `/u/<n>`, its path is `/chat` or `/chat/...` (also `/chat/u/<n>/...`), or its
+hash route is `#chat` or `#chat/...` (for example `/mail/u/0/#chat/space/X`). **Provisional resolution, from BOTH
+sources (`main` and `app`):** a conversation shape is `focus-main` (show, restore and focus the main window only;
+**never `loadURL`**, which would move the main window off the chat origin and break notifications, clipboard and
+unread); a download shape (`/api/` prefix, or `attachment`/`download` in the Chat-relative remainder) is `browser`,
+because the download-first rule (`download` for source `main`) applies to `chat.google.com` targets only. An unknown
+source is `browser`. `#chatter`, `/chatter`, `#search/chat`, other ports/schemes and lookalike hosts are **not** Chat and stay
+Gmail links (app window) or the browser as before. Plain Gmail links are unchanged.
+
+**Hash routes (main-window comparison).** `openMainWindow` compares the current and target URL **including the
+fragment** when either is on the chat host: `#chat/space/X` and `#chat/space/Y` are different pages and the second
+navigates; a link identical including the fragment still only shows and focuses (no reload, draft kept). For
+every other host the comparison still ignores the fragment.
+
+**Follow-up (needs real-account evidence, deliberately not done here).** `mail.google.com` is **not** added to the
+main window's navigation, notification or clipboard origins, which is why a Gmail-Chat target only focuses the main
+window and is never loaded into it. Decide with a real Gmail-Chat account whether the main window should host
+`mail.google.com` (add the origins together, then allow a load and a download), or the target should be mapped to
+the matching `chat.google.com` URL; until then this focus-only resolution is provisional.
 
 - The main window's `will-navigate` list is unchanged (`chat.google.com`, `accounts.google.com`); a *link*
   to Chat is a different path, reached through `setWindowOpenHandler`, which always denies and routes.
@@ -367,7 +389,7 @@ origins as in `spike/meet/`). M = manual on a real desktop.
 
 | Surface | Level | What is asserted |
 |---|---|---|
-| `classifyGoogleLink` | U | Every link-list host `https` -> `app-window` with normalised href; owner's example `https://drive.google.com/file/d/FILE_ID/view?usp=sharing` -> `app-window`; `https://chat.google.com/x` -> `main-window` outcome (path handling is `classifyChatTarget`); `accounts.google.com` and `drive.usercontent.google.com` -> `none` (never an entry point); `https://forms.gle/abc` -> `app-window` with `hop: true`; `http://forms.gle/..`, `forms.gle:8443`, `evilforms.gle`, `forms.gle.evil.example` -> `none`; `http:` form, `:8443`, userinfo, `docs.google.com.evil.example`, `evil-docs.google.com`, `xdocs.google.com`, trailing dot, uppercase host (normalises, passes), `file:`/`javascript:`/garbage/non-string -> `none`, never throws. |
+| `classifyGoogleLink` | U | Every link-list host `https` -> `app-window` with normalised href; example `https://drive.google.com/file/d/FILE_ID/view?usp=sharing` -> `app-window`; `https://chat.google.com/x` -> `main-window` outcome (path handling is `classifyChatTarget`); `accounts.google.com` and `drive.usercontent.google.com` -> `none` (never an entry point); `https://forms.gle/abc` -> `app-window` with `hop: true`; `http://forms.gle/..`, `forms.gle:8443`, `evilforms.gle`, `forms.gle.evil.example` -> `none`; `http:` form, `:8443`, userinfo, `docs.google.com.evil.example`, `evil-docs.google.com`, `xdocs.google.com`, trailing dot, uppercase host (normalises, passes), `file:`/`javascript:`/garbage/non-string -> `none`, never throws. |
 | Wrapper | U | `www.google.com/url?q=<drive link>` -> `app-window` with the **target's** href (also `q=<forms.gle link>` -> hop); duplicated `q`, wrapper-in-wrapper, wrapper with port/userinfo, wrapper whose target is evil -> `none`. |
 | `isGoogleNavigationUrl` | U | The nav list exactly (link list plus `accounts.google.com`); **not** `drive.usercontent.google.com`, not `forms.gle`, no `*.googleusercontent.com`, no `accounts.youtube.com`, no `chat`/`meet`. |
 | `isDownloadHop` | U | `will-redirect` to `https://drive.usercontent.google.com/download?id=..` from a drive.google.com / docs.google.com page -> allowed; same URL as a non-redirect `will-navigate` from a drive page -> refused; from a Chat link, a popup or a window on another host -> refused; path `/download/x`, `/foo`, `/` -> refused; `http:` or port -> refused; interstitial follow-up `/download?...&confirm=t` from a window already on `usercontent /download` -> allowed, `/other` from there -> refused. **Initial load:** `will-redirect` to `https://drive.usercontent.google.com/download?id=..` with `fromUrl` = the requested `https://drive.google.com/uc?export=download&id=..` and empty `windowUrl` -> allowed; same with a requested `docs.google.com` URL -> allowed; requested URL on any other host, or empty `fromUrl` with empty `windowUrl` -> refused. |
@@ -382,7 +404,7 @@ origins as in `spike/meet/`). M = manual on a real desktop.
 | Fullscreen | I + M | Stand-in docs page requesting fullscreen in an app window: entered and Esc exits; same request from the main window (Chat) unchanged. Manual: Slides "Present" and a Drive video enter and leave fullscreen. |
 | `will-prevent-unload` | I | Objecting stub (a page that registers `beforeunload` and sets a returnValue, as the probe expects) in an app window: app close (X/Alt+F4) -> dialog (stubbed), "Close window" destroys, "Keep" keeps; quit -> completes and `will-quit` is reached; page-initiated objection not overridden; probe timeout/hung page closes without a dialog; page with no objection closes with no dialog. |
 | Quit with windows | I | Several app windows open, then quit: process exits (watch the Windows hang, Meet doc section 8). |
-| Owner example end to end | M | Signed-in app, paste the Drive example in Chat, click it: opens in a separate window, already signed in, file previews; **View, Preview, Download and (with a large file) the virus-scan confirm** each work or show the blocked notice, never nothing; Download shows the save dialog and nothing auto-opens. Windows and Linux separately. |
+| Shared Drive link end to end | M | Signed-in app, paste a Drive link in Chat, click it: opens in a separate window, already signed in, file previews; **View, Preview, Download and (with a large file) the virus-scan confirm** each work or show the blocked notice, never nothing; Download shows the save dialog and nothing auto-opens. Windows and Linux separately. |
 | Observe what Chat actually opens | M | In the real signed-in main window, trigger every Chat action that calls `window.open`: attachment open/download, image preview, message permalink, pop-out, "open in new window", link to another space. Record URL shape and which row of section 3 handles it; freeze the `classifyChatTarget` path lists on this evidence. Confirm an unsent draft survives a permalink load. |
 | Open points | M | `window.opener` popups, "Copy link" in Docs and Drive, Calendar/Gmail/Keep/Sites/Contacts links, `forms.gle` (lands on docs, shown only then; also clicked inside a Doc), a non-listed Google link (Maps) goes to the browser, a Drive `uc?export=download` link from Chat (empty window closes after the save), a conversation link clicked in the main window only focuses it. Host observation is step 1 of the order, not here. |
 
@@ -398,10 +420,10 @@ behaviour. `security-engineer` reviews steps 2, 3, 5, 6 and 7.
    page on `drive.usercontent.google.com`, which request does the "Download anyway" form make), Docs/Sheets
    **export** (Download as), `forms.gle` redirect, Docs "Copy link", Slides Present, and the Chat
    `window.open` observation (section 9). Output: this document's host rules (section 2 hop clause, section 3
-   path lists, section 4 chain rule) are confirmed or amended **with evidence and an owner decision** before
+   path lists, section 4 chain rule) are confirmed or amended **with evidence and a maintainer decision** before
    step 2. If a real download needs an unlisted host (for example a `*.googleusercontent.com` hop), add that
    **exact** hostname to the **download-chain hosts** list only, never a pattern, and never to the nav list
-   without the owner.
+   without the maintainer.
 2. `src/main/googleLink.js` against its unit tests (lists, exact-origin, unwrap, hop rule, Chat target classes).
 3. Router extension with the two optional deps; existing router/call-window tests stay green.
 4. `openMainWindow` and Chat-download wiring (smallest visible win: Chat links stop going to the browser).
@@ -411,17 +433,17 @@ behaviour. `security-engineer` reviews steps 2, 3, 5, 6 and 7.
 7. Clipboard and fullscreen origin set with the requesting-plus-top-level check in `session.js`.
 8. Close probe shared helper, `will-prevent-unload`, the one native dialog, quit-with-windows test.
 9. Manual run (section 9 M rows); record outcomes in this document; add any evidenced host exactly, with an
-   owner decision.
+   maintainer decision.
 
 ## Open questions
 
-1. **Host list confirmation (orchestrator-chosen defaults).** Mail, Keep, Contacts, Sites are in the link list
-   by the orchestrator's choice; `forms.gle` is in as a conditional hop (owner decision). `g.co`, Maps, Apps
+1. **Host list confirmation (defaults, to be confirmed).** Mail, Keep, Contacts, Sites are in the link list
+   by default, pending confirmation; `forms.gle` is in as a conditional hop (maintainer decision). `g.co`, Maps, Apps
    Script, Looker Studio, Groups stay in the system browser. Confirm or change each; add exact hosts on request.
 2. **Tray Exit with an app window mid-save:** default is no prompt (Docs autosaves). Say so if you want a
    confirm there.
 3. **Google links clicked inside the Meet call window** keep going to the system browser (call window
-   unchanged): an **owner-confirmable default**. Say so if shared notes opened from a call should also use an
+   unchanged): an **maintainer-confirmable default**. Say so if shared notes opened from a call should also use an
    app window.
 4. **Main-window downloads now always ask where to save** (section 4); previously Electron's default applied.
    Confirm this behaviour change is wanted.

@@ -2,30 +2,30 @@
 
 **Date**: 2026-09-30
 **Status**: Proposed, pending spikes (see "Spikes"). The decision below is conditional; it is not final until the spikes report.
-**Deciders**: tech-lead (proposal), owner (decision pending). Tracker item UI-02.
+**Deciders**: maintainers (proposal), maintainer (decision pending). Tracker item UI-02.
 **Amends**: [ADR-0001](0001-google-sign-in-strategy.md) (its Tauri escalation clause is replaced by "Escalation triggers" below). Does not supersede it.
 **Touches**: [ADR-0002](0002-notification-delivery-mechanism.md) piece 2 and its fallback (see "Notification requirement").
 
 ## Context
 
-The owner asked: if Electron cannot do the job, find an alternative. Open on Windows 11 (BUG-01,
-diagnosed separately by `electron-developer`):
+The maintainer asked: if Electron cannot do the job, find an alternative. Open on Windows 11 (BUG-01,
+diagnosed separately by the implementer):
 
 - **S1** — notification sound plays but no toast appears while the window is hidden.
 - **S2** — the icon does not flash.
 
-Owner observation, which matters for diagnosis: notifications **started appearing after diagnostic
+Maintainer observation, which matters for diagnosis: notifications **started appearing after diagnostic
 activity** on the affected machine. So S1 may be intermittent or state-dependent (OS notification
 state, app identity, page state) rather than a fixed defect. This ADR does not assume Electron is at
 fault, and does not assume it is not.
 
 New asks:
 - **Meet in-app**: Google Meet calls inside the app with camera, mic and screen share. Now
-  [FR-16 and NFR-07](../business/requirements.md) (owner-approved 2026-09-30; the *Electron security baseline*
+  [FR-16 and NFR-07](../business/requirements.md) (maintainer-approved 2026-09-30; the *Electron security baseline*
   project rule carries the matching single exception, see [Project Rules](../architecture/project-rules.md)). Design:
   [meet-call-window.md](../architecture/meet-call-window.md).
 - **Notification content and deep link**: the notification shows the chat name, and clicking it opens
-  that chat. Now FR-05b and FR-05c step 2 (conditional on Spike C and an owner decision); FR-05a (a toast
+  that chat. Now FR-05b and FR-05c step 2 (conditional on Spike C and a maintainer decision); FR-05a (a toast
   appears at all) is unconditional. Analysed here because the evidence below undercuts ADR-0002's design
   for it. Design candidates: [notifications.md](../architecture/notifications.md).
 
@@ -168,7 +168,7 @@ the conversation. If Chat notifies via service-worker `showNotification`:
 Getting the chat name and a correct deep link would then need a **second source**: the document
 title / unread state via `page-title-updated`, or DOM scraping. This collides with the *Wrapper, not a rewrite*
 project rule (see [Project Rules](../architecture/project-rules.md); ADR-0002 Alternative 2 was rejected for exactly this reason). That is an
-**owner decision**, not a tech-lead one: either accept a bounded scrape/title source for this one
+**maintainer decision**, not a design one: either accept a bounded scrape/title source for this one
 purpose, or accept generic content and window-focus-only click. ADR-0002 Revision 3's documented
 fallback (a main-process notification from `page-title-updated`) provides only generic text
 ("N new messages") and window focus, and it never identifies the conversation. Every alternative
@@ -185,7 +185,7 @@ API-level claims are marked OK only where a primary doc backs them; delivery cla
 | Hidden-window notification, Windows | Risk: API OK [P]; live failure BUG-01; SW path [U] | Risk: WebView2 drops web notifications [S] | Risk: host can render; persistent path [U] | Risk: OS toast likely; needs browser running [S] | Not evaluated |
 | Hidden-window notification, Linux | Risk: libnotify API [P]; never verified here | Risk: permission denied, page inert [S] | n/a | Risk: Linux support thin [U] | Not evaluated |
 | Title shows chat name | Risk: depends on Chat's payload and SW path [U] | Risk: same payload | Risk: same payload | Risk: same payload | Not evaluated |
-| Click opens that chat (FR-05) | No/Risk: no conversation id in payload [S]; needs owner-approved second source | No/Risk: reported unsolved [S] | Risk: `ReportClicked` exists [P], id still missing | Risk: likely native, via Chat's own service-worker `notificationclick` [U] | Not evaluated |
+| Click opens that chat (FR-05) | No/Risk: no conversation id in payload [S]; needs maintainer-approved second source | No/Risk: reported unsolved [S] | Risk: `ReportClicked` exists [P], id still missing | Risk: likely native, via Chat's own service-worker `notificationclick` [U] | Not evaluated |
 | Attention indicator | OK: `flashFrame`, overlay, tray swap [P] | OK: `requestUserAttention`, overlay [P] | OK: host code | Badge on Windows taskbar, not flash; no tray | Not evaluated |
 | Meet: camera, mic, screen share | Risk: handlers + popup routing needed; Linux single PipeWire source [P]; behaviour [U] | Risk: WebRTC absent in Ubuntu's build [S]; other distros [U]; Windows [U] | Risk: Edge engine, events exist [P]; [U] | OK: supported browser | Not evaluated |
 | Close-to-tray, quit only from tray | OK (implemented) | OK: tray API | OK: host code | No | Not evaluated |
@@ -218,7 +218,7 @@ API-level claims are marked OK only where a primary doc backs them; delivery cla
   in-page audio: follows us to any host that hides the page, and Tauri's notes report worse
   behaviour; (2) Windows-side suppression or identity (Focus Assist, per-app settings, AUMID/shortcut
   mismatch; Tauri's docs describe the same installed-app dependency); (3) our own gating (mute,
-  permissions). The owner's observation that toasts appeared after diagnostic activity points toward
+  permissions). The maintainer's observation that toasts appeared after diagnostic activity points toward
   state-dependence, and is one more reason not to conclude an engine fault. Only a cause specific to
   Electron's Chromium integration would justify a move, and no evidence of one exists.
 
@@ -231,14 +231,14 @@ API-level claims are marked OK only where a primary doc backs them; delivery cla
    alternative has evidence of beating Electron, and the [S] evidence against Tauri, even
    discounted, gives no reason to prefer it. Retention is conditional on BUG-01 and the spikes.
 2. **Chat PWA is not a candidate for the product** (fails FR-06/07/09/11/12/14/15). A PWA install is
-   available to the owner as an **optional data point**: if a PWA toast appears with its window
+   available to the maintainer as an **optional data point**: if a PWA toast appears with its window
    closed, OS-level suppression is less likely; if not, OS-level suppression is more likely. It does
    not separate Electron config from an Electron limitation, because a PWA toast uses Edge's own
    identity and path, not ours. It does not gate any work.
 3. **Meet in-app is feasible in principle on Electron, subject to a spike.** Handler design,
    origin scoping and popup routing belong to the Meet FR and the tech design, not to this ADR. The
    project-rule change (Meet links as the single exception to "external links open in the system
-   browser") has since been decided by the owner (2026-09-30, UI-01); see FR-16, NFR-07 and
+   browser") has since been decided by the maintainer (2026-09-30, UI-01); see FR-16, NFR-07 and
    [meet-call-window.md](../architecture/meet-call-window.md).
 4. **Escalation triggers** (replace ADR-0001's single Tauri trigger):
    - **T1, sign-in:** the block reproduces on the primary path and the cookie-import fallback both
@@ -247,18 +247,18 @@ API-level claims are marked OK only where a primary doc backs them; delivery cla
    - **T2, notification delivery:** BUG-01 is shown to be an Electron limitation. "Proven" means:
      a minimal reproduction on the affected machine, all three S1 causes above ruled out, **and**
      ADR-0002 Revision 3's fallback (main-process notification from `page-title-updated`, generic
-     content only) tried and either failing or judged unacceptable by the owner. That fallback means
+     content only) tried and either failing or judged unacceptable by the maintainer. That fallback means
      "no supported workaround" is unlikely to hold for delivery itself; it may hold only for content
-     and deep link quality. tech-lead declares it with `electron-developer`'s evidence; the owner
+     and deep link quality. the maintainer declares it with the contributor's evidence; the maintainer
      ratifies.
    - **If a trigger fires and the alternative cannot deliver Meet on Linux** the options are the
-     owner's: (a) Windows-only replacement shell with Electron kept for Linux; (b) drop in-app Meet
+     maintainer's: (a) Windows-only replacement shell with Electron kept for Linux; (b) drop in-app Meet
      on Linux (links open in the system browser); (c) drop Linux; (d) stay on Electron and accept
      the limitation.
 
 ## Spikes
 
-Owner of the work: `electron-developer`, results reviewed by tech-lead. Time-box: **two working days
+Work done by: a contributor; results reviewed by the maintainer. Time-box: **two working days
 in total**; an unfinished spike is reported as such, not extended silently.
 
 - **A, BUG-01 diagnosis** (already under way): the candidate causes above, including whether a
@@ -272,12 +272,12 @@ in total**; an unfinished spike is reported as such, not extended silently.
 - **B, Meet in Electron:** a real call with camera, mic and screen share on Windows and on Linux.
   Meet in a wrapper is an unsupported configuration, so this is **re-verified on every release**,
   as sign-in is under ADR-0001.
-  - **If B shows Meet does not work in Electron:** that is an **owner decision**, not a trigger this
+  - **If B shows Meet does not work in Electron:** that is an **maintainer decision**, not a trigger this
     ADR pre-decides. The candidate shells are unproven for Meet as well, so option (a) is not
     obviously better; realistic options are B1 Meet opens in the system browser (on Linux or
-    everywhere), B2 the owner accepts a Windows-only in-app Meet, or B3 accept the limitation.
-    tech-lead brings the spike evidence to the owner.
-  - **Linux screen-share picker (owner default 4, now in the *Electron security baseline* project rule):** on Linux only, the OS's own
+    everywhere), B2 the maintainer accepts a Windows-only in-app Meet, or B3 accept the limitation.
+    the maintainer brings the spike evidence to the maintainer.
+  - **Linux screen-share picker (maintainer default 4, now in the *Electron security baseline* project rule):** on Linux only, the OS's own
     picker may replace the app's picker **if B shows it works**; the user always chooses explicitly and a
     silent or pre-selected source is never allowed on any platform. `useSystemPicker` is documented as
     experimental and macOS 15+ only, so it is not the mechanism; Electron documents that
@@ -293,9 +293,9 @@ in total**; an unfinished spike is reported as such, not extended silently.
   - **Linux availability:** no Linux machine is known to be available for B. The two-day time-box
     **assumes one** (a VM or a spare machine with a desktop session and a camera or virtual camera).
     If none exists, the Linux half of B is reported as "not run", the Windows half proceeds, and
-    Linux Meet stays [U]. The owner should say whether such a machine exists.
+    Linux Meet stays [U]. The maintainer should say whether such a machine exists.
 - **C, notification payload:** what Chat's notification carries (title, tag, data) and whether any
-  conversation identifier is reachable without scraping. Feeds the owner's decision on a second
+  conversation identifier is reachable without scraping. Feeds the maintainer's decision on a second
   source.
 
 ### Progress since this ADR was written (status stays Proposed)
@@ -318,8 +318,8 @@ in total**; an unfinished spike is reported as such, not extended silently.
   forward (FR-05c step 1).
 - **Still open:** Spike C on a real Chat (what the payload carries; whether the chat name is in the title;
   whether the `tag` names a sender or a conversation; what `(N)` counts), so FR-05b and FR-05c step 2 remain
-  the owner's decision; a real click on a real toast on real Chat; Spike B (Meet): Windows and WSLg-Linux harness parts done,
-  owner part and the native-Linux portal/camera checks open (see "Spike B result" below); Linux delivery never verified.
+  the maintainer's decision; a real click on a real toast on real Chat; Spike B (Meet): Windows and WSLg-Linux harness parts done,
+  maintainer part and the native-Linux portal/camera checks open (see "Spike B result" below); Linux delivery never verified.
   Details: [notifications.md](../architecture/notifications.md).
 
 ### Spike B result (Windows 11, Electron 44.4.3 / Chromium 152.0.7977.130; 2026-10-01; living section)
@@ -329,21 +329,21 @@ the call-window config: `persist:google-chat` imported from `session.js`, the ap
 `contextIsolation` on, `nodeIntegration` off, `sandbox` on, no preload, media granted only to
 `https://meet.google.com` (request and check), explicit picker only. The table below is the **Windows** run. The
 Linux half was first skipped on the mistaken belief that no Linux host existed; the Linux target is **WSL2 with WSLg
-on the owner's workstation** (owner decision 2026-09-30), and it was run on 2026-10-02: see "Spike B, Linux half
-(WSLg)" below. Nothing below was observed in a real signed-in Meet call; that part needs the owner
+on the maintainer's workstation** (maintainer decision 2026-09-30), and it was run on 2026-10-02: see "Spike B, Linux half
+(WSLg)" below. Nothing below was observed in a real signed-in Meet call; that part needs the maintainer
 (checklist in the harness README, about 5 minutes). "Stand-in page" means a local page served under the real
 `https://meet.google.com` origin, not Meet itself.
 
 | # | Question | Result | Evidence | Status |
 |---|---|---|---|---|
-| 1 | Meet loads, takes the session or sign-in? | `meet.google.com/new` in a fresh harness profile redirected to `accounts.google.com/v3/signin/identifier`, and the Google sign-in identifier page rendered normally (no "browser not secure" page) with the app UA. Whether the password / 2-step steps complete, and whether the existing product session is accepted, is not known. | `out/real-meet.png`, `auto-results.json` `realMeet` | Page load observed; **sign-in and existing session need owner** |
-| 2 | Start/join, camera and mic? | From origin `https://meet.google.com`: `getUserMedia({audio,video})` succeeded with real devices (mic "Default - Microphone (HSW249B)", camera "motorola edge 50 neo (Windows Virtual Camera)"), tracks `live`; Windows ConsentStore showed webcam and mic `inUse`. The same call from `accounts.google.com` is denied (`NotAllowedError`). Starting or joining an actual meeting was not done. | `probeMeet`, `devicesWhileCaptured`, `probeAccounts` | getUserMedia **observed**; real call **needs owner** |
-| 3 | Screen share via explicit picker? | Works **only from a non-elevated process**. Picker shown on each of 3 share starts; choosing screen gave a live track (`displaySurface: monitor`), choosing a window a live track (`window`); Cancel rejects with `AbortError: Invalid capture constraints`. From an **elevated** (Administrator) process both fail with `NotReadableError: Could not start video source` and Chromium logs `CreateForMonitor/CreateForWindow failed hr 0x80070005` (cause = elevation is the only difference tried, not proven). The picker click was simulated by the test driver, so what a person sees is for the owner to confirm. | `display_screen`, `display_window`, `displayCancelled`, runs elevated vs. `explorer.exe`-launched | **Observed** (driver-clicked picker); visual check needs owner |
-| 4 | Camera/mic released on destroy? | After `win.destroy()` of a window holding live camera and mic tracks, ConsentStore `LastUsedTimeStop` was set within 1 s for both (every run in which it was checked). Only `destroy()` was measured, not the X button; the LED was not seen. | `release`, `devices+3s/+10s` log lines | **Observed** (OS-level); LED/X-button path needs owner |
-| 5 | beforeunload / `will-prevent-unload` | Stand-in page with an unconditional `beforeunload` handler: with **no** `will-prevent-unload` listener, `win.close()`, `contents.close({waitForBeforeUnload:true})`, a page `location.reload()` and `app.quit()` are all **silently blocked** (no dialog, no event; for `app.quit()` `before-quit` fires, `will-quit` never does, window and process stay). A listener that does not call `preventDefault()` behaves the same. A listener calling `preventDefault()` lets close (65 ms), reload and quit proceed. The window-close block also occurred with `navigator.userActivation.hasBeenActive === false`. So design invariant I4's "may be a silent block" is **true on this Electron**: an unregistered listener means a Meet objection cancels close and quit with no UI, which supports the always-registered handler and the `isQuitting` reset in the design. Whether real Meet registers `beforeunload` during a call was not observed. | `unload[]`, `quit` in `auto-results.json` | Mechanics **observed on stand-in**; real Meet **needs owner** (README steps 4, 5) |
+| 1 | Meet loads, takes the session or sign-in? | `meet.google.com/new` in a fresh harness profile redirected to `accounts.google.com/v3/signin/identifier`, and the Google sign-in identifier page rendered normally (no "browser not secure" page) with the app UA. Whether the password / 2-step steps complete, and whether the existing product session is accepted, is not known. | `out/real-meet.png`, `auto-results.json` `realMeet` | Page load observed; **sign-in and existing session need maintainer** |
+| 2 | Start/join, camera and mic? | From origin `https://meet.google.com`: `getUserMedia({audio,video})` succeeded with real devices (mic "Default - Microphone", a virtual camera), tracks `live`; Windows ConsentStore showed webcam and mic `inUse`. The same call from `accounts.google.com` is denied (`NotAllowedError`). Starting or joining an actual meeting was not done. | `probeMeet`, `devicesWhileCaptured`, `probeAccounts` | getUserMedia **observed**; real call **needs maintainer** |
+| 3 | Screen share via explicit picker? | Works **only from a non-elevated process**. Picker shown on each of 3 share starts; choosing screen gave a live track (`displaySurface: monitor`), choosing a window a live track (`window`); Cancel rejects with `AbortError: Invalid capture constraints`. From an **elevated** (Administrator) process both fail with `NotReadableError: Could not start video source` and Chromium logs `CreateForMonitor/CreateForWindow failed hr 0x80070005` (cause = elevation is the only difference tried, not proven). The picker click was simulated by the test driver, so what a person sees is for the maintainer to confirm. | `display_screen`, `display_window`, `displayCancelled`, runs elevated vs. `explorer.exe`-launched | **Observed** (driver-clicked picker); visual check needs maintainer |
+| 4 | Camera/mic released on destroy? | After `win.destroy()` of a window holding live camera and mic tracks, ConsentStore `LastUsedTimeStop` was set within 1 s for both (every run in which it was checked). Only `destroy()` was measured, not the X button; the LED was not seen. | `release`, `devices+3s/+10s` log lines | **Observed** (OS-level); LED/X-button path needs maintainer |
+| 5 | beforeunload / `will-prevent-unload` | Stand-in page with an unconditional `beforeunload` handler: with **no** `will-prevent-unload` listener, `win.close()`, `contents.close({waitForBeforeUnload:true})`, a page `location.reload()` and `app.quit()` are all **silently blocked** (no dialog, no event; for `app.quit()` `before-quit` fires, `will-quit` never does, window and process stay). A listener that does not call `preventDefault()` behaves the same. A listener calling `preventDefault()` lets close (65 ms), reload and quit proceed. The window-close block also occurred with `navigator.userActivation.hasBeenActive === false`. So design invariant I4's "may be a silent block" is **true on this Electron**: an unregistered listener means a Meet objection cancels close and quit with no UI, which supports the always-registered handler and the `isQuitting` reset in the design. Whether real Meet registers `beforeunload` during a call was not observed. | `unload[]`, `quit` in `auto-results.json` | Mechanics **observed on stand-in**; real Meet **needs maintainer** (README steps 4, 5) |
 | 6 | Permission names delivered | `getUserMedia`: request handler gets `media` with `details.mediaTypes` `["audio","video"]`; check handler gets `media` with `details.mediaType` `video`/`audio` (or none), and `speaker-selection` (no mediaType). `getDisplayMedia`: request handler gets `media` with **empty** `mediaTypes`, then the display-media handler is called; **`display-capture` was delivered to neither handler** in this run. Origins arrive with a trailing slash (`requestingOrigin`, `securityOrigin`, `request.securityOrigin` are `https://meet.google.com/`); `requestingUrl` is the full URL. | `permissionLog` | **Observed** |
 
-**Consequences for the design (for tech-lead).**
+**Consequences for the design (for the maintainer).**
 - The permission allowlist cannot rely on the name `display-capture`; the screen-share gate is the display-media
   handler plus an origin test, and `media` with empty `mediaTypes` must be allowed for that origin or the flow is
   untested without it. Normalise origins (`new URL(x).origin`); a literal compare with `https://meet.google.com` fails
@@ -351,7 +351,7 @@ on the owner's workstation** (owner decision 2026-09-30), and it was run on 2026
 - `setDisplayMediaRequestHandler` also fired with `userGesture: false`; the product handler should deny a request with no
   user gesture (a suggestion, not tested against Meet).
 - `speaker-selection` is checked by Meet's device code and is denied by this config; whether Meet needs it
-  (output-device choice) is unknown, owner run will show it in the log.
+  (output-device choice) is unknown, maintainer run will show it in the log.
 - `desktopCapturer.getSources` took 3.3 to 8.2 s here with 10 to 15 sources and WGC "not capturable" noise for
   some windows; the picker needs a loading state and must not block the close path.
 - Never run the product elevated if Meet screen share matters; worth a line in the release notes.
@@ -365,21 +365,21 @@ on the owner's workstation** (owner decision 2026-09-30), and it was run on 2026
 RDP, with no GPU/DRM render node, no camera, no GNOME/KDE shell. Findings about the OS screen-share portal, camera,
 tray, notifications and window-manager behaviour do **not** transfer to a real desktop; findings about Electron/
 Chromium logic (permission names, `will-prevent-unload`, release of audio capture, UA) very likely do.
-Environment: `wsl -l -v` showed `Ubuntu-24.04` (WSL2); WSLg 1.0.73.2; `DISPLAY=:0` and `wayland-0` both present,
+Environment: WSL2 + WSLg on Windows 11 (Ubuntu 24.04); `DISPLAY=:0` and `wayland-0` both present,
 `XDG_SESSION_TYPE` empty; PulseAudio at `/mnt/wslg/PulseServer` (`RDPSource`, `RDPSink`); `/dev/video*` absent. Same
 harness, run non-interactively (`--mode=auto`, picker clicks simulated by the driver) once with
 `--ozone-platform=x11` and once with `--ozone-platform=wayland`. Setup and limits:
-[verify-on-linux-wslg.md](../development/verify-on-linux-wslg.md). Real signed-in Meet was **not** driven (owner).
+[verify-on-linux-wslg.md](../development/verify-on-linux-wslg.md). Real signed-in Meet was **not** driven (maintainer).
 
 | # | Question | Linux (WSLg) result | Evidence | Status |
 |---|---|---|---|---|
-| 1 | Meet loads with the app UA | `meet.google.com/new` redirected to `accounts.google.com/v3/signin/identifier`, page rendered ("Sign in", no "browser not secure" page) on x11 and wayland. UA `Mozilla/5.0 (X11; Linux x86_64) ... Chrome/152.0.7977.130 Safari/537.36`. Whether sign-in completes: not known. | `realMeet`, `probeMeet.ua` | Page load **observed**; sign-in **needs owner** |
+| 1 | Meet loads with the app UA | `meet.google.com/new` redirected to `accounts.google.com/v3/signin/identifier`, page rendered ("Sign in", no "browser not secure" page) on x11 and wayland. UA `Mozilla/5.0 (X11; Linux x86_64) ... Chrome/152.0.7977.130 Safari/537.36`. Whether sign-in completes: not known. | `realMeet`, `probeMeet.ua` | Page load **observed**; sign-in **needs maintainer** |
 | 2 | `getUserMedia` | **No camera in WSLg**: `getUserMedia({audio,video})` rejects `NotFoundError: Requested device not found` (no `/dev/video*`; `enumerateDevices` lists only audioinput/audiooutput). **Audio only works** from the meet origin (track label "Default", `live`); the same call from `accounts.google.com` is `NotAllowedError`, as on Windows. Camera on Linux is **not tested**. | `probeMeet`, `probeAccounts` | Mic **observed**; camera **untestable here** |
 | 3a | `getDisplayMedia` via the app picker, X11 | Works: `getSources` 30 ms returned 2 screens + windows; picker shown on every start; screen gave a live `monitor` track, window a live `window` track; Cancel rejects `AbortError: Invalid capture constraints` (identical to Windows). | `display_screen/_window`, `displayCancelled`, `sourceKinds` | **Observed** (driver-clicked) |
 | 3b | `getDisplayMedia` via the app picker, Wayland | Works for screens only: `getSources` took ~3.0 s and returned `screen` x2, **no windows**; screen gave a live `monitor` track; the window option did not exist. Cancel as above. | `sourceKinds`, `getSourcesMs`, `sourceKindAvailable_window: false` | **Observed**; no window share under Wayland in WSLg |
 | 3c | OS picker (xdg-desktop-portal ScreenCast) | **Not testable in WSLg.** `xdg-desktop-portal` + `-gtk` run but expose no ScreenCast interface; installing `xdg-desktop-portal-wlr` failed with "Compositor doesn't support zwlr_screencopy_manager_v1" (Weston lacks it), then removed again. Electron's `useSystemPicker` is documented macOS-only (<https://www.electronjs.org/docs/latest/api/session>), so on Linux the portal path would be Chromium's PipeWire capturer behind `getSources` under Ozone Wayland, which this environment cannot exercise. Whether the portal lets the user choose explicitly, and whether nothing is pre-selected, is **unknown**. | `wlr.log`, `gdbus introspect` (no ScreenCast), `session` doc | **Unverified: needs a native GNOME/KDE host** |
 | 4 | Release on destroy | `win.destroy()` of a window holding a live mic track: PulseAudio `source-outputs` went 1 -> 0 within 1 s (x11 and wayland), stayed 0 for 12 s. Camera: none exists. LED/X-button path not seen. | `release` (`pactl list short source-outputs`) | Mic **observed**; camera **untestable** |
-| 5 | beforeunload / `will-prevent-unload` | **Same as Windows.** Without a listener (or with a log-only one) `win.close()`, `contents.close({waitForBeforeUnload})`, page `location.reload()` and `app.quit()` are silently blocked (`before-quit` only, window stays); a listener calling `preventDefault()` lets close (about 50 ms), reload and quit proceed (`will-quit` reached). Also blocked with no user activation. Identical on x11 and wayland. Windows' odd "process survives after quit" did **not** reproduce: the harness process exited (exit 0). | `unload[]`, `quit` | **Observed** on stand-in page; real Meet needs owner |
+| 5 | beforeunload / `will-prevent-unload` | **Same as Windows.** Without a listener (or with a log-only one) `win.close()`, `contents.close({waitForBeforeUnload})`, page `location.reload()` and `app.quit()` are silently blocked (`before-quit` only, window stays); a listener calling `preventDefault()` lets close (about 50 ms), reload and quit proceed (`will-quit` reached). Also blocked with no user activation. Identical on x11 and wayland. Windows' odd "process survives after quit" did **not** reproduce: the harness process exited (exit 0). | `unload[]`, `quit` | **Observed** on stand-in page; real Meet needs maintainer |
 | 6 | Permission names delivered | Same as Windows: `getUserMedia` request gets `media` with `mediaTypes` (`["audio"]` seen; `["audio","video"]` was not seen because the combined call has no camera to ask for); check handler gets `media` with `mediaType` `video`/`audio`, plus `speaker-selection`; `getDisplayMedia` request gets `media` with **empty** `mediaTypes`, then the display-media handler; **`display-capture` was not delivered**. Origins with trailing slash. | `permissionLog` | **Observed** |
 
 **What this changes.**
@@ -410,7 +410,7 @@ Wails, CEF, Qt WebEngine and NW.js were **not evaluated**; no evidence they beat
 ### Positive
 - No rewrite; the implemented requirements and test net stay.
 - BUG-01 is diagnosed on its merits instead of being masked by a platform change.
-- The notification-deep-link problem is surfaced as an explicit owner decision.
+- The notification-deep-link problem is surfaced as an explicit maintainer decision.
 
 ### Negative
 - Electron ships its own Chromium: larger installers and a patch cadence to follow.

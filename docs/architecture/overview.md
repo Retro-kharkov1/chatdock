@@ -24,7 +24,10 @@ doc for the *why*; this doc covers the concrete configuration). Rules cited as *
   opened from such a window loads in the main window (attachments go to the save dialog, other Chat addresses to
   the system browser). The router order is Meet, Chat, Google app, system browser. While a screen share is being
   chosen, a third short-lived window exists: the modal source picker (a child of the call window, local
-  HTML, own preload).
+  HTML, own preload). A tiny click-through, non-focusable hint window ("Copied" or "Link copied") also appears for about
+  1.5 s next to the cursor after a smart copy (FR-18, [Smart Copy](smart-copy.md)); it has no preload, no IPC and its
+  own non-persistent partition with every permission denied. The main window's existing preload also carries one
+  internal, payload-free selection signal for that feature ([IPC Contract](ipc-contract.md)); copy-on-select exists in the main window only.
 - **Main renderer**: the main `BrowserWindow`, loading
   `https://chat.google.com/` (FR-01) directly — never an Electron `<webview>`
   tag (per ADR-0001 and the *Electron security baseline* project rule). Treated as untrusted
@@ -65,10 +68,11 @@ call to `shell.openExternal()` instead of opening it inside the app (per
 the *Electron security baseline* project rule), **with one exception**: a Google Meet link (exact match, see
 [Meet Call Window](meet-call-window.md) §2 and the project rule's "Single exception") is denied as a popup and
 opened in the app-owned call window instead. `will-navigate` is validated against an allowlist starting
-with `chat.google.com`/`accounts.google.com` origins; anything else is prevented and handed to the
+with `chat.google.com`/`accounts.google.com` origins (plus any acceptable `https` origin while a sign-in is in progress,
+[Sign-in Flow](sign-in-flow.md)); anything else is prevented and handed to the
 system browser the same way, except that the main window navigating itself to a Meet URL is prevented and
 routed to the call window. Both handlers are thin wrappers over one testable router factory with injected
-`openCallWindow` / `openExternal` ([Meet Call Window](meet-call-window.md) §3). **Owner decision 2026-10-01:** the
+`openCallWindow` / `openExternal` ([Meet Call Window](meet-call-window.md) §3). **Maintainer decision 2026-10-01:** the
 system-browser hand-off applies only to `http`, `https` and `mailto`; any other scheme is not opened
 (§2 rule 5; the current handlers in `src/main/index.js` still pass every URL on and are changed first,
 before any Meet window work). **Today** the session's permission
@@ -79,17 +83,16 @@ including `clipboard-read`, `clipboard-write`, `clipboard` and `clipboard-saniti
 empty-`mediaTypes` screen-share precursor), `speaker-selection`, and a display-media handler
 (see [Meet Call Window](meet-call-window.md) §6).
 
-**This allowlist is provisional, not settled.** Google's sign-in flow — especially 2-factor/
-security-challenge steps (prompt approval, backup codes, security-key/WebAuthn challenges) — can
-route through additional origins beyond `accounts.google.com` (observed patterns include
-`myaccount.google.com`, WebAuthn/FIDO redirect pages, and SMS/voice-challenge intermediate pages,
-though the exact set depends on the account's configured 2FA methods and is not fully enumerable
-without a live sign-in). A too-narrow allowlist would bounce a real 2FA step out to the system
-browser mid-flow, breaking FR-03's "no separate external browser window was required" scenario for
-some accounts. **Task 2's real sign-in verification is what actually settles this list** — if a
-real sign-in with 2FA enabled hits a blocked navigation, add that origin rather than treating the
-starting list above as final. Do not present this table as complete before that verification has
-happened.
+**The fixed list is not the whole story during sign-in.** Google's sign-in can route through origins that cannot
+be enumerated: the organisation's own identity provider (SAML single sign-on: Okta, Microsoft Entra / Azure AD,
+ADFS, Ping, OneLogin, a custom domain) and second-step or passkey pages on other hosts. A too-narrow list bounced
+such a step to the system browser (different session) and the sign-in died, against FR-03. Instead of growing the
+list, the main window has a **sign-in mode** ([Sign-in Flow](sign-in-flow.md), FR-19): from the moment the main frame
+commits on `accounts.google.com` (or on an acceptable page after a chain that passed through it) until it commits on
+Chat again (or a limit or the tray entry "Back to Chat" returns it to the start URL), any acceptable `https` origin
+other than Google application hosts may load in the main window, and no origin other than Chat gets a permission, a
+preload bridge, an injected script, a download or an accepted IPC message (shipped; the origin gates, the download rule and the mode
+are implemented). The fixed list (`chat.google.com`, `accounts.google.com`) remains the rule outside that mode.
 
 ## Session persistence (FR-03, FR-04)
 

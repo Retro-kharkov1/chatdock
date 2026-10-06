@@ -11,10 +11,10 @@ This is a **single-user personal utility**. It is scoped, specified, and will be
 accordingly — not as a multi-user or distributable product, even though installers for two
 platforms are produced.
 
-**Target platforms: Windows and Linux only.** macOS was dropped from scope by explicit owner
+**Target platforms: Windows and Linux only.** macOS was dropped from scope by explicit maintainer
 decision — see [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md): macOS notifications
 require a code-signed app (confirmed against `electronjs.org/docs/latest/api/notification`), the
-owner does not use macOS, and paying for an Apple Developer Program membership (US $99/year) to
+maintainer does not use macOS, and paying for an Apple Developer Program membership (US $99/year) to
 make a platform work that nobody will run was not justified.
 
 ## Scope
@@ -23,7 +23,7 @@ make a platform work that nobody will run was not justified.
 - Electron shell that loads the Google Chat web app in a native window.
 - Google account authentication that persists across restarts/reboots (no repeated login).
 - OS-native notifications for new Google Chat messages, delivered even when the window is
-  closed to tray, opening that conversation when clicked (target; conditional on an open owner decision — see FR-05).
+  closed to tray, opening that conversation when clicked (target; conditional on an open maintainer decision — see FR-05).
 - Close-to-tray behavior; tray icon with a context menu; explicit Quit/Exit action.
 - Single-instance enforcement (a second launch focuses the existing instance instead of opening
   a second window).
@@ -42,6 +42,8 @@ make a platform work that nobody will run was not justified.
   opened (FR-16, NFR-07).
 - Links to Google services (Drive, Docs, Calendar and so on) opened in app-owned windows that share the signed-in
   session, and a Chat conversation link loaded in the main window (FR-17).
+- Smart copy: right-click on a link copies its URL and releasing the mouse after selecting text copies the
+  selection (main Chat window only), each with a short hint next to the cursor (FR-18).
 - A dedicated Settings window consolidating start-at-login, notification sound, mute, and icon
   blinking (FR-15).
 
@@ -113,6 +115,8 @@ Feature: Google sign-in
     And no separate external browser window was required to complete the sign-in
 ```
 
+Accounts that sign in through the organisation's own identity provider (single sign-on) are covered by FR-19.
+
 ### FR-04 — Session persistence across restarts and reboots
 Once signed in, the user is not asked to sign in again on subsequent application launches,
 including after a full machine reboot, unless the Google session itself has been explicitly
@@ -141,8 +145,8 @@ Feature: Session persistence
 ```
 
 ### FR-05 — System notifications for new messages, landing on the conversation when clicked
-*Amended 2026-09-30 (owner decisions). FR-05 is now three parts with different certainty. Part A is
-unconditional. Parts B and C partly depend on ADR-0004 Spike C and on an owner decision that has not
+*Amended 2026-09-30 (maintainer decisions). FR-05 is now three parts with different certainty. Part A is
+unconditional. Parts B and C partly depend on ADR-0004 Spike C and on a maintainer decision that has not
 been made (see "Open question"). The parts are stable sub-IDs: FR-05a, FR-05b, FR-05c.*
 
 **Priority: Must (all three parts).**
@@ -165,8 +169,8 @@ Rules that bound it (unchanged from before):
   page's own). The tray has **one global icon**, so the indicator is global. FR-14's blink and flash
   are separate and are tied to the not-focused condition.
 
-#### FR-05b — Notification content (target; conditional on Spike C and the owner's answer)
-The owner requires the notification to show **which chat the message is from**: the chat name (the
+#### FR-05b — Notification content (target; conditional on Spike C and the maintainer's answer)
+The maintainer requires the notification to show **which chat the message is from**: the chat name (the
 sender's name for a direct message) as the title and the message text as the body. A notification
 showing only generic text (for example "N new messages") does not meet this part.
 
@@ -174,17 +178,17 @@ showing only generic text (for example "N new messages") does not meet this part
 Clicking a notification does two things:
 1. **(Unconditional)** The application window is brought to the front and given focus, **including
    when it was hidden to the tray or minimized** (restored from the tray if hidden).
-2. **(Conditional on Spike C and the owner's answer)** The application shows **that conversation** —
-   not whichever conversation happened to be open before. The owner's words are "open that chat".
+2. **(Conditional on Spike C and the maintainer's answer)** The application shows **that conversation** —
+   not whichever conversation happened to be open before. The maintainer's words are "open that chat".
    Scrolling to the specific message is **not** required; see the stretch question below.
 
 **Degraded outcome — defined.** If the conversation cannot be determined, the window still comes to the
 front and focused (step 1), and the app writes a **warning-level entry to its persistent application
 log** stating that a notification click could not be resolved to a conversation. "Visibly" means
-findable in that log by the owner or a tester; no on-screen message is required. It must never be
+findable in that log by the maintainer or a tester; no on-screen message is required. It must never be
 silent, so a degraded click is never mistaken for the feature working.
 
-#### What applies under each owner answer
+#### What applies under each maintainer answer
 | Element | Under (a) — bounded second source accepted | Under (b) — generic content, focus-only click |
 |---|---|---|
 | FR-05a delivery | Applies | Applies |
@@ -193,7 +197,7 @@ silent, so a degraded click is never mistaken for the feature working.
 | FR-05c step 2 (open that conversation) | Applies | **Does not apply**; amended |
 | Degraded-outcome logging | Applies to any unresolved click | Not needed — the focus-only click is then the standard behaviour, not a degradation |
 
-Until the owner answers, the conditional scenarios below are the **target** and are written as such; a
+Until the maintainer answers, the conditional scenarios below are the **target** and are written as such; a
 test author must not treat a failure of a conditional scenario as a regression before Spike C reports.
 
 ```gherkin
@@ -255,7 +259,7 @@ Feature: System notifications
     When the user clicks the notification
     Then the window is restored, brought to the front and focused
 
-  # ---- FR-05b: conditional on Spike C + owner answer (a) ----
+  # ---- FR-05b: conditional on Spike C + maintainer answer (a) ----
   Scenario: [manual-only] [conditional - applies under (a)] Title names the chat and body is the message
     Given a new message arrives in the direct message with "Olena"
     When the OS-native notification is shown
@@ -267,7 +271,7 @@ Feature: System notifications
     Then its title identifies the chat ("Team Alpha", with or without the sender's name)
     And its body is the message text
 
-  # ---- FR-05c step 2: conditional on Spike C + owner answer (a) ----
+  # ---- FR-05c step 2: conditional on Spike C + maintainer answer (a) ----
   Scenario: [manual-only] [conditional - applies under (a)] Clicking opens that conversation, not just any focus
     Given the window is hidden to tray
     And a new message arrives in conversation "B" while conversation "A" was the last one open
@@ -290,8 +294,8 @@ Feature: System notifications
       not be resolved to a conversation
 ```
 
-**Open question (owner decision; not decided here) — how to reach the right conversation.** ADR-0004
-states the choice the owner will face once Spike C reports (what Chat's notification actually carries,
+**Open question (maintainer decision; not decided here) — how to reach the right conversation.** ADR-0004
+states the choice the maintainer will face once Spike C reports (what Chat's notification actually carries,
 and whether a conversation identifier is reachable without scraping):
 - **(a)** accept a bounded second source for this one purpose (the document title / unread state, or
   reading the page) — which touches the *Wrapper, not a rewrite* project rule; or
@@ -299,8 +303,8 @@ and whether a conversation identifier is reachable without scraping):
 
 Sub-questions: if only the sender is known and the message is in a group space, is a sender-only title
 acceptable, or must the space name be shown? **Stretch question:** should a click also scroll to the
-specific message, or is opening the chat enough? (The owner said "open that chat"; scrolling is
-excluded unless the owner asks for it.)
+specific message, or is opening the chat enough? (The maintainer said "open that chat"; scrolling is
+excluded unless the maintainer asks for it.)
 
 #### History — superseded mechanism notes (not normative)
 *Kept so a reader does not re-derive them. The current mechanism is undecided; these describe what was
@@ -311,8 +315,8 @@ superseded in the [change log](#change-log).*
   standard Web Notifications API when the tab is backgrounded and that Electron bridges those calls to
   the OS while the renderer stays alive **and** Chat's own `document.visibilityState` reports the
   window as hidden. An earlier revision set `backgroundThrottling: false`, which pins `visibilityState`
-  at `"visible"`, so Chat suppressed every notification while hidden. Caught in the owner's real test
-  and traced by `electron-developer`; see [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
+  at `"visible"`, so Chat suppressed every notification while hidden. Caught in the maintainer's real test
+  and traced by the implementer; see [ADR-0002](../adr/0002-notification-delivery-mechanism.md)
   Revision 3. `backgroundThrottling` is left at Electron's default (empirically confirmed on the pinned
   Electron 44.4.3).
 - **2026-09-30 finding (secondary evidence, unverified in this repo).** Chat very likely raises its
@@ -352,12 +356,12 @@ menu with, at minimum:
 - **Show call window** — present **only while a Meet call window (FR-16) exists**; first entry in the
   menu. Restores it if minimized, raises and focuses it, and never touches the main Chat window. When the
   screen-share source picker is open, focus goes to the picker (the window that can take input). Absent
-  when no call window exists, so the menu is unchanged then. (Owner decision 2026-10-01, P3.) It earns its
+  when no call window exists, so the menu is unchanged then. (Maintainer decision 2026-10-01, P3.) It earns its
   place because a call window buried behind other windows is otherwise reachable only through the OS
   window switcher, and the tray is pointer-only. Wording: [design 06](../design/06-meet-native-wording.md).
 - **Show/Hide Google Chat** — toggles the **main Chat window's** visibility (mirrors double-click on
   the tray icon). While a Meet call window (FR-16) is open it acts on the main window only and never
-  hides or closes the call (working default, not yet confirmed by the owner — see FR-16). It earns its place
+  hides or closes the call (working default, not yet confirmed by the maintainer — see FR-16). It earns its place
   because close-to-tray (FR-06) removes the taskbar window as the way to bring it back on some
   platforms/configurations, so the tray needs its own explicit way back in.
 - **Mute notifications** — checkbox toggle; see FR-12. This is the **only** preference checkbox
@@ -366,7 +370,7 @@ menu with, at minimum:
 - **Settings…** — opens the Settings window (see FR-15), where Start at login, Notification sound,
   and Icon blinking (FR-14) are managed.
 - **Exit** — the only action that actually terminates the application process. **While a live call exists
-  it first asks for confirmation** (owner decision 2026-10-01, P2; a native OS dialog, wording in
+  it first asks for confirmation** (maintainer decision 2026-10-01, P2; a native OS dialog, wording in
   [design 06](../design/06-meet-native-wording.md)): if a call window exists, Exit first treats it as a
   close attempt; only when the call page objects to being closed (a *live call*, as defined in FR-16) does
   the dialog "Exit Google Chat Desktop?" appear, with **Exit** and **Cancel** (Cancel is the default and
@@ -383,7 +387,7 @@ The build/version diagnostic line (FR-13) is also part of this menu, placed last
 separator — it is not a preference control and is listed separately in FR-13.
 
 The application does **not** provide a way to quit from within the web page itself (no in-page
-Exit control) — Exit is reachable only via the tray context menu, per the owner's explicit
+Exit control) — Exit is reachable only via the tray context menu, per the maintainer's explicit
 requirement.
 
 Left-clicking (or double-clicking, per platform convention) the tray icon toggles
@@ -464,10 +468,10 @@ Feature: Tray context menu
 ```
 
 **Resolved (was an open question):** the original draft of this document left "mute notifications"
-and "start on login" out as unrequested speculative scope. The owner has since explicitly asked for
+and "start on login" out as unrequested speculative scope. The maintainer has since explicitly asked for
 both, plus notification sound control — see FR-10, FR-11, FR-12 below. Of the three, only **Mute
 notifications** is reflected in the tray menu list above; Start at login and Notification sound are
-managed exclusively from the Settings window introduced by FR-15 (a later, explicit owner decision
+managed exclusively from the Settings window introduced by FR-15 (a later, explicit maintainer decision
 that superseded an earlier draft keeping all three on the tray menu — see FR-15).
 
 ### FR-08 — Single-instance behavior
@@ -492,7 +496,7 @@ Feature: Single instance
 ```
 
 ### FR-09 — Distribution installers
-Installable packages are produced for **Windows and Linux** (macOS is out of scope — owner
+Installable packages are produced for **Windows and Linux** (macOS is out of scope — maintainer
 decision, see [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md) and NFR-05). See
 **NFR-05** for what "installer" realistically means per platform given the signing constraint on
 Windows. The Linux packages must also satisfy **NFR-08** (install path and executable name without
@@ -517,7 +521,7 @@ forced open) when the user logs into the OS. Toggled from the Settings window's 
 checkbox (see FR-15 — this control lives in Settings only, not the tray menu), which reflects the
 actual current OS-level state (not just an in-app preference that could drift from reality).
 
-**Default — on (owner decision 2026-09-30).** After a fresh installation, the first run enables Start
+**Default — on (maintainer decision 2026-09-30).** After a fresh installation, the first run enables Start
 at login, so the application launches hidden into the tray at every subsequent login without the user
 visiting Settings. This default is applied **once, on the first run of a fresh install, and only when
 no stored choice exists**. It never overrides a choice the user already made: a stored "off", or a
@@ -615,13 +619,13 @@ Feature: Mute notifications
     Then OS-native notifications resume for messages arriving after that point
 ```
 
-**Design decision — "quiet hours" and "mute" are the same feature, deliberately.** The owner's
+**Design decision — "quiet hours" and "mute" are the same feature, deliberately.** The maintainer's
 ask named both terms; this spec treats them as one manual, persistent-until-toggled tray checkbox
 rather than a scheduled time-window feature (e.g. "silence 22:00–08:00 automatically"). Rationale:
 a scheduled quiet-hours UI (time pickers, per-day schedules, timezone handling) is real added
 complexity disproportionate to a single-user personal utility, when a manual toggle achieves the
-practical need the owner described ("a tray menu entry to temporarily silence notifications") with
-far less surface. If the owner later wants a scheduled version, that is a distinguishable follow-up
+practical need the maintainer described ("a tray menu entry to temporarily silence notifications") with
+far less surface. If the maintainer later wants a scheduled version, that is a distinguishable follow-up
 requirement, not assumed here.
 
 ### FR-13 — Build/version diagnostic line in the tray menu
@@ -630,9 +634,9 @@ exact build that is currently running: the app version, whether it is a packaged
 run from source, and a build timestamp. Placed last in the menu, after a separator, so it never
 competes with the actual controls above it.
 
-**Origin:** owner request, made mid-investigation of the FR-05 notification failure recorded in
+**Origin:** maintainer request, made mid-investigation of the FR-05 notification failure recorded in
 [ADR-0002](../adr/0002-notification-delivery-mechanism.md). Diagnosing that failure lost a full
-round to manually working out whether a colleague's installed build and a dev run from source were
+round to manually working out whether an installed build and a dev run from source were
 even running the same code — a bare `app.getVersion()` does not answer that, since it is identical
 across every dev run and every packaged release sharing the same `package.json`.
 
@@ -658,10 +662,10 @@ Feature: Build/version diagnostic line
 **Scope note:** the build timestamp is derived at runtime from the entry file's filesystem mtime
 (see [tray-lifecycle.md](../architecture/tray-lifecycle.md)), not from a git commit hash or a
 build-time string injection — this repo has neither wired up, and the mtime already satisfies the
-owner's actual need ("can I tell this is the current build") without adding new build tooling.
+maintainer's actual need ("can I tell this is the current build") without adding new build tooling.
 
 ### FR-14 — Attention indicator on unread: blinking tray icon and flashing taskbar button
-**Priority: Must.** *Amended 2026-09-30 (owner decision): extended from "tray blink while hidden" to
+**Priority: Must.** *Amended 2026-09-30 (maintainer decision): extended from "tray blink while hidden" to
 "tray blink and taskbar flash whenever the window is not focused". Earlier wording is superseded, not
 kept alongside.*
 
@@ -676,7 +680,7 @@ surfaces at once:
 hidden to the tray; minimized; or visible but without OS input focus (behind other windows, or another
 application has focus). "Focused" means the main Chat window has OS input focus. The Settings window
 and the Meet call window (FR-16) are separate windows: having focus in one of them does **not** make
-the main Chat window focused, so a new message still triggers the indicator (owner decision,
+the main Chat window focused, so a new message still triggers the indicator (maintainer decision,
 2026-09-30).
 
 **Start/resume condition:** both indicators (re)start on **every new-message-arrival event** that
@@ -690,9 +694,9 @@ Precisely:
   state itself and must not create a second timer — see NFR-06. The taskbar flash is likewise
   re-requested without stacking.
 
-  Decision rationale: the owner's stated intent is to have the shell "draw my eye when messages
+  Decision rationale: the maintainer's stated intent is to have the shell "draw my eye when messages
   arrive". An attention signal tied to the *arrival event*, not to a stale "still have something
-  unread" fact, is what serves that. The owner extended it to the taskbar button because a window
+  unread" fact, is what serves that. The maintainer extended it to the taskbar button because a window
   that is open but buried behind other windows is the common real case, and a tray icon alone does
   not reach it.
 
@@ -735,9 +739,9 @@ viewing the conversation does not, by itself, restart them — that takes a **ne
 blinking is poking. The unread state must not be lost because notifications are muted. Turning mute
 on while an indicator is active is stop trigger 3.
 
-**Working assumption (not an owner decision): mute also suppresses the taskbar flash.** The owner
+**Working assumption (not a maintainer decision): mute also suppresses the taskbar flash.** The maintainer
 decided mute for the tray blink; extending it to the flash follows the same "don't poke me" logic but
-was not stated. Pending the owner's confirmation.
+was not stated. Pending the maintainer's confirmation.
 
 **Mute turned OFF while unread messages exist and the window is not focused — working assumption:**
 turning mute off does **not** start the indicators by itself, because they are tied to an arrival
@@ -751,7 +755,7 @@ unaffected either way. The same applies when "Icon blinking" is turned back on.
 off independently of the underlying unread indicator (not optional — FR-05 always requires *some*
 unread signal). When off, unread messages still show the static unread icon; the tray alternation
 stops **and the taskbar button does not flash** (turning it off mid-flash stops the flash — stop
-trigger 3). **Owner decision (2026-09-30):** the one "Icon blinking" setting governs **both** the tray
+trigger 3). **Maintainer decision (2026-09-30):** the one "Icon blinking" setting governs **both** the tray
 blink and the taskbar flash; a separate flash setting is not provided.
 
 ```gherkin
@@ -857,7 +861,7 @@ Feature: Attention indicator on unread (tray blink and taskbar flash)
     And there are unread messages while the window is not focused
     Then the tray icon shows the static unread indicator
     And the tray icon does not alternate
-    And the taskbar button does not flash [owner decision: one setting governs both]
+    And the taskbar button does not flash [maintainer decision: one setting governs both]
 
   Scenario: [automatable] Turning "Icon blinking" off while the indicators are active stops both
     Given both indicators are active
@@ -884,11 +888,11 @@ is best-effort and its real behaviour is verified on a real Linux desktop, not a
 **Scope note:** this requirement extends FR-05's existing unread indicator; it does not change when a
 message counts as "unread" or how that indicator clears — those rules are FR-05's, unchanged.
 
-**Owner decisions (2026-09-30):** (1) "Icon blinking" governs both the tray blink and the taskbar
+**Maintainer decisions (2026-09-30):** (1) "Icon blinking" governs both the tray blink and the taskbar
 flash; (2) while the user is in the Meet call window (FR-16) or the Settings window, a new chat message
 still triggers the indicators (and notifications, FR-05a), because the main Chat window is not focused.
 
-**Working assumptions pending the owner (not decisions):** (a) mute also suppresses the flash; (b)
+**Working assumptions pending the maintainer (not decisions):** (a) mute also suppresses the flash; (b)
 turning mute or blinking back on does not start the indicators until the next arrival.
 
 ### FR-15 — Settings window
@@ -899,16 +903,16 @@ added icon-blinking preference (FR-14) somewhere to live without growing the tra
 **Covers, at minimum:** Start at login (FR-10), Notification sound (FR-11), Mute notifications
 (FR-12), Icon blinking (FR-14).
 
-**Owner decision (2026-09-30), from FR-14:** the "Icon blinking" setting also governs the taskbar
+**Maintainer decision (2026-09-30), from FR-14:** the "Icon blinking" setting also governs the taskbar
 flash, so its label must say so, because "Icon blinking" no longer describes what it does. The
-exact label wording is for `ux-ui-designer` to propose; no separate flash control is added. FR-15 is
+exact label wording is for the designer to propose; no separate flash control is added. FR-15 is
 otherwise unchanged.
 
-**Tray menu vs. Settings window — decided by the owner directly (supersedes the earlier draft):**
+**Tray menu vs. Settings window — decided by the maintainer directly (supersedes the earlier draft):**
 an earlier draft of this document kept all three existing tray checkboxes (Start at login,
-Notification sound, Mute notifications) unchanged, on the reasoning that removing UX the owner
+Notification sound, Mute notifications) unchanged, on the reasoning that removing UX the maintainer
 already relies on without asking first is against standing practice. That reasoning was sound, so
-rather than guess, the owner was asked directly which way to resolve it — and decided the opposite
+rather than guess, the maintainer was asked directly which way to resolve it — and decided the opposite
 of the earlier draft's default:
 - **Mute notifications** is the **only** setting that keeps its tray-menu quick-toggle. It is the
   one preference realistically toggled in the moment (silence notifications right now), which is
@@ -918,7 +922,7 @@ of the earlier draft's default:
   preferences, and belong with the rest of Settings rather than splitting the same class of control
   across two places.
 - **Icon blinking** (FR-14) was already Settings-only in the original design and remains so — the
-  owner's own framing of this feature ("so that all this can be managed... instead of an
+  maintainer's own framing of this feature ("so that all this can be managed... instead of an
   ever-growing tray menu") is the reason new preferences go to Settings, not the tray, from here on.
 
 The tray menu therefore carries exactly one preference checkbox (Mute notifications) plus a new
@@ -929,19 +933,19 @@ display, not a user preference, and stays where FR-13 already placed it (last en
 menu). See "Read-only version/About line" below for the separate, Settings-window-only About line
 this design also introduces.
 
-**No native OS application menu — decided.** `ux-ui-designer` proposed adding a native OS
+**No native OS application menu — decided.** the designer proposed adding a native OS
 application-menu entry point (a `Settings…` item under a standard app menu, with an `Ctrl+,`
 accelerator) as a second way to open Settings, and correctly flagged it as unauthorized by any
 requirement pending ratification. **Decision: rejected — Settings opens only from the tray menu, and
 no application menu is present at all.** Rationale:
-- The owner never asked for a second entry point to Settings; the tray menu's existing
+- The maintainer never asked for a second entry point to Settings; the tray menu's existing
   "Settings…" entry (see above and FR-07) is sufficient.
 - Electron installs a default application menu (including a default Quit/Exit item) unless it is
   actively suppressed — introducing an application menu, even for a single harmless item, creates
   the single most likely way to reintroduce a second quit path into this application, which
   directly conflicts with the "Exit is reachable only via the tray context menu" requirement (see
   FR-07, "the application does **not** provide a way to quit from within the web page itself... Exit
-  is reachable only via the tray context menu, per the owner's explicit requirement"). A carefully
+  is reachable only via the tray context menu, per the maintainer's explicit requirement"). A carefully
   hand-built menu template that omits Quit is a weaker guarantee than the surface not existing at
   all.
 - This is therefore a testable requirement, not an implementation detail left to be remembered: the
@@ -956,7 +960,7 @@ not close or hide the Chat window, and vice versa).
 **When changes take effect — decided:** immediately, with no Save/Cancel step. This matches the
 already-existing behavior of the tray's Mute checkbox (FR-12 applies the moment it's toggled) and
 is the right level of ceremony for a single-user personal utility — a Save/Cancel/dirty-state flow
-is overhead this app's usage pattern (owner adjusts their own settings occasionally) doesn't
+is overhead this app's usage pattern (maintainer adjusts their own settings occasionally) doesn't
 justify.
 
 **Persistence:** settings are persisted to the same local, machine-scoped preference storage
@@ -994,7 +998,7 @@ deliberately narrow:
   with it — they are independent, sourced from the same `app.getVersion()`-equivalent value but
   serving different purposes.
 
-**First run, no saved preferences — everything is on except mute (owner decision 2026-09-30):** the
+**First run, no saved preferences — everything is on except mute (maintainer decision 2026-09-30):** the
 Settings window (and the tray menu's Mute checkbox) show these defaults:
 - Start at login: on (launching hidden into the tray; FR-10)
 - Notification sound: on
@@ -1092,11 +1096,11 @@ Feature: Settings window
 ```
 
 **Scope note:** layout, wording, and interaction design of the Settings window are explicitly out
-of scope for this document — a `ux-ui-designer` owns that. This requirement specifies what must be
+of scope for this document — a designer owns that. This requirement specifies what must be
 manageable, how it opens, when it takes effect, and where it persists, not what it looks like.
 
 ### FR-16 — Google Meet calls in an app-owned call window
-**Priority: Must** (owner-requested 2026-09-30). **Scope cut to the minimum on 2026-10-02** (see the
+**Priority: Must** (maintainer-requested 2026-09-30). **Scope cut to the minimum on 2026-10-02** (see the
 change log): the call window contains only the Meet page; the one surface the application draws itself is
 the screen-share source picker. Real Meet inside Electron is an unsupported configuration; see
 "Verification — every release" below and
@@ -1139,7 +1143,7 @@ instead of the system browser, and the call works inside it:
   user has not yet interacted with the page), the call is treated as **not live**: no confirmation, the
   window closes or the application exits at once. The cost is one unguarded close; the opposite error
   would prompt at the end of every call. Whether real Meet raises the objection during a call is **not yet
-  observed** (Spike B used a stand-in page); the owner-run check is part of the verification below.
+  observed** (Spike B used a stand-in page); the maintainer-run check is part of the verification below.
 
 **Known limitation — back-to-back meetings (kept, not fixed).** Meet's own end page ("You left the
 meeting") has the **same address** as the meeting, so address-only detection counts it as a meeting on
@@ -1154,7 +1158,7 @@ a link in a message, Chat's own **Join / Meet buttons**, and calendar or meeting
 opens it as a new window or navigates the main frame to it (the main-frame case is intercepted, NFR-07).
 A Meet link opened from outside the application is not the application's to route.
 
-**Second Meet link** (owner decision 2026-09-30, revised 2026-10-01). Activating a Meet link while a call
+**Second Meet link** (maintainer decision 2026-09-30, revised 2026-10-01). Activating a Meet link while a call
 window exists never opens a second window:
 - **Meeting on screen** → the existing window is restored if minimized, raised and focused, and the
   existing call is **not** navigated. The user is told by a native OS notification, "A call is already
@@ -1213,7 +1217,7 @@ close. Confirmations are **native operating-system dialogs**; wording in
 window* destroys the window with no further confirmation; *Reload* reloads the same Meet address. An open
 source picker is closed and its request denied. No app-drawn crash panel exists.
 
-**Open question (owner): page load failure.** With no app-drawn panel, a Meet page that fails to load
+**Open question (maintainer): page load failure.** With no app-drawn panel, a Meet page that fails to load
 shows whatever the browser engine shows for a failed load (typically a blank page). The window can be
 closed, and clicking the Meet link again loads it into the existing window (no meeting on screen). No
 dialog is specified because none was requested. Is that acceptable, or should the load failure also get a
@@ -1385,13 +1389,13 @@ for Meet, so it can break on a user-agent or embedding change on Google's side. 
 mechanics on a stand-in page and a real sign-in page load, not a real signed-in call. Every
 **[manual-only]** scenario above must be **re-run by hand on every release**, on a real desktop, stating
 which platform was actually tested (the same discipline as sign-in under ADR-0001). A release that has not
-re-verified it must say so in its release notes. The first owner run must also settle: does real Meet
+re-verified it must say so in its release notes. The first maintainer run must also settle: does real Meet
 raise the unload objection during a call, and how long does it take to answer (to fix the 3-second
 timeout)? If the objection cannot be observed, the P1 and P2 dialogs never show, by the failure direction
-in the *Live call* definition, and the owner decides whether to accept that.
+in the *Live call* definition, and the maintainer decides whether to accept that.
 
-**Open questions (owner):**
-- If a real Meet call does not work in Electron, what does the owner want? ADR-0004 lists Meet in the
+**Open questions (maintainer):**
+- If a real Meet call does not work in Electron, what does the maintainer want? ADR-0004 lists Meet in the
   system browser, a Windows-only in-app Meet, or accepting the limitation.
 - Does a native Linux desktop (with a camera) exist for the Linux half of the real-call check? If not,
   Linux Meet stays unverified.
@@ -1403,14 +1407,14 @@ in the *Live call* definition, and the owner decides whether to accept that.
 - Page load failure: see the open question above.
 
 ### FR-17 — Links to Google services open in app-owned windows (UI-04)
-**Priority: Must** (owner request UI-04, 2026-10-04). Design: [Google App Windows](../architecture/google-app-windows.md),
+**Priority: Must** (maintainer request UI-04, 2026-10-04). Design: [Google App Windows](../architecture/google-app-windows.md),
 which holds the exact hostname lists; the security rule is the second exception in
 [project-rules.md](../architecture/project-rules.md).
 
 A link to a Google service clicked in Chat opens in a **separate app-owned window that shares the signed-in
 session** (FR-04), so the user does not sign in again.
 - **Which links:** `https` links whose hostname is exactly one on the fixed list (Drive, Docs/Sheets/Slides/Forms,
-  Calendar, and, as defaults awaiting owner confirmation, Gmail, Keep, Contacts, Sites; see the design). No
+  Calendar, and, as defaults awaiting maintainer confirmation, Gmail, Keep, Contacts, Sites; see the design). No
   port, no userinfo, no suffix or wildcard match; a `www.google.com/url?q=` wrapper is unwrapped once.
   `https://forms.gle/...` is followed only if it redirects to a listed host (a Google Forms page); otherwise it
   opens in the system browser and no app window is ever shown.
@@ -1438,7 +1442,7 @@ session** (FR-04), so the user does not sign in again.
   the tray never waits.
 
 ```
-Scenario: The owner's Drive example opens signed in
+Scenario: The maintainer's Drive example opens signed in
   Given the app is signed in to Google Chat
   And a chat message contains https://drive.google.com/file/d/FILE_ID/view?usp=sharing
   When the user clicks the link
@@ -1561,10 +1565,258 @@ Scenario: Exit is never blocked
   Then the application quits without a prompt   [automatable]
 ```
 
-**Open questions (owner, all with a default in force):** (1) Gmail, Keep, Contacts and Sites are included by the
-orchestrator's choice, and `g.co`, Maps, Apps Script, Looker Studio and Groups stay in the system browser;
+**Open questions (maintainer, all with a default in force):** (1) Gmail, Keep, Contacts and Sites are included by default (author's choice, to be confirmed), and `g.co`, Maps, Apps Script, Looker Studio and Groups stay in the system browser;
 confirm or change. (2) Google links clicked inside the Meet call window stay unchanged (system browser).
 (3) Main-window downloads now always ask where to save. See the design's open questions.
+
+### FR-18 — Smart copy: link URL on right-click, selection on mouse release (UI-05)
+**Priority: Should** (maintainer request UI-05, 2026-10-04). Design: [Smart Copy](../architecture/smart-copy.md).
+
+- **Right-click on a link** (main Chat window and every Google app window (FR-17), **not** the Meet call window
+  (FR-16)) copies the link address to the clipboard at once and shows the hint "Link copied" next to the cursor for
+  about 1.5 seconds. Only `http`, `https` and `mailto` addresses are copied (a Google `google.com/url?q=` wrapper is
+  replaced by its target, **once**: a wrapper whose target is itself a wrapper copies that inner wrapper address);
+  any other scheme (`javascript:`, `data:`, `tel:` ...) copies nothing and shows no hint. The address is the one the
+  browser engine reports for the link, so it may differ cosmetically from how the author typed it (for example a
+  trailing `/` is added to a bare host). Right-click anywhere else behaves as before (the app adds no menu). **This
+  works only where the page lets the right-click through:** where Chat or a Google page draws its own right-click
+  menu on a link, nothing is copied (recorded per surface in the design's spike; a documented limitation, not a
+  defect). If the spike shows Chat does this in the main window, the maintainer is told and right-click link copy works in
+  Google app windows only; no extra page-reading channel is added for it.
+- **Selecting text with the left mouse button** (drag, double-click or triple-click) **in the main Chat window only**
+  copies the selection when the button is released and shows the hint "Copied" for about 1.5 seconds. A plain click,
+  a keyboard selection and a page script never copy. Rapid repeated selections (double-click then triple-click) end
+  with the last selection on the clipboard.
+- **Never inside an editable field** (maintainer decision 2026-10-04): selecting text in the message composer, the search
+  box or any other text box does not copy it and shows no hint. For this the main window's existing preload checks the
+  selection and sends one validated, payload-free, one-way signal (see the security baseline in
+  [project-rules.md](../architecture/project-rules.md) and the [IPC Contract](../architecture/ipc-contract.md)); the
+  signal is accepted only from the Chat page, never from the sign-in page.
+- **Google app windows have no copy-on-select** (they have no preload and so cannot tell an editable field from
+  plain text): selecting text there behaves as before; Ctrl+C works as before.
+- The hint is a small window of the app next to the cursor: it never takes focus, does not intercept clicks, follows
+  the light or dark OS theme and disappears by itself. It is not a system notification. It means a selection was
+  seen and a copy was issued; if the page itself blocks copying, the hint can still show.
+- Ctrl+C and the page's own copy features keep working unchanged. Anything selected reaches the OS clipboard (and
+  its history, if the user turned one on). In the main window the copy is the same as Ctrl+C (formatting kept).
+
+```
+Scenario: Selecting text in a chat message copies it
+  Given the main window shows a conversation
+  When the user selects text in a message by dragging, double-click or triple-click, and releases the button
+  Then the selection is on the clipboard and the hint "Copied" appears next to the cursor for about 1.5 seconds   [automatable for the signal and its validation; real Chat manual-only]
+
+Scenario: Double-click then triple-click copies the last selection
+  When the user double-clicks a word and triple-clicks the paragraph within 100 ms
+  Then the paragraph is on the clipboard   [automatable]
+
+Scenario: Selecting text in the message composer does not copy
+  Given the main window has text in the message composer (or the search box)
+  And the clipboard holds something else
+  When the user selects text inside that field with the mouse
+  Then the clipboard is unchanged and no hint appears   [automatable against a stand-in page; real Chat manual-only]
+
+Scenario: The main window on the sign-in page does not copy
+  Given the main window shows accounts.google.com
+  When a selection signal arrives from that page
+  Then the signal is rejected, nothing is copied and no hint appears   [automatable]
+
+Scenario: A plain click, a keyboard selection or a page script never copies
+  When the user single-clicks, selects with Shift+arrows or Ctrl+A, or a page script selects text or dispatches mouse events
+  Then nothing is copied and no hint appears   [automatable]
+
+Scenario: Right-click on a link copies its address
+  Given a message contains a link to https://example.org/page
+  When the user right-clicks the link, and the page raises its context-menu event
+  Then https://example.org/page is on the clipboard and "Link copied" appears   [automatable for the handler; which Chat surfaces raise the event is manual-only]
+
+Scenario: Right-click where the page draws its own menu
+  Given a surface where the page cancels the right-click event
+  When the user right-clicks a link there
+  Then the app copies nothing and shows nothing (documented limitation)   [manual-only]
+
+Scenario: A wrapped or unsafe link
+  When the user right-clicks a link to https://www.google.com/url?q=https://example.org/x
+  Then https://example.org/x is copied   [automatable]
+  When the link is a wrapper whose target is another wrapper
+  Then the inner wrapper address is copied, not unwrapped again   [automatable]
+  When the link is javascript:, data:, tel: or any other scheme
+  Then nothing is copied and no hint appears   [automatable]
+
+Scenario: Right-click away from a link
+  When the user right-clicks text or an empty area
+  Then the app does nothing and adds no menu   [automatable]
+
+Scenario: The Meet call window is excluded
+  When the user selects text or right-clicks a link in the Meet call window
+  Then nothing is copied and no hint appears   [automatable (the binder is not wired there)]
+
+Scenario: Google app windows do not auto-copy a selection
+  When the user selects text in any Google app window (Drive, Docs, Gmail, Calendar ...)
+  Then nothing is copied and no hint appears; right-click link copy still works where the page raises the event   [automatable (no selection handler is wired); real windows manual-only]
+
+Scenario: The hint never takes focus or clicks
+  Given text was just copied
+  While the hint is visible
+  Then keyboard focus stays in the page, a click on the spot under the hint reaches the page, and the hint is gone after about 1.5 seconds   [automatable for the window options and timer; real desktop manual-only]
+
+Scenario: The hint appears fully formed on any screen
+  When a hint is shown on a second monitor with a different scaling, near a screen edge, in light and dark OS theme
+  Then it shows its text from the first frame, next to the cursor and inside the screen   [manual-only]
+```
+
+### FR-19 — Sign-in through the organisation's identity provider
+**Priority: Must** (completes FR-03 for accounts that sign in through single sign-on). Design: [Sign-in Flow](../architecture/sign-in-flow.md).
+
+- While a sign-in is in progress, the **main window** may load the pages of the user's identity provider (SAML single
+  sign-on such as Okta, Microsoft Entra / Azure AD, ADFS, Ping, OneLogin, a Google-hosted or custom-domain provider) and
+  second-step or passkey pages on other origins, so the sign-in completes in the application with no system-browser
+  step. A sign-in is *in progress* from the moment the main window lands on Google's sign-in origin
+  (`accounts.google.com`), or lands on an acceptable provider page after being redirected through it (a returning user
+  taken straight to the provider), until Chat loads again.
+- It ends when Chat loads, or in one of **four aborts**: (1) after 10 minutes without a page change, (2) after 30
+  minutes in total, (3) after 40 changes to a different origin, or (4) when the user chooses **Back to Chat** (tray
+  menu, or the button of the notice below). In each of the four aborts the window returns
+  to the Chat start page (and shows the sign-in again if the user is still signed out), **even if the page asks the
+  user to confirm leaving it**. Closing or quitting the application only stops the timers. A session refresh that
+  bounces through `accounts.google.com` briefly turns the sign-in on and off again; this is harmless.
+- **Back to Chat** when no sign-in is in progress does nothing except show and focus the window. On a desktop **without
+  a tray** there is no such entry and only the three limits end a sign-in that does not reach Chat.
+- When a redirect during a sign-in is cancelled (it targets a refused or unacceptable address), the application shows
+  **one** native notice per sign-in, **"This sign-in step can't open in the app"**, with the buttons **Back to Chat**
+  and **Close**; it never shows the address.
+- Only `https` pages are accepted: no `http`, `file`, `data`, `javascript`, no address with a user name or a non-standard
+  port, no IP address (including disguised forms such as `0x7f.1`), no `localhost`, `*.localhost`, `*.local` or
+  trailing-dot name, and no site name with an international (`xn--`) label. A one-word intranet name (for example
+  `https://adfs/`) **is** accepted; the risk (a hostile redirect could show a page from the user's own network) is
+  accepted and bounded by certificate checks, the inert-page rules and the limits above.
+- Not loaded in the main window during a sign-in, and handled as before: Google Meet (call window), every Google
+  application address (Docs, Drive, Calendar, Mail, Keep, Contacts, Sites: Google app windows), `forms.gle`,
+  `drive.usercontent.google.com` and `*.googleusercontent.com`. A **redirect** to one of these is cancelled; a **link or
+  script navigation** is routed as it is today.
+- Pages of the identity provider get **no additional ability**: no notifications, clipboard, camera, microphone or
+  screen access, no downloads (every download from the main window is cancelled while a sign-in is in progress, with a
+  "Download blocked" notice in sign-in wording that offers **no** "Open in browser"; outside a sign-in downloads and
+  their notice are unchanged), and no connection to the
+  application (the main window's preload and the service-worker preload do nothing on any page other than Chat, which
+  also removes the former exposure on the Google sign-in page). Their page title never changes the unread indicator,
+  neither live nor when the page finishes loading. *The preload, injection, title and IPC origin gates **already
+  ship**; the download rule and the sign-in mode itself are not yet implemented.*
+- While a sign-in is in progress the window's native title reads **"Sign-in · <site> — <full address host>"**, with the
+  site (registrable domain, for example `evil.example`) **first** and the full host after it (for example
+  `Sign-in · evil.example — signin-verify.evil.example`), so a long title cannot hide the real site. The user can tell
+  where they are (the window has no address bar). This is the system title, not drawn UI.
+- Pop-up windows are still not opened in the application: they go to the system browser as before. A link opened in a new
+  tab from a sign-in page goes to the system browser, and so does a same-tab `http:` link. **Limitation:** a link to
+  another `https` site followed in the same tab stays in the window (it cannot be told from a sign-in step); the limits
+  above, or **Back to Chat**, return the window to Chat. The only new control is the tray entry **Back to Chat**,
+  shown only while a sign-in is in progress; nothing new is drawn in the window.
+- Hiding the window (close button) does not cancel the sign-in, so a phone approval completes in the background.
+- **Not supported:** identity providers on a non-standard port, at an IP address, or with an international (`xn--`) site
+  name; Windows integrated authentication. Hardware-key/passkey prompts are **not guaranteed** (see the design;
+  security keys and passkeys are verified manually per platform and the result recorded here).
+
+```gherkin
+Feature: Single sign-on in the main window
+  Scenario: Sign in through the organisation's identity provider
+    Given the application is not signed in and the account uses single sign-on
+    When the user enters the address, is taken to the identity provider's own page, signs in there (and passes a second step)
+    Then the Chat conversations load in the main window
+    And no system-browser window was opened for any step   [manual-only: needs a real SSO account; the navigation rules are automatable]
+
+  Scenario: The identity provider's page navigates by itself to another origin
+    Given the sign-in is in progress and the main window shows the identity provider's page
+    When that page submits a form or redirects to another https origin
+    Then the main window follows it   [automatable]
+
+  Scenario: Navigation outside a sign-in is unchanged
+    Given the user is signed in and Chat is showing
+    When a page in the main window navigates to an origin other than Chat or the sign-in origin
+    Then the navigation is prevented and routed as before (system browser, call window or Google app window)   [automatable]
+
+  Scenario: A returning user is redirected straight to the identity provider
+    Given the user is not signed in and Chat redirects through accounts.google.com to the provider's page without stopping there
+    When the main window shows the provider's page
+    Then the sign-in is in progress and the provider's next steps load in the window   [automatable; manual with a real account]
+
+  Scenario: Redirects in a subframe never cancel the page
+    Given the sign-in is in progress or not
+    When a frame inside the page (not the page itself) is redirected to any address
+    Then the main page's navigation is not cancelled and the sign-in state is unchanged   [automatable]
+
+  Scenario: Unsafe targets are refused during a sign-in
+    Given the sign-in is in progress
+    When a redirect targets http, file, data, javascript, an address with a user name, a non-standard port, an IP address (including 0x7f.1 or 2130706433), localhost, *.localhost, *.local, a trailing-dot name or a name with an xn-- label
+    Then the redirect and its navigation are cancelled and nothing opens in the system browser   [automatable]
+    And a link or script navigation to an http address opens in the system browser as before and is not loaded in the window   [automatable]
+
+  Scenario: Google application and content addresses keep their own handling
+    Given the sign-in is in progress
+    When the main frame is sent by a link or script to meet.google.com, a Google application address (such as docs.google.com or drive.google.com), forms.gle, drive.usercontent.google.com or a googleusercontent.com address
+    Then it does not load in the main window (a Meet link opens the call window, an application link its app window, the rest the system browser, as before)   [automatable]
+    And a redirect to such an address is cancelled   [automatable]
+
+  Scenario: The window title shows where the user is
+    Given the sign-in is in progress and the main window shows the provider's page
+    When the page sets its own title
+    Then the window title stays "Sign-in · <site> — <host>" with the site (registrable domain) first, and returns to normal when the sign-in ends   [automatable]
+
+  Scenario: Downloads are cancelled during a sign-in
+    Given the sign-in is in progress
+    When a page in the main window starts a download
+    Then it is cancelled and a "Download blocked" notice in sign-in wording is shown, with no "Open in browser" action   [automatable]
+    And outside a sign-in downloads behave as before   [automatable]
+
+  Scenario: Back to Chat
+    Given the sign-in is in progress on a page that asks for confirmation before leaving
+    When the user chooses Back to Chat in the tray menu
+    Then the main window is shown on the Chat start page without the confirmation, and the entry is gone from the menu   [automatable for the wiring; manual-only on a real page]
+
+  Scenario: Back to Chat when no sign-in is in progress
+    Given no sign-in is in progress (for example a stale notice button or menu item)
+    When the user chooses Back to Chat
+    Then the main window is shown and focused and nothing is reloaded   [automatable]
+
+  Scenario: A redirect is cancelled during a sign-in
+    Given the sign-in is in progress
+    When a redirect to a refused address is cancelled (twice in the same sign-in)
+    Then one notice "This sign-in step can't open in the app" with Back to Chat and Close is shown, only the first time; Back to Chat returns to the Chat start page and Close leaves the page   [automatable for the wiring; manual-only on a real page]
+
+  Scenario: The sign-in page has no application bridge
+    Given the main window shows Google's sign-in page or a provider's page
+    When the page's scripts look for the application's bridge
+    Then it does not exist   [automatable; also checked manually on the real pages]
+
+  Scenario: Identity-provider pages have no abilities
+    Given the main window shows an identity provider's page
+    When the page asks for notifications, clipboard, camera, microphone or screen access, calls the application's bridge, sends a selection signal, or sets a title such as "(99) x"
+    Then every request is denied or absent, no bridge exists on the page, and the unread indicator does not change   [automatable]
+
+  Scenario: Sign-in ends when Chat loads
+    Given the sign-in is in progress
+    When the main frame commits on Chat
+    Then the window is back on the fixed allow-list   [automatable]
+
+  Scenario: An abandoned sign-in times out
+    Given the sign-in is in progress and the user does nothing for 10 minutes (or 30 minutes have passed since it began, or more than 40 changes to a different origin happened)
+    When the limit is reached, even if the page asks for confirmation before leaving
+    Then the main window returns to the Chat start page   [automatable with a fake clock]
+
+  Scenario: A link in a new tab from a sign-in page
+    Given the main window shows an identity provider's page
+    When the user opens a link in a new tab
+    Then it opens in the system browser and the sign-in page stays   [automatable for the router; manual-only on a real page]
+
+  Scenario: Hiding the window during a phone approval
+    Given the sign-in waits for approval on the user's phone
+    When the user closes the window to the tray, approves on the phone, and reopens the window
+    Then Chat is showing and the user is signed in   [manual-only]
+
+  Scenario: Security key or passkey as the second step
+    Given the account requires a security key or passkey
+    When the user uses it on Windows 11 and on Linux
+    Then the outcome per platform is recorded here (completes, or is blocked)   [manual-only; not guaranteed]
+```
 
 ## Non-Functional Requirements
 
@@ -1609,6 +1861,9 @@ Because the application embeds a full Chromium renderer showing a real Google si
   discretionary nice-to-have, precisely because the same window also handles a real login form.
 - The Meet call window (FR-16) is governed by NFR-07 in addition; nothing in it relaxes the
   main window's baseline above.
+- During a sign-in through an identity provider (FR-19) the main window may load that provider's `https` pages; they
+  get no permission, no download, no preload bridge, no injected script and no accepted IPC (the origin gates and the
+  download rule have shipped), and the widening ends when Chat loads, a limit is reached, or the user chooses Back to Chat.
 
 ### NFR-05 — Distribution/signing reality (ties to FR-09)
 See the corresponding item in Risks & Open Questions for the full justification. Summary of what
@@ -1616,16 +1871,16 @@ is actually achievable for the two in-scope platforms:
 - **Windows**: an installer (e.g. NSIS `.exe`) can be built and is functional without
   code-signing; unsigned, it will show a SmartScreen "unknown publisher" warning on first run.
   Signing requires a code-signing certificate, which is a separate, explicit decision — not
-  assumed to be in scope unless the owner acquires one.
+  assumed to be in scope unless the maintainer acquires one.
 - **Linux**: both an AppImage and a `.deb` package are built, neither requiring any code signing.
-  The `.deb` targets Debian/Ubuntu, the distro family the owner actually runs; AppImage runs
+  The `.deb` targets Debian/Ubuntu, the distro family the maintainer actually runs; AppImage runs
   anywhere without installation.
-- **macOS is out of scope** — an explicit owner decision, recorded in
+- **macOS is out of scope** — an explicit maintainer decision, recorded in
   [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md). Confirmed directly against
   Electron's own docs (`https://www.electronjs.org/docs/latest/api/notification`): macOS requires
   an application to be code-signed for notifications to appear at all — an unsigned build there
   wouldn't just show a warning, it would silently lose FR-05 entirely on that platform. Signing
-  requires an Apple Developer Program membership (US $99/year). The owner does not use macOS, so
+  requires an Apple Developer Program membership (US $99/year). The maintainer does not use macOS, so
   paying that recurring cost to make a platform work that nobody runs was not justified — this is
   the stated cause of the scope decision, not an oversight, and is preserved here so a future
   reader doesn't need to re-derive it.
@@ -1696,11 +1951,11 @@ is the single exception to "external links open in the system browser"; this req
   and must then pass the exact test above on its own. A wrapper without `www`, a nested wrapper, an
   unparseable `q`, and a wrapper whose target is `http` or any other host all go to the system browser. A
   wrapper-shaped URL on any other host is **not** unwrapped.
-- **Duplicated `q` parameter — refused (recommended default; the owner has not acknowledged it).** A
+- **Duplicated `q` parameter — refused (recommended default; the maintainer has not acknowledged it).** A
   wrapper carrying **more than one** `q` parameter is not unwrapped and goes to the system browser,
-  because two parsers could pick different values. It is stricter than the owner's stated rule, so it
+  because two parsers could pick different values. It is stricter than the maintainer's stated rule, so it
   cannot let a non-Meet link into the call window.
-- **Which non-Meet links are opened in the operating system (owner decision 2026-10-01).** For the main
+- **Which non-Meet links are opened in the operating system (maintainer decision 2026-10-01).** For the main
   window's external-link handling (new-window requests and navigations away from the allowed Chat origins)
   **and** the call window's, a URL that is not a Meet link is handed to the operating system **only if its
   scheme is `http`, `https` or `mailto`**. Any other scheme (`file:`, `ms-settings:`, `javascript:`, a
@@ -1716,7 +1971,7 @@ is the single exception to "external links open in the system browser"; this req
 - **Main-window navigation.** A Meet URL that the **main window** tries to navigate itself to
   (`will-navigate`, not just a new-window request) is intercepted and treated exactly like a link click:
   prevented in the main window and routed by these rules. All other main-window navigation is unchanged.
-- **Permissions scoped to Meet** (the two-origin rule is a recommended default; the owner has not
+- **Permissions scoped to Meet** (the two-origin rule is a recommended default; the maintainer has not
   separately decided it). Camera, microphone and screen-capture permissions are granted only when **both**
   the requesting origin and the top-level page's origin are exactly `https://meet.google.com`, enforced in
   **both** the permission-request handler and the permission-check handler. Every other case is refused:
@@ -1836,7 +2091,7 @@ Feature: Meet call window security
 - The Linux **install path and the executable file name contain no space character.**
 - **In scope, derived from the above:** the FR-10 Linux autostart entry's `Exec` path must refer to
   that space-free executable path (it follows automatically, but is checked). **In scope as a working
-  assumption pending the owner:** the Linux **AppImage artifact file name** contains no space
+  assumption pending the maintainer:** the Linux **AppImage artifact file name** contains no space
   character. **Not covered:** the directory a user chooses to put an AppImage in, and the
   user-visible product name shown in window titles and launchers (it may contain spaces).
 - The `.deb` package **declares its runtime audio dependency** in its dependency metadata, so
@@ -1907,7 +2162,7 @@ Verified evidence that this is **not a hard blocker** for this specific requirem
 **Conclusion for this spec:** FR-03 is written as achievable, on the condition that the
 implementation loads Google Chat/Google sign-in in a plain `BrowserWindow` (never a `<webview>`
 tag) with a standard desktop Chrome `User-Agent` string set on that window/session. This is a
-build-time configuration choice for `tech-lead`/the implementer to apply, not a requirement this
+build-time configuration choice for the maintainer/the implementer to apply, not a requirement this
 document can guarantee in the abstract — if Google tightens the detection further after this
 spec is written, FR-03 may need to fall back to a system-browser-based login handoff (open the
 user's default browser for the Google login step, then hand the resulting session back to the
@@ -1922,27 +2177,27 @@ macOS notarization requires Apple's `notarytool`, which requires macOS itself an
 Developer Program membership; it cannot be run from Windows or Linux (a macOS GitHub Actions runner
 would have covered the host requirement, but the membership cost remains either way). This was
 originally framed as a cross-platform build-tooling problem to solve. It is now resolved
-differently: the owner decided macOS isn't a target platform at all (see NFR-05, ADR-0003), so
+differently: the maintainer decided macOS isn't a target platform at all (see NFR-05, ADR-0003), so
 there is no longer a three-platform signing problem to solve — only Windows' (unsigned, accepted)
 and Linux's (no signing concept) remain, and neither needs a multi-machine build story.
 
 ### Resolved — start-on-login (FR-10)
 Originally left as an open question ("not requested; natural companion feature but not assumed").
-The owner has since explicitly asked for it — see FR-10.
+The maintainer has since explicitly asked for it — see FR-10.
 
 ### Resolved — notification sound / mute (FR-11, FR-12)
 Originally left as an open question ("not specified; OS defaults assumed, no in-app override"). The
-owner has since explicitly asked for both an independent sound toggle and a manual mute — see FR-11
+maintainer has since explicitly asked for both an independent sound toggle and a manual mute — see FR-11
 and FR-12, including the design decision that "quiet hours" and "mute" are treated as one feature
 (a manual toggle, not a scheduled time window) and the stated rationale for that choice.
 
 ### Resolved — build/version diagnostic line (FR-13)
-Not part of the original scope; added when the owner ran into a real diagnostic need mid-incident
-(distinguishing a colleague's installed build from a dev run from source while investigating the
+Not part of the original scope; added when the maintainer ran into a real diagnostic need mid-incident
+(distinguishing an installed build from a dev run from source while investigating the
 FR-05 notification failure) — see FR-13 and [ADR-0002](../adr/0002-notification-delivery-mechanism.md).
 
 ### Resolved — blinking tray icon and Settings window (FR-14, FR-15)
-Not part of the original scope; added on explicit owner request ("I want the tray icon to blink
+Not part of the original scope; added on explicit maintainer request ("I want the tray icon to blink
 when there are messages, like in the old days" / "so that all this can be managed — sound, icon
 blinking, and so on"). Decided rather than left open: the attention indicator (tray blink and, since
 2026-09-30, taskbar flash) stops only when the main window **gains focus** (never on a timer or blink
@@ -1953,8 +2208,8 @@ does not blink; Settings changes apply immediately with no Save/Cancel.
 
 **Tray menu vs. Settings — superseded decision.** An earlier draft kept the tray menu's three
 existing checkboxes (Start at login, Notification sound, Mute notifications) unchanged, reasoning
-that the owner shouldn't have UX they rely on removed without being asked. Asked directly, the
-owner decided the opposite: only **Mute notifications** keeps a tray quick-toggle; **Start at
+that the maintainer shouldn't have UX they rely on removed without being asked. Asked directly, the
+maintainer decided the opposite: only **Mute notifications** keeps a tray quick-toggle; **Start at
 login** and **Notification sound** are now Settings-window-only. Icon blinking was already
 Settings-only in the original design and remains so. See FR-15's "Tray menu vs. Settings window"
 clause for the full reasoning and FR-07 for the resulting tray menu contents.
@@ -1980,6 +2235,8 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
 | FR-15 | Settings window |
 | FR-16 | Google Meet calls in an app-owned call window (new 2026-09-30) |
 | FR-17 | Links to Google services open in app-owned windows (new 2026-10-04, UI-04) |
+| FR-18 | Smart copy: link URL on right-click, selection on mouse release, with a cursor hint (new 2026-10-04, UI-05) |
+| FR-19 | Sign-in through the organisation's identity provider: time-boxed sign-in mode in the main window (new 2026-10-06) |
 | NFR-01 | Cross-platform parity, with explicit exceptions |
 | NFR-02 | Resource usage for an always-running tray app |
 | NFR-03 | Startup time |
@@ -1994,29 +2251,46 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
 | ID | Priority | Change | Traces to |
 |----|----------|--------|-----------|
 | FR-05a | Must (unconditional) | Split out: a native notification appears while hidden, minimized or unfocused (BUG-01 core) | ADR-0004 Spike A; FR-11, FR-12, FR-14 |
-| FR-05b | Must (conditional) | Title = chat name, body = message text; applies under owner answer (a) only | ADR-0004 Spike C; ADR-0002 piece 2; the *Wrapper, not a rewrite* project rule; open question in FR-05 |
+| FR-05b | Must (conditional) | Title = chat name, body = message text; applies under maintainer answer (a) only | ADR-0004 Spike C; ADR-0002 piece 2; the *Wrapper, not a rewrite* project rule; open question in FR-05 |
 | FR-05c | Must (step 1 unconditional, step 2 conditional) | Click brings window forward from tray/minimized; step 2 opens that conversation under (a) only; degraded outcome logged | ADR-0004 Spike C; open question in FR-05 |
 | FR-06, FR-07 | Must | Scoped: close-to-tray and tray Show/Hide act on the main window only | FR-16 |
-| FR-07 | Must | Amended 2026-10-01: tray entry "Show call window" (P3); Exit asks first while a live call exists (P2). Amended 2026-10-02: both are native dialogs/entries only, wording in design 06; Exit-while-P1 fallback when P1 cannot be dismissed | Owner decisions 2026-10-01 and 2026-10-02; FR-16 |
-| FR-16 | Must | Cut 2026-10-02 to the minimum: call window holds only the Meet page; the source picker is the one app-drawn surface; P1/P2/P3 and the Meet-crash dialog are native; app view, status strip, crash panel and Linux OS-picker option removed | Owner decision 2026-10-02; NFR-07; ADR-0004 (Spike B) |
-| NFR-07 | Must | Amended 2026-10-02: app view removed from the hardening list; call window created without a preload; permissions reworded as media and screen capture | Owner decision 2026-10-02; the *Electron security baseline* project rule |
+| FR-07 | Must | Amended 2026-10-01: tray entry "Show call window" (P3); Exit asks first while a live call exists (P2). Amended 2026-10-02: both are native dialogs/entries only, wording in design 06; Exit-while-P1 fallback when P1 cannot be dismissed | Maintainer decisions 2026-10-01 and 2026-10-02; FR-16 |
+| FR-16 | Must | Cut 2026-10-02 to the minimum: call window holds only the Meet page; the source picker is the one app-drawn surface; P1/P2/P3 and the Meet-crash dialog are native; app view, status strip, crash panel and Linux OS-picker option removed | Maintainer decision 2026-10-02; NFR-07; ADR-0004 (Spike B) |
+| NFR-07 | Must | Amended 2026-10-02: app view removed from the hardening list; call window created without a preload; permissions reworded as media and screen capture | Maintainer decision 2026-10-02; the *Electron security baseline* project rule |
 | FR-09 | Must | Prose and Linux scenario now reference NFR-08 | NFR-08, NFR-05 |
 | FR-10 | Must | Linux autostart `Exec` path must be the space-free executable path (checked under NFR-08); first-run default changed to on, see the last row of this table | NFR-08, FR-15 |
-| FR-10, FR-15 | Must | Amended: first-run defaults all on (Start at login, sound, blinking), mute off; applied once on a fresh install, never over an existing user choice | Owner decision 2026-09-30 |
+| FR-10, FR-15 | Must | Amended: first-run defaults all on (Start at login, sound, blinking), mute off; applied once on a fresh install, never over an existing user choice | Maintainer decision 2026-09-30 |
 | FR-14 | Must | Amended: taskbar flash added; condition "hidden" becomes "not focused"; stop on focus; degraded trigger stated; working assumptions on flash, mute and the setting | ADR-0004 (S2: `flashFrame` unimplemented), FR-05a, FR-12, FR-15, NFR-06 |
 | FR-16 | Must | New 2026-09-30: Meet in app-owned call window, own screen-share picker (history: see the rows above and the change log) | ADR-0004 Spike B; the *Electron security baseline* project rule; NFR-07; design 05 |
-| NFR-07 | Must | New 2026-09-30: exact-origin match, hardened call window, permissions scoped to Meet; duplicated-`q` wrapper refused (narrowing; recommended default, owner acknowledgement outstanding) | The *Electron security baseline* project rule; NFR-04 |
+| NFR-07 | Must | New 2026-09-30: exact-origin match, hardened call window, permissions scoped to Meet; duplicated-`q` wrapper refused (narrowing; recommended default, maintainer acknowledgement outstanding) | The *Electron security baseline* project rule; NFR-04 |
 | NFR-08 | Must | New: no spaces in Linux install path/executable name; deb declares audio dependency | FR-09, FR-10, NFR-05 |
 
 ## Change log
 
-- **2026-10-04 (UI-04, FR-17)** — Owner request: links to Google services open in app-owned windows sharing
+- **2026-10-06 (FR-19)** — A compatibility audit found that sign-in through an organisation's identity provider (single
+  sign-on, some second-step and passkey pages) died when the provider's page navigated to its own origin, because the
+  main window's navigation list was only Chat and `accounts.google.com`. FR-19 added: a time-boxed sign-in mode in the main
+  window, with no added permission, bridge or IPC for those pages. Design: [sign-in-flow.md](../architecture/sign-in-flow.md);
+  fourth exception recorded in [project-rules.md](../architecture/project-rules.md); the overview's "provisional list" note
+  replaced. FR-03 and NFR-04 cross-refer.
+- **2026-10-04 (UI-05, FR-18)** — Maintainer request: right-click on a link copies its URL and releasing the mouse after a
+  selection copies the text, each with a short hint next to the cursor (app-owned hint window, not an OS
+  notification); right-click link copy in the main window and Google app windows, not the Meet call window. FR-18 added. Design:
+  [smart-copy.md](../architecture/smart-copy.md). Revised same day after review and a maintainer decision:
+  copy-on-select never fires in editable fields of the main window, which gives the main window's existing preload
+  one narrow, validated, one-way signal (Google app windows still have no preload); FR-18 moved after FR-17's
+  scenarios and given its own tagged scenarios; right-click link copy stated as conditional on the page. Second revision
+  (spec review, maintainer go): copy-on-select is main Chat window only, Google app windows get none (no preload, so editable
+  fields cannot be told apart); the preload link-payload fallback is not authorised; trailing-edge rate limit; nested
+  wrapper unwrapped once.
+
+- **2026-10-04 (UI-04, FR-17)** — Maintainer request: links to Google services open in app-owned windows sharing
   the signed-in session instead of the system browser; Chat links load in the main window. FR-17 added; the
   "other Google hosts in-app" scope exclusion narrowed to the fixed list; the project rules' security baseline
   gained a second exception. Design: [google-app-windows.md](../architecture/google-app-windows.md).
-- **2026-10-02 (Meet scope cut to the minimum)** — The Meet design set had grown well beyond what the owner
+- **2026-10-02 (Meet scope cut to the minimum)** — The Meet design set had grown well beyond what the maintainer
   asked for (23 mockup states, an app-owned view inside the call window, a status strip, a crash panel).
-  The owner approved cutting it, under the *Design scaled to the wrapper* project rule (only surfaces the
+  The maintainer approved cutting it, under the *Design scaled to the wrapper* project rule (only surfaces the
   shell must draw get design; native dialogs and tray entries get a wording spec, not a mockup; see
   [project-rules.md](../architecture/project-rules.md)). FR-16, NFR-07 and the Meet parts of FR-07 now
   state exactly this scope: (1) URL classifier unchanged; (2) the call window contains only the Meet page,
@@ -2035,10 +2309,10 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
   what a page load failure should show now that no panel exists. Design docs 03, 04, 06 to 10 and the
   Meet mockups were deleted; design 05 trimmed to the picker; new design 06 holds the dialog wording.
 
-- **2026-10-01 (Meet review fixes)** — After the skeptic review: (1) the project rule now holds the
-  http/https/mailto allow-list, so the "owner must add a line" item is removed; (2) tray Exit is never
+- **2026-10-01 (Meet review fixes)** — After the review: (1) the project rule now holds the
+  http/https/mailto allow-list, so the "maintainer must add a line" item is removed; (2) tray Exit is never
   ignored: with the close confirmation (P1) open it is dismissed and the Exit confirmation (P2) is shown,
-  with P2 already open it is focused (orchestrator default, owner to confirm; FR-07, FR-16); (3) P1/P2
+  with P2 already open it is focused (default, maintainer to confirm; FR-07, FR-16); (3) P1/P2
   scenarios and the FR-07 Exit paragraph tagged conditional on Spike B, and manual-only cases against a
   real Meet call added (dialog appears in a live call, none after Leave); (4) the Meet end page shares the
   meeting's address, so address-only detection refuses the next Meet link and shows a false "A call is
@@ -2047,7 +2321,7 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
   exception; (6) outcome of cancelling the Exit confirmation after Exit closed the picker stated; (7) the
   picker wireframe exists, stale "requires a wireframe" removed.
 
-- **2026-10-01 (Meet owner decisions)** — The owner decided: (1) a second Meet link while the call window
+- **2026-10-01 (Meet maintainer decisions)** — The maintainer decided: (1) a second Meet link while the call window
   is open but shows no meeting page loads into the existing window (revises FR-16's "does not navigate
   away unprompted" for that case; with a meeting page on screen it still focuses the window and shows the
   notification, no navigation); (2) all three call-time confirmations: P1 confirm on closing the call
@@ -2056,20 +2330,20 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
   (4) non-Meet links clicked inside the call window open in the system browser (the "A link was not
   opened" strip was rejected). Definitions of *call window
   exists*, *meeting page on screen* and *live call* moved into FR-16; the app view's hardening (decided by
-  `tech-lead`) recorded in NFR-07. Kept as recommended defaults, not owner-decided: the two-origin Meet
+  the maintainer) recorded in NFR-07. Kept as recommended defaults, not maintainer-decided: the two-origin Meet
   permission rule, refusal of a duplicated `q`, Linux keeping the app picker until Spike B passes there,
   tray Show/Hide acting on the main window only. Design docs and the architecture note updated to match.
 
-- **2026-09-30 (first-run defaults)** — Owner decision: after installation everything is on by
+- **2026-09-30 (first-run defaults)** — Maintainer decision: after installation everything is on by
   default: Start at login (previously off; launches hidden into the tray), notification sound and icon
   blinking (both already on); Mute stays off. Defaults apply only on the first run of a fresh install
   and never override an existing user choice, including a startup entry disabled in the Windows Task
   Manager. FR-10 and FR-15 amended, scenarios added for first-run defaults and for preserved user
   choices. Nothing else changed.
 
-- **2026-09-30** — Owner decisions folded in. FR-05 sharpened (notification title/body content; click
+- **2026-09-30** — Maintainer decisions folded in. FR-05 sharpened (notification title/body content; click
   from tray or minimized opens that conversation) and marked doubtful in mechanism after the
-  service-worker finding, with the deep-link approach left as an open owner question (ADR-0004
+  service-worker finding, with the deep-link approach left as an open maintainer question (ADR-0004
   Spike C). FR-14 reworked: taskbar flash added, trigger and stop changed from hidden/visible to
   not-focused/focused (the earlier "becoming visible stops blinking" rule is reversed). FR-16 and
   NFR-07 added for Meet in an app-owned call window (unverified in Electron, Spike B, re-verify each
@@ -2077,9 +2351,9 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
   main window; FR-09 references NFR-08. FR-01..FR-04, FR-08, FR-10..FR-13 and FR-15 otherwise
   unchanged.
 - **2026-09-30 (review pass)** — After adversarial review: FR-05 split into FR-05a (unconditional
-  delivery), FR-05b/FR-05c (conditional on Spike C and the owner's answer), with a table of what
+  delivery), FR-05b/FR-05c (conditional on Spike C and the maintainer's answer), with a table of what
   applies under each answer, the degraded-outcome logging defined, the tray unread indicator restated
-  as a single global observable state, "with that message visible" dropped (the owner said "open that
+  as a single global observable state, "with that message visible" dropped (the maintainer said "open that
   chat"), and the earlier mechanism text demoted to history. FR-14 gained a stated dependency on the
   FR-05 mechanism and a degraded trigger, working assumptions for the flash, and mute-off behaviour.
   FR-16 tagged scenarios automatable or manual-only, defined destroy-on-close and the scope of Chat's
@@ -2094,7 +2368,7 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
   rule stated as the project rule's, without hedge. Design docs added to the superseded list; FR-15 gained
   the label question; FR-09 and FR-10 added to the changes table.
 
-- **2026-09-30 (owner decisions recorded)** — The owner approved four defaults (reply "делай"):
+- **2026-09-30 (maintainer decisions recorded)** — The maintainer approved four defaults:
   (1) the one "Icon blinking" setting governs both the tray blink and the taskbar flash (FR-14, FR-15
   label must say so); (2) new-message notifications and indicators keep arriving during a Meet call
   (FR-14, FR-16); (3) one call window at a time, with the "call already open" notification (FR-16);
@@ -2102,14 +2376,14 @@ clause for the full reasoning and FR-07 for the resulting tray menu contents.
   user always choosing explicitly (FR-16, NFR-07). Still working assumptions, not approved: mute also
   suppresses the taskbar flash; mute or blinking turned back on does not start indicators until the
   next arrival; tray Show/Hide acts on the main window only during a call. NFR-07 gained a
-  duplicated-`q` wrapper refusal proposed by `tech-lead`, marked a narrowing pending owner
+  duplicated-`q` wrapper refusal proposed during review, marked a narrowing pending maintainer
   acknowledgement.
 
 ### Downstream docs superseded
 
 These documents still describe rules this requirements document has changed. They are **not
-authoritative where they conflict**; `tech-lead` is to update them after the owner approves this
-document.
+authoritative where they conflict**; they are to be updated once this
+document is approved.
 - [tray-lifecycle.md](../architecture/tray-lifecycle.md) — the blink start/stop rules ("hidden" /
   "becomes visible", including its `applySetting` and stop-condition sections) and the tray
   Show/Hide behaviour now conflict with FR-14 (focus-based, plus the taskbar flash) and FR-07.
@@ -2118,14 +2392,14 @@ document.
   parts, the service-worker finding, conditional content and click).
 - [00-settings-surface-spec.md](../design/00-settings-surface-spec.md) — the "Blink tray icon on
   unread" label (lines 127, 154, 171), the §9 tray-only blink state machine (hidden/visible triggers,
-  no taskbar flash) and the mute note now conflict with FR-14. **Owner decided (2026-09-30):** the
+  no taskbar flash) and the mute note now conflict with FR-14. **Maintainer decided (2026-09-30):** the
   "Icon blinking" setting also governs the taskbar flash, so its label in FR-15 and the Settings
   window must change to say so (for example "Flash and blink on new message").
 - [01-settings-wireframes.md](../design/01-settings-wireframes.md) — repeats the same label
   (lines 36, 76, 116, 138), the same "Blinks on a new message; stops…" helper text, and a state table
   whose stop trigger is "window becomes visible"; both conflict with FR-14. `02-rationale.md` cites
   the same rules (its proposed "FR-14" text) and needs the same check.
-- To be checked by `tech-lead` for the same reason (not verified here): ADR-0002 piece 2 and its
+- To be checked by the maintainer for the same reason (not verified here): ADR-0002 piece 2 and its
   fallback (ADR-0004 already touches them), `ipc-contract.md`, and `packaging-release.md` (NFR-08).
 
 Later design/test artifacts should cite these IDs directly (e.g. "implements FR-05", "covers

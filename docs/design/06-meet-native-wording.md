@@ -41,7 +41,7 @@ Choosing Exit while P2 is open focuses P2; no second one is opened.
 Both dialogs appear only for a live call. If the live-call signal is missing, neither appears: Close
 destroys the window and Exit quits at once. The sentence "You will leave the call…" is true only if Meet's
 page objects to closing solely while the user is in or joining a call; that is unverified against real
-Meet and must be rechecked in the first owner-run call.
+Meet and must be rechecked in the first maintainer-run call.
 
 ## 3. P3 — Tray entry "Show call window"
 
