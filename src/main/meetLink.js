@@ -5,8 +5,7 @@
 // import, never throws for any input type.
 
 const MEET_ORIGIN = 'https://meet.google.com';
-const WRAPPER_ORIGIN = 'https://www.google.com';
-const WRAPPER_PATH = '/url';
+const { unwrapTarget } = require('./wrapperUrl');
 
 const OPENABLE_SCHEMES = Object.freeze(['http:', 'https:', 'mailto:']);
 
@@ -22,15 +21,6 @@ function parse(input) {
 /** True only for https://meet.google.com (default port normalised away), no userinfo. */
 function isMeetUrl(u) {
   return u !== null && u.origin === MEET_ORIGIN && u.username === '' && u.password === '';
-}
-
-/** The decoded `q` target when `u` is exactly https://www.google.com/url?q=... (single q). */
-function unwrapTarget(u) {
-  if (u.origin !== WRAPPER_ORIGIN || u.username !== '' || u.password !== '') return null;
-  if (u.pathname !== WRAPPER_PATH) return null;
-  const values = u.searchParams.getAll('q');
-  if (values.length !== 1) return null;
-  return values[0];
 }
 
 /**

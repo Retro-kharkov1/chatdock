@@ -9,18 +9,17 @@
 
 const { CHAT_ORIGIN } = require('./origins');
 
-const WRAPPER_ORIGIN = 'https://www.google.com';
-const WRAPPER_PATH = '/url';
+const { unwrapTarget } = require('./wrapperUrl');
 
 /** Hosts a link from Chat may open in a Google app window (section 2, "link list"). */
 const LINK_LIST_HOSTS = Object.freeze([
   'drive.google.com',
   'docs.google.com',
   'calendar.google.com',
-  'mail.google.com', // orchestrator-chosen default, awaiting owner confirmation
-  'keep.google.com', // orchestrator-chosen default, awaiting owner confirmation
-  'contacts.google.com', // orchestrator-chosen default, awaiting owner confirmation
-  'sites.google.com', // orchestrator-chosen default, awaiting owner confirmation
+  'mail.google.com', // default, to be confirmed by the maintainer
+  'keep.google.com', // default, to be confirmed by the maintainer
+  'contacts.google.com', // default, to be confirmed by the maintainer
+  'sites.google.com', // default, to be confirmed by the maintainer
 ]);
 
 /** Re-authentication inside an app window: navigable, but never an entry point. */
@@ -38,7 +37,7 @@ const USERCONTENT_DOWNLOAD_PATH = '/download';
 
 /**
  * Extra exact hosts tolerated ONLY as a hop of an app-window download chain. Initially empty; filled only
- * from spike evidence plus an owner decision, never a pattern, and never also added to the nav list.
+ * from spike evidence plus a maintainer decision, never a pattern, and never also added to the nav list.
  */
 const DOWNLOAD_CHAIN_HOSTS = Object.freeze([]);
 
@@ -68,17 +67,27 @@ function isExactHttpsHost(u, hosts) {
   );
 }
 
-/** The decoded `q` target when `u` is exactly https://www.google.com/url?q=... (single q), else null. */
-function unwrapTarget(u) {
-  if (u.origin !== WRAPPER_ORIGIN || u.username !== '' || u.password !== '') return null;
-  if (u.pathname !== WRAPPER_PATH) return null;
-  const values = u.searchParams.getAll('q');
-  if (values.length !== 1) return null;
-  return values[0];
+const GMAIL_HOST = 'mail.google.com';
+
+/**
+ * Gmail-integrated Chat: a mail.google.com URL whose path (after an optional /mail and /u/<n>) is /chat or
+ * /chat/..., or whose hash route is #chat or #chat/... Returns the Chat-relative remainder
+ * (lower-cased, e.g. '/space/AAAA' or '/') or null for any other Gmail URL ('#chatter', '/chatter' are not Chat).
+ */
+function gmailChatRest(u) {
+  if (!isExactHttpsHost(u, [GMAIL_HOST])) return null;
+  const strip = (p) => p.replace(/^\/mail(?=\/|$)/i, '').replace(/^\/u\/\d+(?=\/|$)/, '');
+  let rest = null;
+  const path = strip(u.pathname);
+  if (/^\/chat(\/|$)/i.test(path)) rest = path.slice(5);
+  else if (/^#chat(\/|$)/i.test(u.hash)) rest = u.hash.slice(5);
+  if (rest === null) return null;
+  rest = rest.replace(/^\/u\/\d+(?=\/|$)/, '');
+  return (rest === '' ? '/' : rest).toLowerCase();
 }
 
 function classifyParsed(u) {
-  if (isExactHttpsHost(u, [CHAT_HOST])) return { outcome: 'main-window', url: u.href };
+  if (isExactHttpsHost(u, [CHAT_HOST]) || gmailChatRest(u) !== null) return { outcome: 'main-window', url: u.href };
   if (isExactHttpsHost(u, LINK_LIST_HOSTS)) return { outcome: 'app-window', url: u.href };
   if (isExactHttpsHost(u, [ENTRY_HOP_HOST])) return { outcome: 'app-window', url: u.href, hop: true };
   return null;
@@ -160,19 +169,30 @@ const CHAT_CONVERSATION_PREFIXES = Object.freeze(['/room/', '/dm/', '/space/', '
  */
 function classifyChatTarget(url, source) {
   const u = parse(url);
-  if (!isExactHttpsHost(u, [CHAT_HOST])) return 'browser';
+  const gmailRest = gmailChatRest(u);
+  if (gmailRest === null && !isExactHttpsHost(u, [CHAT_HOST])) return 'browser';
   if (source !== 'main' && source !== 'app') return 'browser';
-  let path = u.pathname.replace(/^\/u\/\d+(?=\/|$)/, '');
-  if (path === '') path = '/';
-  const lower = path.toLowerCase();
+  let lower;
+  if (gmailRest !== null) {
+    // Gmail-integrated Chat: the Chat-relative remainder; any non-download shape is a conversation.
+    lower = gmailRest;
+  } else {
+    let path = u.pathname.replace(/^\/u\/\d+(?=\/|$)/, '');
+    if (path === '') path = '/';
+    lower = path.toLowerCase();
+  }
 
   const isDownload =
     CHAT_DOWNLOAD_PREFIXES.some((p) => lower.startsWith(p)) || CHAT_DOWNLOAD_WORDS.some((w) => lower.includes(w));
-  if (isDownload) return source === 'main' ? 'download' : 'browser';
+  // A mail.google.com target never drives a main-window download (the main view stays on the chat origin).
+  if (isDownload) return source === 'main' && gmailRest === null ? 'download' : 'browser';
 
   const isConversation =
+    gmailRest !== null ||
     CHAT_CONVERSATION_EXACT.includes(lower) || CHAT_CONVERSATION_PREFIXES.some((p) => lower.startsWith(p));
-  if (isConversation) return source === 'main' ? 'focus-main' : 'main-window';
+  // Gmail Chat targets are NEVER loaded into the main window (it would leave the chat origin: notifications,
+  // clipboard and unread are origin-bound): focus only, from both sources, until real-account evidence exists.
+  if (isConversation) return source === 'main' || gmailRest !== null ? 'focus-main' : 'main-window';
 
   return 'browser';
 }

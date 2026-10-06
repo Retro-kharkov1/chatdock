@@ -1,0 +1,53 @@
+/* UI-05 / docs/architecture/smart-copy.md section 4. The page has no script: the main process only switches the
+   body class between two fixed values, and the two app-authored strings live here as CSS content. The window is
+   click-through and never focused; the theme follows the OS through prefers-color-scheme. */
+
+:root {
+  --bg: #F7F7F7;
+  --text: #1B1B1B;
+  --border: #C9C9C9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #2B2B2B;
+    --text: #F5F5F5;
+    --border: #4A4A4A;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* The pill is exactly 28 px high and pinned to the top of the window: on Windows a transparent frameless window
+   cannot be made shorter than 36 DIP (spike, Electron 44.4.3 / Windows 11), and the rest must stay transparent.
+   It is drawn by body::before so that no background propagates from body to the whole canvas. */
+body::before {
+  box-sizing: border-box; /* the universal selector above does not reach pseudo-elements */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 28px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+body.copied::before { content: "Copied"; }
+body.link-copied::before { content: "Link copied"; }
