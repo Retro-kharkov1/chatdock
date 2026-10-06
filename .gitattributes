@@ -1,4 +1,23 @@
-# Scripts executed on Linux (inside the Docker builder, or on a Linux host) must keep LF endings
-# even when checked out on Windows with core.autocrlf.
+# Line endings are LF in the repository AND in every working tree, on every OS and regardless of
+# core.autocrlf. Tests compare checked-in generated text (src/renderer/help/help.html) byte-for-byte
+# against generator output, and scripts that run on Linux must not carry CR. Nothing in this repo
+# needs CRLF (no .cmd/.bat; PowerShell runs LF .ps1 fine).
+* text=auto eol=lf
+
+# Generated, checked-in text artifacts compared byte-for-byte by tests - pin explicitly so this
+# survives anyone loosening the catch-all above.
+src/renderer/help/help.html text eol=lf
+
+# Scripts executed on Linux (inside the Docker builder, or on a Linux host).
 *.sh text eol=lf
 build/docker/Dockerfile text eol=lf
+
+# Binary assets: never normalised, never diffed as text.
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.woff binary
+*.woff2 binary
