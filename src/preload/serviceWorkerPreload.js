@@ -23,6 +23,27 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// ORIGIN GATE (docs/architecture/ipc-contract.md "Origin gating"): this preload is registered on the whole
+// session, so it runs in the service worker of EVERY origin that session ever loads. It exposes the bridge
+// and patches the worker only when the worker's own origin is the chat origin; otherwise it does nothing.
+// (Main also refuses non-chat scopes - serviceWorkerNotifications.js - this is the second layer.)
+//
+// The preload's isolated world has no `self`/`location` (verified on 44.4.3: only `globalThis`, `process`
+// and the electron modules), so the origin is read in the worker's MAIN world via
+// `contextBridge.executeInMainWorld`, which returns the value (verified on 44.4.3; API:
+// https://www.electronjs.org/docs/latest/api/context-bridge#contextbridgeexecuteinmainworldscript).
+// `self.location` is the worker script's URL, fixed by the browser, and this runs before any worker
+// script does, so the worker cannot have replaced it. A failed read means "not chat".
+const CHAT_ORIGIN = 'https://chat.google.com';
+
+function readWorkerOrigin() {
+  try {
+    return contextBridge.executeInMainWorld({ func: () => self.location.origin });
+  } catch {
+    return undefined;
+  }
+}
+
 const CHANNEL = 'notification:sw-show';
 const OPEN_CHANNEL = 'notification:sw-open';
 const CLICK_CHANNEL = 'notification:sw-click';
@@ -127,7 +148,7 @@ function replayClick(record) {
   }
 }
 
-try {
+if (readWorkerOrigin() === CHAT_ORIGIN) try {
   contextBridge.exposeInMainWorld('__gcdSwBridge', {
     show: (payload) => ipcRenderer.send(CHANNEL, payload),
     open: (url) => ipcRenderer.send(OPEN_CHANNEL, url),

@@ -209,6 +209,7 @@ function loadSwPreload() {
   main.Event = Event;
   main.addEventListener = (...a) => target.addEventListener(...a);
   main.dispatchEvent = (e) => target.dispatchEvent(e);
+  main.location = { origin: 'https://chat.google.com' }; // the worker's own origin (read by the origin gate)
   main.registration = { scope: 'https://chat.google.com/' };
   class ExtendableEvent extends Event {
     waitUntil() { throw new DOMException('not active', 'InvalidStateError'); }

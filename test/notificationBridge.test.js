@@ -143,7 +143,7 @@ test('robustness: a script with hostile-looking flag values is still a valid boo
 test('title listener: every page-title-updated event reports the parsed unread count', () => {
   const wc = new EventEmitter();
   const seen = [];
-  attachUnreadTitleListener(wc, (n) => seen.push(n));
+  attachUnreadTitleListener(wc, (n) => seen.push(n), () => true);
   wc.emit('page-title-updated', {}, '(2) Google Chat');
   wc.emit('page-title-updated', {}, '(5) Google Chat');
   wc.emit('page-title-updated', {}, 'Google Chat');
@@ -153,7 +153,7 @@ test('title listener: every page-title-updated event reports the parsed unread c
 test('title listener: an unchanged count is still reported (the consumer must not assume deduplication)', () => {
   const wc = new EventEmitter();
   const seen = [];
-  attachUnreadTitleListener(wc, (n) => seen.push(n));
+  attachUnreadTitleListener(wc, (n) => seen.push(n), () => true);
   wc.emit('page-title-updated', {}, '(2) Google Chat');
   wc.emit('page-title-updated', {}, '(2) Google Chat');
   assert.deepEqual(seen, [2, 2]);
