@@ -20,7 +20,11 @@ test('wiring: the main window popup handler and will-navigate go through the lin
   assert.match(source, /createLinkRouter\(/);
   assert.match(source, /setWindowOpenHandler\([\s\S]{0,120}onWindowOpen/);
   assert.match(source, /onWindowOpen/);
-  assert.match(source, /onWillNavigate/);
+  // FR-19: the main window's will-navigate is registered by signInWiring.js (bindSignInFlow), which calls the router.
+  assert.match(source, /bindSignInFlow\(/);
+  assert.match(source, /router:\s*linkRouter/);
+  const wiring = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'signInWiring.js'), 'utf8');
+  assert.match(wiring, /router\.onWillNavigate/);
 });
 
 test('wiring: the router is built with the real call window opener and shell.openExternal', () => {

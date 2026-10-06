@@ -100,11 +100,24 @@ function createLinkRouter({
     return { action: 'deny' };
   }
 
-  /** In-app origins pass untouched; anything else is prevented and routed. Fails closed. */
+  /**
+   * In-app origins pass untouched; anything else is prevented and routed. Fails closed.
+   * FR-19 (sign-in-flow.md section 7): the optional `opts.allow(url)` is consulted only AFTER the fixed list and lets
+   * the navigation pass untouched when it returns exactly `true` (the sign-in mode's predicate). Absent: unchanged.
+   * A throwing `allow` fails closed to the router.
+   */
   function onWillNavigate(event, url, opts) {
     const allowedOrigins = opts && opts.allowedOrigins;
     const origin = originOf(url);
     if (Array.isArray(allowedOrigins) && origin !== null && allowedOrigins.includes(origin)) return;
+    const allow = opts && opts.allow;
+    if (typeof allow === 'function') {
+      try {
+        if (allow(url) === true) return;
+      } catch (err) {
+        log('[gcd] navigation predicate failed', err && err.name);
+      }
+    }
     event.preventDefault();
     try {
       route(url, { source: opts && opts.source });

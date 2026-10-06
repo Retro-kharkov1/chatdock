@@ -19,6 +19,9 @@
 //   main window scheme only (https or blob:), no host check: Chat attachment hosts are not yet observed.
 // A failed check cancels the item and shows ONE native "Download blocked" box per originating window; further
 // blocked downloads in that window while it is open are cancelled and folded into it.
+// FR-19 (sign-in-flow.md section 4): while the sign-in mode is on (`isMainDownloadBlocked()`, read per download) EVERY
+// main-window download is cancelled, with sign-in wording and no "Open in browser" (that action would hand the URL of
+// an untrusted page to the system browser). App windows and the mode-off main window are unchanged.
 //
 // No Electron import: every collaborator is injected (see test/downloads.test.js for the contract).
 
@@ -32,6 +35,13 @@ const BLOCKED = Object.freeze({
   message: 'This download comes from an address the app does not allow.',
   close: 'Close',
   openInBrowser: 'Open in browser',
+});
+
+/** FR-19: the notice for a main-window download refused while the sign-in mode is on (title shared with BLOCKED). */
+const SIGN_IN_BLOCKED = Object.freeze({
+  title: BLOCKED.title,
+  message: 'Downloads are not allowed while you sign in. Finish signing in, then try again.',
+  close: BLOCKED.close,
 });
 
 /** Scheme only, for logging. */
@@ -56,6 +66,7 @@ function createDownloadHandler({
   showMessageBox,
   openExternal,
   downloadChainHosts = DOWNLOAD_CHAIN_HOSTS,
+  isMainDownloadBlocked = () => false,
   log = () => {},
 }) {
   /** originating window -> the open "Download blocked" box for it (coalescing: one per window) */
@@ -98,9 +109,9 @@ function createDownloadHandler({
     return win;
   }
 
-  function showBlockedNotice(origin, parent, url) {
+  function showBlockedNotice(origin, parent, url, signIn = false) {
     if (notices.has(origin)) return; // folded into the box that is already open for this window
-    const openable = schemeOf(url) === 'https';
+    const openable = !signIn && schemeOf(url) === 'https';
     const controller = new AbortController();
     const slot = { dismissed: false };
     notices.set(origin, slot);
@@ -127,7 +138,7 @@ function createDownloadHandler({
         showMessageBox(parent, {
           type: 'warning',
           title: BLOCKED.title,
-          message: BLOCKED.message,
+          message: signIn ? SIGN_IN_BLOCKED.message : BLOCKED.message,
           buttons: openable ? [BLOCKED.close, BLOCKED.openInBrowser] : [BLOCKED.close],
           defaultId: 0, // "Close": a stray Enter never launches a browser
           cancelId: 0,
@@ -165,6 +176,13 @@ function createDownloadHandler({
     showBlockedNotice(origin, usableParent(origin, empty), url);
   }
 
+  /** FR-19: cancel a main-window download during the sign-in mode (a pure refusal; nothing is offered or opened). */
+  function blockForSignIn(item, mainWin) {
+    item.cancel();
+    log('[gcd] download blocked', 'sign-in');
+    showBlockedNotice(mainWin, usableParent(mainWin, false), item.getURL(), true);
+  }
+
   function handler(event, item, webContents) {
     if (!webContents || !item) return;
     let appWin = null;
@@ -184,6 +202,10 @@ function createDownloadHandler({
     const isApp = Boolean(appWin);
 
     try {
+      if (!isApp && isMainDownloadBlocked() === true) {
+        blockForSignIn(item, mainWin);
+        return;
+      }
       const allowed = isApp ? appDownloadAllowed(item) : mainDownloadAllowed(item);
       if (!allowed) {
         block(item, origin, webContents, isApp);
@@ -218,4 +240,4 @@ function createDownloadHandler({
   return handler;
 }
 
-module.exports = { createDownloadHandler, BLOCKED, safeBaseName };
+module.exports = { createDownloadHandler, BLOCKED, SIGN_IN_BLOCKED, safeBaseName };

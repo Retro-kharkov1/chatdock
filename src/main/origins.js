@@ -2,8 +2,9 @@
 
 // Origin lists, extracted from index.js so they are testable.
 //
-//   navigationOrigins    will-navigate allowlist and the origins the app IPC channels accept
-//                        (chat + the Google sign-in origin, provisional per overview.md).
+//   navigationOrigins    the FIXED will-navigate allowlist (chat + the Google sign-in origin). While the FR-19 sign-in
+//                        mode is on (signInFlow.js) the main window may additionally follow an acceptable https
+//                        origin; that widening is a state, not an edit of this list (sign-in-flow.md).
 //   notificationOrigins  origins allowed to raise notifications: the service-worker IPC channel and
 //                        the `notifications` permission (session.js). Chat only - the sign-in
 //                        origin has no business notifying (review S1).

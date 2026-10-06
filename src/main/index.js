@@ -53,6 +53,8 @@ function bootstrap() {
     dialog,
     desktopCapturer,
     session,
+    clipboard,
+    nativeTheme,
   } = require('electron');
   const {
     resolveWindowState,
@@ -65,12 +67,14 @@ function bootstrap() {
   const {
     buildNotificationBridgeScript,
     attachUnreadTitleListener,
-    parseUnreadCount,
+    readTrustedUnreadCount,
+    createNotificationBridgeInjector,
   } = require('./notifications');
+  const { isChatMainFrame, createMainFrameGuard, registerBridgeProbe } = require('./mainFrameGate');
   const { createAppTray, setUnreadOverlay } = require('./tray');
   const { createAttentionController, bindWindowFocus } = require('./attention');
   const { createUnreadTracker } = require('./unreadTracker');
-  const { buildOrigins, parseDevStartUrl, START_URL } = require('./origins');
+  const { buildOrigins, parseDevStartUrl, START_URL, SIGN_IN_ORIGIN } = require('./origins');
   const { resolveAppUserModelId, resolveProtocolScheme } = require('./appIdentity');
   const { createToastService } = require('./nativeToast');
   const { attachServiceWorkerNotifications } = require('./serviceWorkerNotifications');
@@ -78,11 +82,26 @@ function bootstrap() {
   const { openSettingsWindow, getSettingsWindow, registerSettingsWindowIpc } = require('./settingsWindow');
   const trayBlink = require('./trayBlink');
   const { readBuildInfo, buildVersionLabel } = require('./version');
-  const { classifyLink, isOpenableExternalScheme } = require('./meetLink');
+  const { classifyLink, isOpenableExternalScheme, MEET_ORIGIN } = require('./meetLink');
   const { createLinkRouter } = require('./linkRouter');
-  const { classifyGoogleLink, classifyChatTarget } = require('./googleLink');
+  const {
+    classifyGoogleLink,
+    classifyChatTarget,
+    LINK_LIST_HOSTS,
+    ENTRY_HOP_HOST,
+    USERCONTENT_HOST,
+  } = require('./googleLink');
+  const { createSignInFlow } = require('./signInFlow');
+  const {
+    bindSignInFlow,
+    createBackToChat,
+    createRefusedStepNotice,
+    createTitleSetter,
+  } = require('./signInWiring');
   const { createGoogleAppWindowManager } = require('./googleAppWindow');
   const { bindEditShortcuts } = require('./editShortcuts');
+  const { createSmartCopy } = require('./smartCopy');
+  const { createCopyHint } = require('./copyHint');
   const { createDownloadHandler } = require('./downloads');
   const { createMainWindowActions } = require('./mainWindowActions');
   const { createNotificationOpener } = require('./notificationOpen');
@@ -97,6 +116,7 @@ function bootstrap() {
   const { createQuitTerminator, sessionFlushers } = require('./quitTerminator');
   const { createDisplayMediaGate } = require('./meetPermissions');
   const { createPickerController, createPickerWindow } = require('./pickerWindow');
+  const { createHelpWindowController } = require('./helpWindow');
 
   // Application-menu suppression (docs/architecture/tray-lifecycle.md "Application menu
   // suppression is part of quit-only-from-tray, not a separate concern") — the single
@@ -108,7 +128,7 @@ function bootstrap() {
   // "Passing null will suppress the default menu.").
   Menu.setApplicationMenu(null);
 
-  // Owner request (2026-09-22): tray version line, now sourced from `build-info.json`
+  // Maintainer request (2026-09-22): tray version line, now sourced from `build-info.json`
   // (GitVersion-derived, wired by ci-cd-engineer) rather than this file's own mtime — see
   // version.js's header comment for why. Read once at startup, not on every menu open: the
   // running process's own build doesn't change while it's running.
@@ -124,8 +144,9 @@ function bootstrap() {
   // exercised without a signed-in Chat session.
   const devStart = parseDevStartUrl(process.env.GCD_DEV_START_URL, app.isPackaged);
   const startUrl = devStart ? devStart.url : START_URL;
-  // ALLOWED_ORIGINS: navigation + app IPC. NOTIFICATION_ORIGINS: who may notify (service-worker
-  // IPC, the `notifications` permission) - chat only, not the sign-in origin.
+  // ALLOWED_ORIGINS: the will-navigate allow-list only. NOTIFICATION_ORIGINS: every app channel and injection
+  // of the main window (ipc-contract.md "Origin gating"), the service-worker IPC and the `notifications`
+  // permission - chat only, not the sign-in origin.
   const { navigationOrigins: ALLOWED_ORIGINS, notificationOrigins: NOTIFICATION_ORIGINS } =
     buildOrigins(devStart ? devStart.origin : null);
 
@@ -292,6 +313,19 @@ function bootstrap() {
   });
   picker.register(ipcMain);
 
+  // UI-06: the in-app Help window (the generated user guide). Opened from the tray's Help entry and from the
+  // Settings window's Help link (settings:open-help). App-owned, single instance, no preload, no bridge.
+  const helpWindow = createHelpWindowController({
+    BrowserWindow,
+    session,
+    htmlPath: path.join(__dirname, '../renderer/help/help.html'),
+    iconPath: APP_ICON,
+    // Resolved lazily: openInSystemBrowser is declared further down.
+    openExternal: (target) => openInSystemBrowser(target),
+    isOpenableExternalScheme,
+    log: logLine,
+  });
+
   // The session-wide screen-share gate (userGesture + origin + call window + one at a time).
   const displayGate = createDisplayMediaGate({
     getCallWindow: () => callWindows.getWindow(),
@@ -352,6 +386,29 @@ function bootstrap() {
     log: logLine,
   });
 
+  // --- UI-05 (FR-18): smart copy. docs/architecture/smart-copy.md. Right-click on a link copies its address (main
+  // window and every Google app window); releasing the left button after selecting text copies the selection (main
+  // window only, via its preload's one-way signal). The hint is one app-owned, click-through window.
+  const copyHint = createCopyHint({
+    BrowserWindow,
+    // `screen` is only usable once the app is ready; hints only happen long after, so resolve lazily.
+    screen: {
+      getCursorScreenPoint: () => require('electron').screen.getCursorScreenPoint(),
+      getDisplayNearestPoint: (point) => require('electron').screen.getDisplayNearestPoint(point),
+    },
+    session,
+    nativeTheme,
+    htmlPath: path.join(__dirname, '../renderer/copy-hint.html'),
+    log: logLine,
+  });
+  const smartCopy = createSmartCopy({
+    clipboard,
+    showHint: (kind) => copyHint.showHint(kind),
+    ipcMain,
+    notificationOrigins: NOTIFICATION_ORIGINS,
+    log: logLine,
+  });
+
   const googleAppWindows = createGoogleAppWindowManager({
     BrowserWindow,
     getRouter: () => linkRouter,
@@ -359,6 +416,43 @@ function bootstrap() {
     showMessageBox: (parent, options) => dialog.showMessageBox(parent, options),
     openExternal: openInSystemBrowser,
     iconPath: APP_ICON,
+    bindSmartCopy: smartCopy.bindSmartCopyApp,
+    log: logLine,
+  });
+
+  // --- FR-19: sign-in mode (docs/architecture/sign-in-flow.md) --------------------------------------------------
+  // ONE state machine for the main window: while the user signs in through the organisation's identity provider the
+  // main frame may follow acceptable https origins; Chat loading again, "Back to Chat" or a limit ends it. The lists
+  // of refused hosts are imported, never copied. The flow is bound to the main window's contents in createWindow
+  // (signInWiring.js registers the main window's will-navigate; index.js registers none of its own).
+  const signInFlow = createSignInFlow({
+    chatOrigins: NOTIFICATION_ORIGINS,
+    signInOrigin: SIGN_IN_ORIGIN,
+    refusedHosts: [...LINK_LIST_HOSTS, ENTRY_HOP_HOST, USERCONTENT_HOST, new URL(MEET_ORIGIN).hostname],
+    refusedHostSuffixes: ['googleusercontent.com'],
+    startUrl,
+    loadStartUrl: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.loadURL(startUrl).catch((err) => logLine('[gcd] sign-in start page load failed', err && err.name));
+    },
+    setWindowTitle: (title) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      createTitleSetter({ window: mainWindow, webContents: mainWindow.webContents })(title);
+    },
+    notifyRefusedStep: () => notifyRefusedStep(),
+    // Event-driven tray refresh (never the blink tick): "Back to Chat" appears and goes with the mode.
+    onModeChange: () => {
+      if (trayController) trayController.refreshMenu();
+    },
+    log: logLine,
+  });
+  // Tray entry and notice button: abort('user') (a no-op while the mode is off), then show and focus the window.
+  const backToChat = createBackToChat({ flow: signInFlow, showMainWindow: focusMainWindow });
+  const notifyRefusedStep = createRefusedStepNotice({
+    showMessageBox: (parent, options) =>
+      parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options),
+    getMainWindow: () => mainWindow,
+    onBackToChat: backToChat,
     log: logLine,
   });
 
@@ -372,6 +466,8 @@ function bootstrap() {
     showMessageBox: (parent, options) =>
       parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options),
     openExternal: openInSystemBrowser,
+    // FR-19: while the sign-in mode is on every main-window download is cancelled (sign-in wording, no browser hand-off).
+    isMainDownloadBlocked: () => signInFlow.isActive(),
     log: logLine,
   });
 
@@ -502,28 +598,33 @@ function bootstrap() {
     },
   });
 
+  const mainWebContents = () =>
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
+
   /**
    * Re-injects the notification bridge with the current sound/mute values. Called on dom-ready,
    * did-finish-load, and every sound/mute toggle (tray-lifecycle.md's "Sound & mute" section).
-   * Failure is logged distinctly, not swallowed — see notifications.md's "Failure mode to log,
-   * not swallow": a silently-broken click-to-focus bridge must be detectable, not indistinguishable
-   * from success.
+   * The origin check (chat origin only) lives INSIDE the injector, so every caller is covered; a
+   * failed injection is logged distinctly (notifications.md "Failure mode to log, not swallow").
    */
-  function injectNotificationBridge() {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    const script = buildNotificationBridgeScript(
-      settingsStore.get('soundEnabled'),
-      settingsStore.get('notificationsMuted')
-    );
-    mainWindow.webContents.executeJavaScript(script, false).catch((err) => {
-      console.error(
-        '[gcd] DEGRADED: notification bridge injection failed — click-to-focus and sound/mute' +
-          ' control will not work until this is fixed. Likely cause: a CSP change on Google\'s' +
-          ' side (see docs/architecture/notifications.md).',
-        err
-      );
-    });
-  }
+  const injectNotificationBridge = createNotificationBridgeInjector({
+    getWebContents: mainWebContents,
+    getSettings: () => ({
+      soundEnabled: settingsStore.get('soundEnabled'),
+      notificationsMuted: settingsStore.get('notificationsMuted'),
+    }),
+    origins: NOTIFICATION_ORIGINS,
+    log: (...args) => console.error(...args),
+  });
+
+  // Everything the main window's page can send goes through this guard: the main window's own
+  // webContents, its main frame, on the chat origin (ipc-contract.md "Origin gating").
+  const mainFrameGuard = createMainFrameGuard({
+    getWebContents: mainWebContents,
+    origins: NOTIFICATION_ORIGINS,
+    log: (msg) => console.error(msg),
+  });
+  registerBridgeProbe(ipcMain, { getWebContents: mainWebContents, origins: NOTIFICATION_ORIGINS });
 
   function createWindow() {
     const saved = loadSavedWindowState(windowStatePath);
@@ -606,6 +707,8 @@ function bootstrap() {
     // reintroducing any Menu (and therefore no second quit-capable surface).
     // The same helper binds the Google app windows (googleAppWindow.js).
     bindEditShortcuts(mainWindow.webContents);
+    // UI-05: right-click link copy + the validated copy-on-select signal from the main window's preload.
+    smartCopy.bindSmartCopyMain(mainWindow);
 
     // FR-06 / project rule "Quit only from the tray" (docs/architecture/project-rules.md): the close (X) button hides, it never quits.
     mainWindow.on('close', (event) => {
@@ -631,23 +734,30 @@ function bootstrap() {
     // The main window's contents always gets a will-prevent-unload listener (quit path).
     quitGuard.guardContents(mainWindow.webContents);
 
-    // will-navigate allowlist - anything outside ALLOWED_ORIGINS is prevented and routed (Meet to the
-    // call window, http/https/mailto to the system browser). Provisional list, see ALLOWED_ORIGINS.
-    mainWindow.webContents.on('will-navigate', (event, url) => {
-      linkRouter.onWillNavigate(event, typeof event.url === 'string' ? event.url : url, {
-        allowedOrigins: ALLOWED_ORIGINS,
-      });
+    // Navigation away from the fixed list (ALLOWED_ORIGINS) is prevented and routed (Meet to the call window, Google
+    // apps to their windows, http/https/mailto to the system browser) - EXCEPT while the sign-in mode is on (FR-19,
+    // sign-in-flow.md): then an acceptable https origin passes. The wiring owns this window's navigation events
+    // (start, redirect, commit, failure), the title during the mode, the beforeunload override on abort and `closed`.
+    bindSignInFlow({
+      window: mainWindow,
+      webContents: mainWindow.webContents,
+      flow: signInFlow,
+      router: linkRouter,
+      allowedOrigins: ALLOWED_ORIGINS,
     });
 
     mainWindow.webContents.on('dom-ready', injectNotificationBridge);
     mainWindow.webContents.on('did-finish-load', () => {
       injectNotificationBridge();
-      // Seed the shared baseline from the count the title already shows (D1a).
-      unread.onPageLoaded(parseUnreadCount(mainWindow.webContents.getTitle()));
+      // Seed the shared baseline from the count the title already shows (D1a) - only when the main
+      // frame is on the chat origin (an off-origin page's title is not a count).
+      const seeded = readTrustedUnreadCount(mainWindow.webContents, NOTIFICATION_ORIGINS);
+      if (seeded !== null) unread.onPageLoaded(seeded);
     });
 
     // FR-05 piece 3: tray unread indicator, driven by the page's own title prefix.
-    attachUnreadTitleListener(mainWindow.webContents, (unreadCount) => {
+    const contents = mainWindow.webContents;
+    attachUnreadTitleListener(contents, (unreadCount) => {
       currentUnreadCount = unreadCount;
       setUnreadOverlay(mainWindow, unreadCount);
       refreshTrayIconState();
@@ -655,7 +765,7 @@ function bootstrap() {
       // through the shared baseline. Real arrival events (service-worker / page notifications)
       // reach attention.onArrival directly.
       unread.onRawCount(unreadCount);
-    });
+    }, () => isChatMainFrame(contents, NOTIFICATION_ORIGINS));
 
     mainWindow.loadURL(startUrl);
   }
@@ -679,12 +789,18 @@ function bootstrap() {
       onOpenSettings: () => {
         openSettingsWindow({ appIconPath: path.join(__dirname, '../../assets/icons/icon.png') });
       },
+      onOpenHelp: () => {
+        helpWindow.open();
+      },
       onExit: () => {
         // Exit rules for a live call (P2) live in the call window manager.
         callWindows.requestExit();
       },
       hasCallWindow: () => callWindows.hasCallWindow(),
       onShowCallWindow: () => callWindows.showCallWindow(),
+      // FR-19: "Back to Chat" while the sign-in mode is on.
+      isSignInActive: () => signInFlow.isActive(),
+      onBackToChat: () => backToChat(),
     });
     refreshTrayIconState();
 
@@ -723,6 +839,7 @@ function bootstrap() {
 
   // The quit really happens: stop the isQuitting reset timer.
   app.on('will-quit', (event) => {
+    copyHint.destroy(); // UI-05: the hint window never delays or blocks the exit
     quitGuard.onWillQuit();
     quitTerminator.onWillQuit(event);
   });
@@ -739,34 +856,21 @@ function bootstrap() {
     // Intentionally not calling app.quit() — see tray-lifecycle.md.
   });
 
+  // The three page-bridge channels: chat origin + main frame + the main window's own sender
+  // (mainFrameGuard) - the sign-in origin, redirect targets and sub-frames are refused.
   ipcMain.on('notification:clicked', (event) => {
-    const senderOrigin = event.senderFrame ? event.senderFrame.origin : undefined;
-    if (!isAllowedSender(senderOrigin, ALLOWED_ORIGINS)) {
-      console.error(
-        `[gcd] rejected notification:clicked from disallowed origin: ${senderOrigin}`
-      );
-      return;
-    }
+    if (!mainFrameGuard.accept(event, 'notification:clicked')) return;
     focusMainWindow();
   });
 
-  // Sender check shared by the page-bridge notification channels (chat origin only, like the
-  // service-worker channel - the sign-in origin has no business raising notifications).
-  function fromAllowedFrame(event, channel) {
-    const origin = event.senderFrame ? event.senderFrame.origin : undefined;
-    if (isAllowedSender(origin, NOTIFICATION_ORIGINS)) return true;
-    console.error(`[gcd] rejected ${channel} from disallowed origin: ${origin}`);
-    return false;
-  }
-
   // The page created its own native toast (window.Notification path): arrival signal only.
   ipcMain.on('notification:arrived', (event) => {
-    if (fromAllowedFrame(event, 'notification:arrived')) toasts.noteArrival();
+    if (mainFrameGuard.accept(event, 'notification:arrived')) toasts.noteArrival();
   });
 
   // A page-initiated ServiceWorkerRegistration.showNotification (Electron shows no toast for it).
   ipcMain.on('notification:show', (event, payload) => {
-    if (!fromAllowedFrame(event, 'notification:show')) return;
+    if (!mainFrameGuard.accept(event, 'notification:show')) return;
     // The scope comes from the page's registration but is only honoured on the sender's own origin.
     let scope;
     try {
@@ -779,19 +883,29 @@ function bootstrap() {
     toasts.show(payload, { scope });
   });
 
-  // Settings window channels (docs/architecture/ipc-contract.md "Settings window"). No sender-
-  // origin check here — unlike 'notification:clicked' above, the Settings window only ever loads
-  // this app's own bundled local HTML, never a third-party origin (see settingsWindow.js).
-  ipcMain.handle('settings:get', async () => {
+  // Settings window channels (docs/architecture/ipc-contract.md "Settings window"). The Settings window
+  // only ever loads this app's own bundled local HTML; the channels accept that window's own webContents
+  // and nothing else (no page of the main window has a bridge to these, this is defence in depth).
+  const fromSettingsWindow = (event) => {
+    const win = getSettingsWindow();
+    return Boolean(win && !win.isDestroyed() && event && event.sender === win.webContents);
+  };
+  ipcMain.handle('settings:get', async (event) => {
+    if (!fromSettingsWindow(event)) throw new Error('settings:get rejected: not the Settings window');
     const all = settingsStore.getAll();
     return { ...all, version: versionLabel };
   });
 
   // BUG-06: content-height reports from the Settings renderer (validated + sender-checked inside).
   // `screen` is only usable once the app is ready; the handler runs long after, so resolve lazily.
-  registerSettingsWindowIpc(ipcMain, { screen: { getDisplayMatching: (b) => require('electron').screen.getDisplayMatching(b) } });
+  registerSettingsWindowIpc(ipcMain, {
+    screen: { getDisplayMatching: (b) => require('electron').screen.getDisplayMatching(b) },
+    // UI-06: 'settings:open-help' (sender-checked inside) opens the same Help window as the tray entry.
+    openHelp: () => helpWindow.open(),
+  });
 
   ipcMain.handle('settings:set', async (event, payload) => {
+    if (!fromSettingsWindow(event)) return { ok: false, message: 'Rejected: not the Settings window' };
     const { key, value } = payload || {};
     const result = await settingsStore.applySetting(key, value, {
       originSenderId: event.sender.id,
