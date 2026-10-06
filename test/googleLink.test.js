@@ -27,7 +27,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { load } = require('./helpers/pending');
 
-const DRIVE_EXAMPLE = 'https://drive.google.com/file/d/FILE_ID/view?usp=sharing';
+const DRIVE_EXAMPLE = 'https://drive.google.com/file/d/FILE_ID_123/view?usp=sharing';
 const wrap = (target) => `https://www.google.com/url?q=${encodeURIComponent(target)}`;
 
 // --- classifyGoogleLink: link list -------------------------------------------------------------------
@@ -51,7 +51,7 @@ for (const host of LINK_LIST_HOSTS) {
   });
 }
 
-test('classifyGoogleLink: the owner example (Drive file view) is an app window', () => {
+test('classifyGoogleLink: the canonical example (Drive file view) is an app window', () => {
   const r = load('googleLink.js').classifyGoogleLink(DRIVE_EXAMPLE);
   assert.deepEqual({ outcome: r.outcome, url: r.url }, { outcome: 'app-window', url: DRIVE_EXAMPLE });
 });
@@ -491,4 +491,77 @@ test('classifyChatTarget: an unknown or missing source never throws and never yi
     assert.notEqual(classifyChatTarget('https://chat.google.com/room/A', source), 'main-window');
     assert.notEqual(classifyChatTarget('https://chat.google.com/api/x', source), 'download');
   }
+});
+
+// --- Gmail-integrated Chat (mail.google.com chat paths) -------------------------------------------------------------------------
+
+for (const url of [
+  'https://mail.google.com/chat/u/0/#chat/space/AAAA',
+  'https://mail.google.com/mail/u/0/#chat/space/AAAA',
+]) {
+  test(`classifyGoogleLink: Gmail-integrated Chat ${url} -> main-window outcome (a Chat target, not a Gmail link)`, () => {
+    assert.equal(load('googleLink.js').classifyGoogleLink(url).outcome, 'main-window');
+  });
+}
+
+for (const url of ['https://mail.google.com/', 'https://mail.google.com/mail/u/0/#inbox', 'https://mail.google.com/mail/u/0/#chatter', 'https://mail.google.com/chatter/x']) {
+  test(`classifyGoogleLink: plain Gmail ${url} stays an app-window outcome`, () => {
+    assert.equal(load('googleLink.js').classifyGoogleLink(url).outcome, 'app-window');
+  });
+}
+
+for (const url of [
+  'https://mail.google.com/',
+  'https://mail.google.com/mail/u/0/#inbox',
+  'https://mail.google.com/mail/u/0/#inbox/FMfcg',
+  'https://mail.google.com/mail/u/0/#chatter',
+  'https://mail.google.com/chatter/x',
+  'https://mail.google.com/mail/u/0/#search/chat',
+  'https://mail.google.com:444/chat/',
+  'http://mail.google.com/chat/',
+  'https://evilmail.google.com/chat/',
+  'https://mail.google.com.evil.example/chat/',
+]) {
+  for (const source of ['main', 'app']) {
+    test(`classifyChatTarget: non-chat or lookalike Gmail ${url} from ${source} -> browser`, () => {
+      assert.equal(load('googleLink.js').classifyChatTarget(url, source), 'browser');
+    });
+  }
+}
+
+// Gmail-integrated Chat targets: never loaded into the main window (it would leave the chat origin). Both sources -> focus-main;
+// download shapes on a mail.google.com target -> browser (download-first rule applies to chat.google.com only).
+const GMAIL_CHAT_CONVERSATIONS = [
+  'https://mail.google.com/chat/',
+  'https://mail.google.com/chat/u/0/',
+  'https://mail.google.com/chat/u/1/#chat/space/AAAA',
+  'https://mail.google.com/mail/u/0/#chat/space/AAAA',
+  'https://mail.google.com/mail/u/2/#chat/dm/BBBB',
+  'https://mail.google.com/mail/#chat/space/AAAA',
+  'https://mail.google.com/u/0/chat/room/AAAA',
+  'https://mail.google.com/mail/u/0/?tab=mm#chat/space/AAAA',
+];
+const GMAIL_CHAT_DOWNLOADS = [
+  'https://mail.google.com/chat/api/get_attachment_url',
+  'https://mail.google.com/mail/u/0/#chat/attachment/1',
+];
+
+for (const url of GMAIL_CHAT_CONVERSATIONS) {
+  for (const source of ['main', 'app']) {
+    test(`classifyChatTarget: Gmail Chat ${url} from ${source} -> focus-main (never a main-window load)`, () => {
+      assert.equal(load('googleLink.js').classifyChatTarget(url, source), 'focus-main');
+    });
+  }
+}
+
+for (const url of GMAIL_CHAT_DOWNLOADS) {
+  for (const source of ['main', 'app']) {
+    test(`classifyChatTarget: Gmail Chat download shape ${url} from ${source} -> browser`, () => {
+      assert.equal(load('googleLink.js').classifyChatTarget(url, source), 'browser');
+    });
+  }
+}
+
+test('classifyChatTarget: Gmail Chat with an unknown source -> browser', () => {
+  assert.equal(load('googleLink.js').classifyChatTarget(GMAIL_CHAT_CONVERSATIONS[0], 'x'), 'browser');
 });

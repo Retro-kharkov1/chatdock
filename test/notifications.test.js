@@ -54,6 +54,32 @@ test('FR-05: non-string input (object) resolves to 0, does not throw', () => {
   assert.equal(parseUnreadCount({}), 0);
 });
 
+// --- parseUnreadCount: count shapes Google Chat really emits (compatibility audit) ---------------
+for (const [title, expected] of [
+  ['(99+) Google Chat', 99],
+  ['(1,234) Google Chat', 1234],
+  ['(1.234) Google Chat', 1234],
+  ['(1 234) Google Chat', 1234],
+  ['(1 234) Google Chat', 1234],
+  ['(1 234) Google Chat', 1234],
+  ['(1 234) Google Chat', 1234],
+  ['  (5) Google Chat', 5],
+  ['\n\t(7) Google Chat', 7],
+  ['(1,234+) Google Chat', 1234],
+  ['(0+) Google Chat', 0],
+]) {
+  test(`parseUnreadCount: ${JSON.stringify(title)} -> ${expected}`, () => {
+    assert.equal(parseUnreadCount(title), expected);
+  });
+}
+
+for (const title of ['(+) Google Chat', '(1,) Google Chat', '(,1) Google Chat', '(1,2) Google Chat', '(1..2) Google Chat', '(1 2 3x) Google Chat', '( ) Google Chat', '(99++) Google Chat']) {
+  test(`parseUnreadCount: malformed ${JSON.stringify(title)} -> 0 and never throws`, () => {
+    assert.doesNotThrow(() => parseUnreadCount(title));
+    assert.equal(parseUnreadCount(title), 0);
+  });
+}
+
 // --- shouldMuteOrSilence (FR-11 sound control, FR-12 mute) ----------------------------------
 // Every combination of {muted, soundEnabled, page-requested-silent} is pinned, per the task
 // brief: a wrong branch here silently loses messages.

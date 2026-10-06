@@ -72,9 +72,37 @@ test('openMainWindow: the SAME url is focus only - no loadURL and no reload (a d
   assert.ok(main.count('focus') >= 1);
 });
 
-test('openMainWindow: the same url differing only by fragment is also focus only', () => {
+test('openMainWindow: a chat-host url differing only by fragment navigates (hash routes are distinct pages)', () => {
   const { main, actions } = setup({ currentUrl: ROOM_A });
   actions.openMainWindow(`${ROOM_A}#msg`);
+  assert.deepEqual(main.webContents.loadCalls, [`${ROOM_A}#msg`]);
+});
+
+test('openMainWindow: #chat/space/X then #chat/space/Y on the chat host navigates the second time', () => {
+  const X = 'https://chat.google.com/#chat/space/X';
+  const Y = 'https://chat.google.com/#chat/space/Y';
+  const { main, actions } = setup({ currentUrl: X });
+  actions.openMainWindow(Y);
+  assert.deepEqual(main.webContents.loadCalls, [Y]);
+});
+
+test('openMainWindow: the same url INCLUDING the fragment is focus only', () => {
+  const X = 'https://chat.google.com/#chat/space/X';
+  const { main, actions } = setup({ currentUrl: X });
+  actions.openMainWindow(X);
+  assert.deepEqual(main.webContents.loadCalls, []);
+  assert.ok(main.count('focus') >= 1);
+});
+
+test('openMainWindow: current url with a fragment, target without one, differ -> navigates', () => {
+  const { main, actions } = setup({ currentUrl: 'https://chat.google.com/#chat/space/X' });
+  actions.openMainWindow('https://chat.google.com/');
+  assert.deepEqual(main.webContents.loadCalls, ['https://chat.google.com/']);
+});
+
+test('openMainWindow: a non-chat-host url keeps the fragment-insensitive comparison', () => {
+  const { main, actions } = setup({ currentUrl: 'https://example.com/a' });
+  actions.openMainWindow('https://example.com/a#x');
   assert.deepEqual(main.webContents.loadCalls, []);
 });
 

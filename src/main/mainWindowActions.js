@@ -1,10 +1,12 @@
 'use strict';
 
+const { CHAT_ORIGIN } = require('./origins');
+
 // UI-04 / docs/architecture/google-app-windows.md section 3: what a Chat link does to the MAIN window.
 // Extracted from index.js so the behaviour is unit-testable; deps injected, no Electron import.
 //
 //   openMainWindow(url)       'main-window' outcome (a link from a Google app window): the same page (fragment
-//                             ignored) only shows and focuses the window (no reload: an unsent draft survives);
+//                             ignored, except on the chat host where #chat/space/X vs /Y are different pages) only shows and focuses the window (no reload: an unsent draft survives);
 //                             otherwise loadURL, then restore/show/focus (like tray Show).
 //   focusMainWindow()         'focus-main' outcome (a conversation link from a main-window popup): restore, show
 //                             and focus ONLY; never loadURL or reload.
@@ -18,6 +20,31 @@ function withoutFragment(url) {
     const u = new URL(url);
     u.hash = '';
     return u.href;
+  } catch {
+    return typeof url === 'string' ? url : '';
+  }
+}
+
+// Chat is a hash-routed app on some surfaces (#chat/space/X), so on the chat host the fragment IS the page.
+const CHAT_HOSTNAME = new URL(CHAT_ORIGIN).hostname;
+
+function isChatHostUrl(url) {
+  try {
+    return new URL(url).hostname === CHAT_HOSTNAME;
+  } catch {
+    return false;
+  }
+}
+
+// Same page? Chat host: fragment included (a same-URL-including-fragment link only focuses). Others: fragment ignored.
+function samePage(current, target) {
+  if (isChatHostUrl(current) || isChatHostUrl(target)) return normalised(current) === normalised(target);
+  return withoutFragment(current) === withoutFragment(target);
+}
+
+function normalised(url) {
+  try {
+    return new URL(url).href;
   } catch {
     return typeof url === 'string' ? url : '';
   }
@@ -48,7 +75,7 @@ function createMainWindowActions({ getMainWindow, log = () => {} }) {
       const win = alive();
       if (!win) return;
       const current = win.webContents.getURL();
-      if (withoutFragment(current) !== withoutFragment(url)) {
+      if (!samePage(current, url)) {
         Promise.resolve(win.webContents.loadURL(url)).catch((err) =>
           log('[gcd] main window load failed', err && err.name)
         );

@@ -1,5 +1,7 @@
 'use strict';
 
+const { isChatMainFrame } = require('./mainFrameGate');
+
 /**
  * parseUnreadCount(title)
  *
@@ -9,6 +11,9 @@
  * this function has no Electron dependency so it is unit-testable on its own.
  *
  * @param {string} title The window/page title, as delivered by `page-title-updated`.
+ *   Accepted shapes: `(3)`, `(99+)` (the `+` is dropped: read as 99, i.e. "at least 99"), and a thousands
+ *   separator - comma, dot, space, NBSP, thin space or narrow NBSP - between groups of three digits
+ *   (`(1,234)`, `(1.234)`, `(1 234)`); leading whitespace before the `(` is tolerated.
  * @returns {number} The parsed unread count. Returns `0` (never throws, never returns
  *   `NaN`/`undefined`) for: no `(N)` prefix present (e.g. `"Google Chat"`), a malformed prefix
  *   that doesn't match the expected `(<digits>)` shape (e.g. `"(abc) Google Chat"`), an empty
@@ -16,8 +21,13 @@
  */
 function parseUnreadCount(title) {
   if (typeof title !== 'string') return 0;
-  const match = title.match(/^\((\d+)\)/);
-  return match ? Number(match[1]) : 0;
+  // Optional leading whitespace; digits optionally grouped by ONE separator (comma, dot, space, NBSP, thin or
+  // narrow NBSP) in groups of exactly three; optional trailing "+" ("99+" is read as 99: the page caps the display).
+  // (The regex class for whitespace already covers NBSP U+00A0, thin space U+2009 and narrow NBSP U+202F.)
+  const match = title.match(/^\s*\(\s*(\d{1,3}(?:[,.\s]\d{3})+|\d+)\s*\+?\s*\)/);
+  if (!match) return 0;
+  const n = Number(match[1].replace(/[^\d]/g, ''));
+  return Number.isFinite(n) ? n : 0;
 }
 
 /**
@@ -160,20 +170,65 @@ function buildNotificationBridgeScript(soundEnabled, muted) {
 }
 
 /**
- * attachUnreadTitleListener(webContents, onUnreadChange)
+ * attachUnreadTitleListener(webContents, onUnreadChange, isTrustedPage)
  *
  * Wires notifications.md piece 3 (tray unread indicator): Google Chat prefixes its tab title with
  * `(N)` while there are unread messages; this listens for `page-title-updated` and reports the
- * parsed count via `parseUnreadCount` (task 0's covered function — not a re-implementation of the
- * same regex, per the plan's task 6 done-criteria). No polling — purely event-driven, per NFR-02.
+ * parsed count via `parseUnreadCount`. No polling - purely event-driven, per NFR-02.
+ *
+ * ORIGIN GATE: a title is only trusted while the main frame is on the chat origin (the main window
+ * also shows the sign-in page and redirect targets, whose titles are theirs to choose). `isTrustedPage`
+ * is evaluated on EVERY event; when it is missing the listener fails closed and reports nothing.
  *
  * @param {Electron.WebContents} webContents
  * @param {(unreadCount: number) => void} onUnreadChange
+ * @param {() => boolean} isTrustedPage true while the main frame is on the chat origin
  */
-function attachUnreadTitleListener(webContents, onUnreadChange) {
+function attachUnreadTitleListener(webContents, onUnreadChange, isTrustedPage) {
   webContents.on('page-title-updated', (_event, title) => {
+    if (typeof isTrustedPage !== 'function' || isTrustedPage() !== true) return;
     onUnreadChange(parseUnreadCount(title));
   });
+}
+
+/**
+ * The unread count the title shows right now (did-finish-load seeding), or `null` when the main frame
+ * is not on one of `origins` - an off-origin title must not seed the baseline.
+ */
+function readTrustedUnreadCount(webContents, origins) {
+  if (!isChatMainFrame(webContents, origins)) return null;
+  return parseUnreadCount(webContents.getTitle());
+}
+
+/**
+ * createNotificationBridgeInjector({ getWebContents, getSettings, origins, log }) -> inject()
+ *
+ * The one place the notification bridge is injected. The origin check lives HERE (not in the callers:
+ * dom-ready, did-finish-load, tray mute toggle, settings:set), so every caller is covered: it is a
+ * no-op unless the main frame is on the chat origin. Failure is logged distinctly, not swallowed (see
+ * notifications.md "Failure mode to log, not swallow").
+ *
+ * @param {object} deps
+ * @param {() => Electron.WebContents|null} deps.getWebContents
+ * @param {() => {soundEnabled: boolean, notificationsMuted: boolean}} deps.getSettings
+ * @param {string[]} deps.origins
+ * @param {(...args: unknown[]) => void} deps.log
+ */
+function createNotificationBridgeInjector({ getWebContents, getSettings, origins, log }) {
+  return function injectNotificationBridge() {
+    const webContents = getWebContents();
+    if (!isChatMainFrame(webContents, origins)) return;
+    const { soundEnabled, notificationsMuted } = getSettings();
+    const script = buildNotificationBridgeScript(soundEnabled, notificationsMuted);
+    webContents.executeJavaScript(script, false).catch((err) => {
+      log(
+        '[gcd] DEGRADED: notification bridge injection failed - click-to-focus and sound/mute' +
+          " control will not work until this is fixed. Likely cause: a CSP change on Google's" +
+          ' side (see docs/architecture/notifications.md).',
+        err
+      );
+    });
+  };
 }
 
 module.exports = {
@@ -181,4 +236,6 @@ module.exports = {
   shouldMuteOrSilence,
   buildNotificationBridgeScript,
   attachUnreadTitleListener,
+  readTrustedUnreadCount,
+  createNotificationBridgeInjector,
 };
