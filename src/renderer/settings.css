@@ -162,8 +162,24 @@ input[type="checkbox"][role="switch"]:focus-visible,
   outline-offset: 2px;
 }
 
+.help-row {
+  margin-top: 8px;
+}
+
+.help-link {
+  background: none;
+  border: none;
+  padding: 4px 0;
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.help-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
 .about {
-  margin-top: 12px;
+  margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
   font-size: 12px;

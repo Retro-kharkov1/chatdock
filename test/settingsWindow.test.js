@@ -175,3 +175,55 @@ test('a second open focuses the existing window instead of creating another', ()
   const again = sw.openSettingsWindow({ electron: { BrowserWindow: FakeWin } });
   assert.equal(again, win);
 });
+
+// --- UI-06: settings:open-help ---------------------------------------------------------------------
+
+function setupHelp() {
+  const prev = sw.getSettingsWindow();
+  if (prev && !prev.isDestroyed()) prev.close();
+  const electron = { BrowserWindow: FakeWin, screen: { getDisplayMatching: () => ({ workArea: WORK_AREA }) } };
+  const win = sw.openSettingsWindow({ electron, timers: createManualClock() });
+  const calls = [];
+  const ipcMain = { handlers: {}, on(ch, fn) { this.handlers[ch] = fn; } };
+  sw.registerSettingsWindowIpc(ipcMain, { screen: electron.screen, openHelp: (...a) => calls.push(a) });
+  const send = (event, ...args) => ipcMain.handlers[sw.SETTINGS_OPEN_HELP_CHANNEL](event, ...args);
+  return { win, calls, send, ipcMain };
+}
+
+test('settings:open-help: channel name is exactly settings:open-help', () => {
+  assert.equal(sw.SETTINGS_OPEN_HELP_CHANNEL, 'settings:open-help');
+});
+
+test('settings:open-help: a message from the Settings window opens Help, once per message, ignoring any payload', () => {
+  const { win, calls, send } = setupHelp();
+  send({ sender: { id: win.webContents.id } });
+  assert.deepEqual(calls, [[]]);
+  send({ sender: { id: win.webContents.id } }, { url: 'https://evil.example' }, 'x');
+  assert.deepEqual(calls, [[], []]); // openHelp is never handed the payload
+});
+
+test('settings:open-help: another sender, a missing sender or a malformed event is ignored', () => {
+  const { calls, send } = setupHelp();
+  send({ sender: { id: 999 } });
+  send({});
+  send(undefined);
+  send({ sender: null });
+  assert.deepEqual(calls, []);
+});
+
+test('settings:open-help: ignored once the Settings window is closed', () => {
+  const { win, calls, send } = setupHelp();
+  const id = win.webContents.id;
+  win.close();
+  assert.doesNotThrow(() => send({ sender: { id } }));
+  assert.deepEqual(calls, []);
+});
+
+test('settings:open-help: registering without an openHelp callback does not throw when the channel fires', () => {
+  const prev = sw.getSettingsWindow();
+  if (prev && !prev.isDestroyed()) prev.close();
+  const win = sw.openSettingsWindow({ electron: { BrowserWindow: FakeWin }, timers: createManualClock() });
+  const ipcMain = { handlers: {}, on(ch, fn) { this.handlers[ch] = fn; } };
+  sw.registerSettingsWindowIpc(ipcMain, { screen: {} });
+  assert.doesNotThrow(() => ipcMain.handlers[sw.SETTINGS_OPEN_HELP_CHANNEL]({ sender: { id: win.webContents.id } }));
+});

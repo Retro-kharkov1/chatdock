@@ -168,7 +168,7 @@ test('a corrupt settings.json falls back to defaults instead of throwing', () =>
   assert.equal(store.get('blinkOnUnread'), true);
 });
 
-// ---- First-run defaults (owner decision 2026-09-30: everything ON after a fresh install) --------
+// ---- First-run defaults (maintainer decision 2026-09-30: everything ON after a fresh install) --------
 // Start at login is enabled exactly once, on the first run (no settings.json yet), and only for a
 // packaged build. An existing settings.json always wins; an entry the user later disables (Settings
 // or Task Manager) is never re-enabled by a restart.

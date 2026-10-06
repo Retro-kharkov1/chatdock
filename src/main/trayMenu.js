@@ -6,16 +6,20 @@
 //
 // "Show call window" (P3) is the first entry and exists only while a call window exists;
 // `hasCallWindow()` is read at build time and tray.refreshMenu() is driven by the call window's
-// onChange hook (event-driven, never the blink tick).
+// onChange hook (event-driven, never the blink tick). "Back to Chat" (FR-19) is likewise read at build time
+// (`isSignInActive()`) and the menu is rebuilt by the sign-in flow's onModeChange.
 
 function buildTrayMenuTemplate({
   getNotificationsMuted,
   getVersionLabel,
   hasCallWindow,
+  isSignInActive = () => false,
+  onBackToChat = () => {},
   onShowCallWindow,
   onToggleShowHide,
   onToggleMute,
   onOpenSettings,
+  onOpenHelp,
   onExit,
 }) {
   const template = [];
@@ -24,6 +28,8 @@ function buildTrayMenuTemplate({
   }
   template.push(
     { label: 'Show/Hide Google Chat', click: () => onToggleShowHide() },
+    // FR-19 (sign-in-flow.md section 3a): only while the sign-in mode is on, directly after Show/Hide.
+    ...(isSignInActive() ? [{ label: 'Back to Chat', click: () => onBackToChat() }] : []),
     { type: 'separator' },
     {
       label: 'Mute notifications',
@@ -33,6 +39,8 @@ function buildTrayMenuTemplate({
     },
     { type: 'separator' },
     { label: 'Settings…', click: () => onOpenSettings() },
+    // UI-06: the in-app user guide, next to Settings (same group), above Exit.
+    { label: 'Help', click: () => onOpenHelp() },
     { type: 'separator' },
     // The only path that terminates the process (project rule "Quit only from the tray").
     { label: 'Exit', click: () => onExit() },

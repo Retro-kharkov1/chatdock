@@ -28,3 +28,16 @@ test('settings.css does not force a fixed height or overflow on the content', ()
   assert.doesNotMatch(css, /overflow-y\s*:\s*scroll/);
   assert.doesNotMatch(css, /\b(height|min-height)\s*:\s*100vh/);
 });
+
+test('UI-06: the Settings page has a Help control wired to bridge.openHelp (no other call)', () => {
+  const html = read('settings.html');
+  assert.match(html, /<button[^>]*id="open-help"[^>]*>Help<\/button>/);
+  const js = read('settings.js');
+  assert.match(js, /getElementById\('open-help'\)\.addEventListener\('click', \(\) => bridge\.openHelp\(\)\)/);
+});
+
+test('UI-06: the Help control sits inside #app (so the BUG-06 content-height measurement includes it)', () => {
+  const html = read('settings.html');
+  const app = html.slice(html.indexOf('<main id="app"'), html.indexOf('</main>'));
+  assert.match(app, /id="open-help"/);
+});

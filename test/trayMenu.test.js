@@ -25,6 +25,7 @@ const SHOW_CALL = 'Show call window';
 const SHOW_HIDE = 'Show/Hide Google Chat';
 const MUTE = 'Mute notifications';
 const SETTINGS = 'Settings…';
+const HELP = 'Help'; // UI-06
 const EXIT = 'Exit';
 const VERSION = '0.1.0 (abc1234, local)';
 
@@ -38,6 +39,7 @@ function build({ call = false, muted = false } = {}) {
     onToggleShowHide: () => clicks.push('show-hide'),
     onToggleMute: () => clicks.push('mute'),
     onOpenSettings: () => clicks.push('settings'),
+    onOpenHelp: () => clicks.push('help'),
     onExit: () => clicks.push('exit'),
   });
   const shape = template.map((item) => (item.type === 'separator' ? '-' : item.label));
@@ -45,14 +47,14 @@ function build({ call = false, muted = false } = {}) {
   return { template, shape, clicks, byLabel };
 }
 
-test('tray menu without a call window is unchanged (5 entries, no "Show call window")', () => {
+test('tray menu without a call window: Help (UI-06) sits right after Settings, Exit stays last above the version line', () => {
   const { shape } = build();
-  assert.deepEqual(shape, [SHOW_HIDE, '-', MUTE, '-', SETTINGS, '-', EXIT, '-', VERSION]);
+  assert.deepEqual(shape, [SHOW_HIDE, '-', MUTE, '-', SETTINGS, HELP, '-', EXIT, '-', VERSION]);
 });
 
 test('tray menu with a call window: "Show call window" is the first entry, then a separator, then the unchanged menu', () => {
   const { shape } = build({ call: true });
-  assert.deepEqual(shape, [SHOW_CALL, '-', SHOW_HIDE, '-', MUTE, '-', SETTINGS, '-', EXIT, '-', VERSION]);
+  assert.deepEqual(shape, [SHOW_CALL, '-', SHOW_HIDE, '-', MUTE, '-', SETTINGS, HELP, '-', EXIT, '-', VERSION]);
 });
 
 test('tray menu: "Show call window" runs the call window action and never the main-window toggle', () => {
@@ -71,6 +73,7 @@ test('tray menu: the entry follows the live state - the same builder, called aga
     onToggleShowHide: () => {},
     onToggleMute: () => {},
     onOpenSettings: () => {},
+    onOpenHelp: () => {},
     onExit: () => {},
   }).map((i) => i.label);
   assert.equal(mk().includes(SHOW_CALL), false);
@@ -85,8 +88,9 @@ test('tray menu: the other entries keep their callbacks (Show/Hide, Mute, Settin
   byLabel(SHOW_HIDE).click();
   byLabel(MUTE).click();
   byLabel(SETTINGS).click();
+  byLabel(HELP).click();
   byLabel(EXIT).click();
-  assert.deepEqual(clicks, ['show-hide', 'mute', 'settings', 'exit']);
+  assert.deepEqual(clicks, ['show-hide', 'mute', 'settings', 'help', 'exit']);
 });
 
 test('tray menu: Mute is a checkbox reflecting the setting, and the build label is a disabled line', () => {

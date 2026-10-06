@@ -62,16 +62,20 @@ function resolveIconState(unreadCount, muted) {
  *
  * @param {object} options
  * @param {() => boolean} options.getNotificationsMuted
- * @param {() => string} options.getVersionLabel Owner request (2026-09-22): a disabled
+ * @param {() => string} options.getVersionLabel Maintainer request (2026-09-22): a disabled
  *   diagnostic line showing which build is actually running — see version.js's own doc comment
  *   for why a bare package.json version isn't enough.
  * @param {() => void} options.onToggleShowHide
  * @param {() => void} options.onToggleMute
  * @param {() => void} options.onOpenSettings Opens/focuses the Settings window (FR-15).
+ * @param {() => void} [options.onOpenHelp] UI-06: opens/focuses the in-app Help window.
  * @param {() => void} options.onExit
  * @param {() => boolean} options.hasCallWindow UI-01 (P3): read at menu-build time; the first entry
  *   "Show call window" exists only while a call window does (refreshMenu() is called on change).
  * @param {() => void} options.onShowCallWindow
+ * @param {() => boolean} [options.isSignInActive] FR-19: read at menu-build time; "Back to Chat" is listed only while
+ *   the sign-in mode is on (refreshMenu() is called by the flow's onModeChange).
+ * @param {() => void} [options.onBackToChat] FR-19: abort('user') then show the main window.
  */
 function createAppTray({
   getNotificationsMuted,
@@ -79,9 +83,12 @@ function createAppTray({
   onToggleShowHide,
   onToggleMute,
   onOpenSettings,
+  onOpenHelp = () => {},
   onExit,
   hasCallWindow = () => false,
   onShowCallWindow = () => {},
+  isSignInActive = () => false,
+  onBackToChat = () => {},
 }) {
   let currentIconState = 'normal';
   const tray = new Tray(trayIconPath(currentIconState));
@@ -93,10 +100,13 @@ function createAppTray({
         getNotificationsMuted,
         getVersionLabel,
         hasCallWindow,
+        isSignInActive,
+        onBackToChat,
         onShowCallWindow,
         onToggleShowHide,
         onToggleMute,
         onOpenSettings,
+        onOpenHelp,
         onExit,
       })
     );

@@ -92,6 +92,9 @@
     });
   }
 
+  // UI-06: opens the in-app Help window (main validates the sender; nothing is passed).
+  document.getElementById('open-help').addEventListener('click', () => bridge.openHelp());
+
   retryStartAtLogin.addEventListener('click', () => {
     if (!lastFailedAttempt || lastFailedAttempt.key !== 'startAtLogin') return;
     const { value } = lastFailedAttempt;

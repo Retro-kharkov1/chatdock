@@ -17,6 +17,8 @@ let settingsWindowInstance = null;
 // on #app -> this one-way channel). Root cause of the bug: a fixed 380x460 OUTER window; content
 // that grows past 460 minus the title bar made Chromium draw a vertical scrollbar.
 const SETTINGS_RESIZE_CHANNEL = 'settings:content-height';
+// UI-06: one-way, payload-free: the Settings "Help" link asks main to open the Help window.
+const SETTINGS_OPEN_HELP_CHANNEL = 'settings:open-help';
 /** If the renderer never reports a height (failed load), show the window anyway after this long. */
 const SHOW_FALLBACK_MS = 2000;
 const MIN_CONTENT_HEIGHT = 120;
@@ -74,11 +76,20 @@ function handleContentHeight(event, requested, { screen }) {
   if (!win.isVisible()) win.show();
 }
 
-/** registerSettingsWindowIpc(ipcMain, { screen }) — one-way, validated, sender-checked. */
-function registerSettingsWindowIpc(ipcMain, { screen }) {
+/** UI-06: accepted only from the open Settings window's own webContents; any payload is ignored. */
+function handleOpenHelp(event, { openHelp }) {
+  const win = settingsWindowInstance;
+  if (!win || win.isDestroyed()) return;
+  if (!event || !event.sender || event.sender.id !== win.webContents.id) return;
+  if (typeof openHelp === 'function') openHelp();
+}
+
+/** registerSettingsWindowIpc(ipcMain, { screen, openHelp }) — one-way, validated, sender-checked. */
+function registerSettingsWindowIpc(ipcMain, { screen, openHelp }) {
   ipcMain.on(SETTINGS_RESIZE_CHANNEL, (event, requested) =>
     handleContentHeight(event, requested, { screen })
   );
+  ipcMain.on(SETTINGS_OPEN_HELP_CHANNEL, (event) => handleOpenHelp(event, { openHelp }));
 }
 
 /**
@@ -164,5 +175,6 @@ module.exports = {
   fitContentHeight,
   computeBounds,
   SETTINGS_RESIZE_CHANNEL,
+  SETTINGS_OPEN_HELP_CHANNEL,
   SHOW_FALLBACK_MS,
 };

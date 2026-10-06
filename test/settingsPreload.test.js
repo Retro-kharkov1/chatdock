@@ -31,15 +31,21 @@ function loadPreload() {
   return { exposed, sent };
 }
 
-test('settingsPreload: bridge is exactly getAll, set, onChanged, reportContentHeight', () => {
+test('settingsPreload: bridge is exactly getAll, set, onChanged, reportContentHeight, openHelp', () => {
   const { exposed } = loadPreload();
   assert.equal(exposed.length, 1);
   assert.equal(exposed[0].name, '__gcdSettingsBridge');
-  assert.deepEqual(Object.keys(exposed[0].api).sort(), ['getAll', 'onChanged', 'reportContentHeight', 'set']);
+  assert.deepEqual(Object.keys(exposed[0].api).sort(), ['getAll', 'onChanged', 'openHelp', 'reportContentHeight', 'set']);
 });
 
 test('settingsPreload: reportContentHeight sends only the number on settings:content-height', () => {
   const { exposed, sent } = loadPreload();
   exposed[0].api.reportContentHeight(412);
   assert.deepEqual(sent, [['settings:content-height', 412]]);
+});
+
+test('settingsPreload: openHelp sends settings:open-help with NO payload, even if the page passes arguments', () => {
+  const { exposed, sent } = loadPreload();
+  exposed[0].api.openHelp('https://evil.example', { x: 1 });
+  assert.deepEqual(sent, [['settings:open-help']]);
 });
