@@ -97,7 +97,7 @@ function createSettingsStore({
   const isFirstRun = !fs.existsSync(settingsPath);
   const state = loadPersistedSettings(settingsPath);
 
-  // Owner decision 2026-09-30: after a fresh install everything is ON (sound and blink are already
+  // Maintainer decision 2026-09-30: after a fresh install everything is ON (sound and blink are already
   // ON in DEFAULTS; mute stays OFF because "on" would silence the app), so Start at login is enabled
   // once, here. Runs at most once: the file written below makes every later launch a non-first run,
   // which also means an entry the user disables (Settings switch or Task Manager) stays disabled.

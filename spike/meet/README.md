@@ -20,7 +20,7 @@ product app must be fully quit first (shared profile files).
 
 Log: console and `spike\meet\out\spike-b.log` (origin+path only, no query strings, cookies or credentials).
 
-## Owner checklist (about 5 minutes)
+## Maintainer checklist (about 5 minutes)
 
 Run 1, `node_modules\.bin\electron spike\meet`:
 
@@ -49,7 +49,7 @@ Send back `spike\meet\out\spike-b.log` plus your notes (the log contains no cred
 
 Setup and limits: `docs/development/verify-on-linux-wslg.md`. Launch with `--ozone-platform=x11` or
 `--ozone-platform=wayland`. On Linux the device-release evidence comes from PulseAudio source-outputs
-(`pactl`) and `/dev/video*`, not the Windows ConsentStore. Under WSLg the owner steps 1 to 5 above must
+(`pactl`) and `/dev/video*`, not the Windows ConsentStore. Under WSLg the maintainer steps 1 to 5 above must
 be done by hand in the WSLg window (there is no camera there; the mic is `RDPSource`).
 
 ## Automated probes

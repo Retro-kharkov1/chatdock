@@ -1,6 +1,6 @@
 'use strict';
 
-// Owner request (2026-09-22, mid-incident on the notification bug): a visible build/version
+// Maintainer request (2026-09-22, mid-incident on the notification bug): a visible build/version
 // indicator in the tray menu, specifically to answer "is this a stale process or the current
 // build?" — the exact question the notification investigation lost a whole diagnostic round to
 // answering by hand (process-start-time vs. source-mtime archaeology). A bare `app.getVersion()`

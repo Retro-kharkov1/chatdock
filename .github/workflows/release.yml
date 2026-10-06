@@ -3,7 +3,7 @@ name: Release
 # Builds Windows (NSIS) and Linux (AppImage + deb) installers and attaches them to a
 # GitHub Release. macOS is intentionally not built — see ADR-0003
 # (docs/adr/0003-packaging-and-code-signing-approach.md): macOS notifications require a
-# code-signed build, and the owner does not use macOS, so there is no signing certificate
+# code-signed build, and the maintainer does not use macOS, so there is no signing certificate
 # and no macOS runner in this matrix.
 #
 # There is no dedicated "electron-builder" GitHub Action to pin — the current first-party

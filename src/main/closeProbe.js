@@ -5,7 +5,7 @@
 // allowed to proceed so the page's `beforeunload` runs; while the probe is active the FIRST
 // `will-prevent-unload` objection belongs to the app (it asks the user), a later one is the page's own.
 // If the page never answers within `probeMs` the page is treated as having nothing unsaved and
-// `onTimeout` runs (the owner destroys the window). A missing signal always means no dialog.
+// `onTimeout` runs (the caller destroys the window). A missing signal always means no dialog.
 // Pure timer bookkeeping: no Electron import.
 
 function createCloseProbe({ timers = { setTimeout, clearTimeout }, probeMs = 3000, onTimeout }) {

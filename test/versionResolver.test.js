@@ -2,7 +2,7 @@
 
 // Coverage for scripts/lib/versionResolver.js - the single place that turns GitVersion output
 // into the build identity (see docs/architecture/packaging-release.md, "Version flow").
-// Owner rule: GitVersion is the ONLY version source, on every build path, and there is no
+// Project rule: GitVersion is the ONLY version source, on every build path, and there is no
 // fallback - a resolution problem must throw, never degrade to a guessed version.
 
 const { test } = require('node:test');

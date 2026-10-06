@@ -20,7 +20,7 @@
  * @param {() => boolean} deps.isWindowFocused OS input focus of the MAIN Chat window.
  * @param {() => boolean} deps.getBlinkOnUnread FR-15 "Icon blinking" - governs blink AND flash.
  * @param {() => boolean} deps.getNotificationsMuted FR-12; also silences the flash (working
- *   assumption recorded in FR-14, pending owner confirmation).
+ *   assumption recorded in FR-14, pending maintainer confirmation).
  * @param {() => void} deps.startBlinking Tray blink start (trayBlink.startBlinking, idempotent).
  * @param {() => void} deps.stopBlinking Tray blink stop (trayBlink.stopBlinking, idempotent).
  * @param {(flag: boolean) => void} deps.flashFrame Taskbar flash request.

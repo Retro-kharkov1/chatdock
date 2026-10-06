@@ -13,8 +13,8 @@ Trademark note: this is a deliberate *evocation* of the Google Chat bubble
 form (rounded-square silhouette + tail), not a redrawing of Google's actual
 logo — no Google artwork, color codes, or wordmark were copied. That
 distinction matters because "Google Chat" is Google's trademark; this
-project is a personal-use, private-repo desktop client, which is the owner's
-call to make, not this task's. Evoking the form is also just the better
+project is an independent, unofficial desktop client; the maintainer should
+confirm the trademark position before any wider distribution. Evoking the form is also just the better
 design outcome here — a hybrid mark that only worked by being a literal copy
 of someone else's logo wouldn't be a hybrid.
 
@@ -35,7 +35,7 @@ scripts/
 
 ## What consumes what
 
-| File | Build target | Wiring (electron-developer's job, not done here) |
+| File | Build target | Wiring (the implementer's job, not done here) |
 |---|---|---|
 | `assets/icons/icon.ico` | Windows app icon + NSIS installer icon | `electron-builder.yml` / `package.json` → `build.win.icon` |
 | `assets/icons/icon.png` (512×512) | Linux AppImage icon | `build.linux.icon` (electron-builder also accepts a `build/icons/` directory of multiple PNG sizes — `icon-16.png` … `icon-512.png` are provided for that form too) |
@@ -53,7 +53,7 @@ and [ADR-0003](../docs/adr/0003-packaging-and-code-signing-approach.md).
 The script needs `sharp` (SVG rasterization) and `png-to-ico` (multi-res
 `.ico` packing) as devDependencies. They are deliberately **not** added to
 this repo's own `package.json` — that file doesn't exist yet (the app hasn't
-been scaffolded), and wiring dependencies into it is `electron-developer`'s
+been scaffolded), and wiring dependencies into it is the implementer's
 call, not this task's. Once a `package.json` exists:
 
 ```sh
@@ -92,7 +92,7 @@ PNG/ICO; edit the source SVG and regenerate.
   nucleus so the interior mark doesn't thin out to invisibility once
   anti-aliased down to 16px.
 - **2026-09-22 revision — the mark now fills the canvas much more
-  aggressively**, after owner feedback that it read as "small and floating"
+  aggressively**, after maintainer feedback that it read as "small and floating"
   at real desktop/tray size. Both source SVGs were rescaled: `master.svg`'s
   geometry was uniformly scaled ~1.23× and re-centered on its 128×128
   viewBox (alpha-bbox occupancy measured on the generated PNGs: **71%×69% →
@@ -161,7 +161,7 @@ backgrounds, and look at them — never trust a clean script exit alone.
 target resolution, composited onto light/dark backgrounds, and visually
 inspected the result. Confirmed `icon.ico`'s frame sizes with Pillow.
 
-## Open design question left for the owner / electron-developer
+## Open design question left for the maintainer / implementer
 
 The brief for this asset set asked for a "muted / quiet-hours" tray state,
 and the assets exist (`tray-muted.ico`, `tray-muted-<size>.png`). But
@@ -173,7 +173,7 @@ notification sound/quiet-hours behavior" section confirms quiet-hours is an
 open question, not a decided feature. So this asset is forward-looking, not
 tied to an existing trigger — nothing in the current docs calls
 `setTrayUnread`-style code to swap in `tray-muted`. Before
-`electron-developer` wires it up, the owner needs to actually decide the
+the implementer wires it up, the maintainer needs to actually decide the
 open question the requirements doc already flags, otherwise the muted icon
 ships as a dead, unreachable asset. Recommend closing that open question
 before, not during, the icon-wiring task.

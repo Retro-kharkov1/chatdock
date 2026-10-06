@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
 const { createGoogleHarness, ICON } = require('./helpers/googleAppWindowHarness');
 const { makeEvent } = require('./helpers/electronFakes');
 
-const DRIVE = 'https://drive.google.com/file/d/FILE_ID/view?usp=sharing';
+const DRIVE = 'https://drive.google.com/file/d/FILE_ID_123/view?usp=sharing';
 const DOC = 'https://docs.google.com/document/d/1/edit';
 const DOC_2 = 'https://docs.google.com/document/d/2/edit';
 const FORM_SHORT = 'https://forms.gle/abc';
@@ -25,7 +25,7 @@ const USERCONTENT_DL = 'https://drive.usercontent.google.com/download?id=1&expor
 
 test('appWindow: a Drive link creates one window, loads the normalised url and focuses it', () => {
   const h = createGoogleHarness();
-  const win = h.open('HTTPS://DRIVE.GOOGLE.COM/file/d/FILE_ID/view?usp=sharing');
+  const win = h.open('HTTPS://DRIVE.GOOGLE.COM/file/d/FILE_ID_123/view?usp=sharing');
   assert.equal(h.BrowserWindow.instances.length, 1);
   assert.deepEqual(win.webContents.loadCalls, [DRIVE]);
   assert.ok(win.count('focus') >= 1);
@@ -786,7 +786,7 @@ test('logging: only scheme and outcome - no url, document id or host appears in 
   win.webContents.navigate('https://maps.google.com/secret-place-xyz', { type: 'will-navigate' });
   win.webContents.windowOpen('https://evil.example/secret-popup-xyz');
   const logged = JSON.stringify(h.state.logs);
-  for (const secret of ['1AekcCfF1_XISs', 'secret-place-xyz', 'secret-popup-xyz', 'maps.google.com', 'evil.example']) {
+  for (const secret of ['FILE_ID_1', 'secret-place-xyz', 'secret-popup-xyz', 'maps.google.com', 'evil.example']) {
     assert.equal(logged.includes(secret), false, secret);
   }
 });

@@ -1,6 +1,6 @@
 'use strict';
 
-// Quit-hang fix (owner decision 2026-10-02; docs/architecture/meet-call-window.md section 8 "Risk to
+// Quit-hang fix (maintainer decision 2026-10-02; docs/architecture/meet-call-window.md section 8 "Risk to
 // watch"). On quit: flush persisted state (bounded), and only THEN force-terminate the process.
 //
 // API contract:

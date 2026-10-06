@@ -32,13 +32,13 @@ name) can survive, so skim the log before sharing it. Downloads are logged and t
 Non-Google addresses are refused. The harness grants only `clipboard-sanitized-write` and `fullscreen`; every other
 permission is denied and logged.
 
-## Owner checklist (about 15 minutes)
+## Maintainer checklist (about 15 minutes)
 
 Before each action type a short **marker** in the control window (for example `step 4: Download, small file`) and
 press Enter, so the log lines can be matched to what you did. Do not put file names or message text in markers.
 
 1. Launch. Confirm the Chat window shows your chats (signed in). If it shows the sign-in page, the profile is not
-   the real one: stop and tell the orchestrator.
+   the real one: stop and tell the maintainer.
 2. Paste your Drive example `https://drive.google.com/file/d/FILE_ID/view?usp=sharing`
    into the control window and open it. Let the preview load. Marker `step 2: Drive view`.
 3. In that window use **Preview** (if offered), then **Copy link** (the share/link button), then paste somewhere to
@@ -56,7 +56,7 @@ press Enter, so the log lines can be matched to what you did. Do not put file na
 9. In the **Chat window**: click an image preview, open and download an attachment, copy and open a message
    permalink, use "open in new window" / pop-out on a conversation, and click a link to another space. Marker before
    each. Note whether an **unsent draft** survived opening a permalink in the same window.
-10. Close the control window. Send `spike\google-windows\out\hosts.log` (after skimming it) to the orchestrator, plus
+10. Close the control window. Send `spike\google-windows\out\hosts.log` (after skimming it) to the maintainer, plus
     your notes: anything that visibly failed, looked blocked, asked you to sign in again (re-auth hops), or showed
     a "this browser may not be secure" message.
 

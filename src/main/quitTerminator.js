@@ -1,6 +1,6 @@
 'use strict';
 
-// Quit-hang fix (docs/architecture/meet-call-window.md section 8, "Risk to watch"; owner decision
+// Quit-hang fix (docs/architecture/meet-call-window.md section 8, "Risk to watch"; maintainer decision
 // 2026-10-02). On Windows, with the desktop-Chrome UA set and a Google page loaded, the main process
 // can stay alive after app.quit() has run to completion. The remedy is to flush persisted state and
 // then force-terminate. Sequence:

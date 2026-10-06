@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <title>Google Chat Desktop — hybrid chat-bubble / electron-orbit mark</title>
   <!-- Geometry scaled 1.23x from the original composition, re-centered on the
-       128x128 canvas, per 2026-09-22 owner feedback: the mark read as "small
+       128x128 canvas, per 2026-09-22 maintainer feedback: the mark read as "small
        and floating" at real desktop/tray size. Bounding box (bubble + tail
        tip) is now x:8.04-119.97, y:9.88-118.12 -> occupies ~87% width /
        ~85% height of the canvas, leaving ~6-8% breathing room per edge so it
