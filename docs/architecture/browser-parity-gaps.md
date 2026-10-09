@@ -8,7 +8,7 @@ run**: items marked "unverified" need a check in a real desktop session before a
 *Verify on a real desktop* rule in [Project Rules](project-rules.md)).
 
 **File drag-and-drop into the page** and **file attach (file chooser)** (BUG-07, BUG-08) are fixed: see
-[File access](file-access.md). The cause was the denied `fileSystem` permission, one cause for both, and the fix covers the
+[File access](file-access.md). Two causes: the denied `fileSystem` permission (drop) and a picker that Chromium cancels (attach); the fix covers the
 main window, the Google app windows and the Meet call window.
 
 Root cause to keep in mind for most rows below: Electron ships **no browser chrome**. Everything Chrome gives

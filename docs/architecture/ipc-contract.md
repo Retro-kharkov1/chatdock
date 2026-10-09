@@ -186,3 +186,10 @@ The in-app Help window loads only the generated, static `src/renderer/help/help.
 - No filesystem access, no direct access to `mainWindow`/main-window state beyond what `getAll()`
   already returns.
 </architecture>
+
+## Session preload without IPC (BUG-08)
+
+`src/preload/pickerFallback.js` is registered for the whole shared session (`registerPreloadScript`, frame contexts), so it also runs
+in the Google app windows and the Meet call window, which otherwise have no preload. It requires only `webFrame`, calls
+no `contextBridge` or `ipcRenderer` function, and adds no channel: it deletes three File System Access globals from the page
+(see [File access](file-access.md)).
