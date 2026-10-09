@@ -13,6 +13,7 @@
  */
 const { CHAT_ORIGIN } = require('./origins');
 const { decideMeetRequest, decideMeetCheck } = require('./meetPermissions');
+const { decideFileSystemRequest, decideFileSystemCheck } = require('./fileAccess');
 
 const PARTITION = 'persist:google-chat';
 
@@ -134,6 +135,11 @@ function configurePersistentSession(
   };
 
   ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (permission === 'fileSystem') {
+      // BUG-07/BUG-08: read access to a file the user dropped or picked (fileAccess.js); never writable.
+      callback(decideFileSystemRequest(webContents, details));
+      return;
+    }
     if (GOOGLE_APP_PERMISSIONS.includes(permission)) {
       // Top-level origin of the asking contents (the request details carry no such field).
       const requesting = strictOriginOf(details && details.requestingUrl);
@@ -156,6 +162,7 @@ function configurePersistentSession(
   });
 
   ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    if (permission === 'fileSystem') return decideFileSystemCheck(webContents, requestingOrigin, details);
     if (GOOGLE_APP_PERMISSIONS.includes(permission)) {
       // `details.embeddingOrigin` is documented as "only set for cross-origin sub frames" and names the frame
       // EMBEDDING the asker (not necessarily the top level), so it is combined with the asking contents' own URL
