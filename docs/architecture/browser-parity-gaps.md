@@ -7,9 +7,9 @@ for Google Chat (and the linked Meet / Drive / Docs windows) that this shell can
 run**: items marked "unverified" need a check in a real desktop session before a fix is scoped (see the
 *Verify on a real desktop* rule in [Project Rules](project-rules.md)).
 
-Known and being fixed elsewhere (not analysed further): **file drag-and-drop into the page** and **file attach
-(file chooser)** in the main window. When that fix lands, the same two checks must be repeated in the Drive and
-Docs app windows (upload by drag / "Upload file"), which use a different `BrowserWindow` (`src/main/googleAppWindow.js:271-285`).
+**File drag-and-drop into the page** and **file attach (file chooser)** (BUG-07, BUG-08) are fixed: see
+[File access](file-access.md). The cause was the denied `fileSystem` permission, one cause for both, and the fix covers the
+main window, the Google app windows and the Meet call window.
 
 Root cause to keep in mind for most rows below: Electron ships **no browser chrome**. Everything Chrome gives
 around the page (context menu, zoom, find, reload, back/forward, print, download bubble, password manager) is

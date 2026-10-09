@@ -122,6 +122,10 @@ including Google services not listed above, such as Maps.
 **Some links are never opened.** Any other kind of link, such as `file:` or `ms-settings:`, is ignored for
 safety: nothing opens and nothing is shown.
 
+**Attaching and dropping files works as in Chrome.** Drag a file from Explorer into a conversation, or use
+the attach button and pick a file: it uploads. The same works in the Drive and Docs windows. A file you drop is only
+read when you drop it; nothing else on your disk is reachable, and a dropped file never opens in the app window.
+
 **Downloads always ask where to save.** Attachments from Chat and downloads from Drive or Docs windows
 show a Save dialog (starting in your Downloads folder), and the file is never opened automatically.
 If a download comes from an address the app does not allow, it is cancelled and a **"Download blocked"**
