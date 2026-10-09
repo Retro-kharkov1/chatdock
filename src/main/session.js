@@ -11,11 +11,15 @@
  * appears logged out with no error). Keeping one canonical definition makes that mistake a
  * one-place-to-check instead of a grep across the codebase.
  */
+const path = require('path');
 const { CHAT_ORIGIN } = require('./origins');
 const { decideMeetRequest, decideMeetCheck } = require('./meetPermissions');
 const { decideFileSystemRequest, decideFileSystemCheck } = require('./fileAccess');
 
 const PARTITION = 'persist:google-chat';
+
+/** BUG-08: removes the File System Access pickers from every page of this session (see the file's header). */
+const PICKER_FALLBACK_PRELOAD = path.join(__dirname, '..', 'preload', 'pickerFallback.js');
 
 /** Origins granted `clipboard-sanitized-write` (BUG-02): Chat only. */
 const CLIPBOARD_WRITE_ORIGINS = Object.freeze([CHAT_ORIGIN]);
@@ -119,6 +123,12 @@ function configurePersistentSession(
 ) {
   ses.setUserAgent(buildDesktopUserAgent());
 
+  // BUG-08: pages of this session (main Chat window, Google app windows, Meet call window) get the plain <input type=file>
+  // chooser instead of showOpenFilePicker and friends. No IPC, no exposed API: the script only deletes three globals.
+  if (typeof ses.registerPreloadScript === 'function') {
+    ses.registerPreloadScript({ type: 'frame', filePath: PICKER_FALLBACK_PRELOAD });
+  }
+
   // BUG-02: `navigator.clipboard.writeText` needs `clipboard-sanitized-write`. It is granted from
   // its own allowlist (Chat only by default), deliberately NOT derived from notificationOrigins so
   // the dev loopback origin never gains clipboard write through the notifications list. Every other
@@ -191,6 +201,7 @@ function configurePersistentSession(
 
 module.exports = {
   PARTITION,
+  PICKER_FALLBACK_PRELOAD,
   GOOGLE_APP_CLIPBOARD_FULLSCREEN_ORIGINS,
   buildDesktopUserAgent,
   configurePersistentSession,
