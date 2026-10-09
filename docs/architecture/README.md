@@ -10,5 +10,6 @@
 - [Sign-in Flow](sign-in-flow.md) — FR-19: a "sign-in in progress" mode that lets the user's identity provider (SAML single sign-on, second-step and passkey pages) load in the main window only until Chat loads again, a limit, or the tray entry "Back to Chat", with no new permission, bridge, download or IPC for those pages; entry/exit, security rules, test map and implementation order.
 - [IPC Contract](ipc-contract.md) — the exact preload surface, channel by channel (including the picker channels).
 - [Packaging & Release](packaging-release.md) — electron-builder targets, Linux packaging (NFR-08) and the GitHub Actions release matrix (FR-09/NFR-05); see also [ADR-0003](../adr/0003-packaging-and-code-signing-approach.md).
+- [Browser parity gaps](browser-parity-gaps.md) — what Chrome does for Google Chat that the shell does not yet (context menu, spellcheck, reload, zoom, fullscreen and clipboard grants, downloads feedback, and more): evidence, severity, proposed fixes and the project rule each touches.
 - [Project Rules](project-rules.md) — the standing rules other documents cite (wrapper not a rewrite, security baseline, quit only from the tray, and others).
 </topics>
