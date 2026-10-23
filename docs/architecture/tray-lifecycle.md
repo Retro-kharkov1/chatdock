@@ -126,6 +126,8 @@ menu and does not depend on Electron's application menu at all; only the *keyboa
 For a chat app, losing Ctrl+C/Ctrl+V in the compose box or in a copied message is a real, user-visible
 regression the maintainer would hit immediately, not a theoretical one.
 
+**BUG-11 amendment:** Ctrl+V is no longer bound here (native keystroke, so image/file paste works); see browser-parity-gaps row 5.
+
 **Fix, without reintroducing any menu:** bind these five/six accelerators explicitly via
 `before-input-event` on the main window's `webContents`, dispatching straight to the corresponding
 edit command, instead of relying on a Menu (any Menu) to supply them:
