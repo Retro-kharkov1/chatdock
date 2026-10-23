@@ -403,6 +403,17 @@ function bootstrap() {
     log: logLine,
   });
 
+  // BUG-09 experiment (this branch only): launch-time flags, read once here, held in main-process memory only.
+  const { resolveExpFlags, EXPERIMENT_BAKED_DEFAULTS } = require('./expFlags');
+  const { createBlankPopup } = require('./blankPopup');
+  const expFlags = resolveExpFlags({ argv: process.argv, env: process.env, baked: EXPERIMENT_BAKED_DEFAULTS });
+  const blankPopup = createBlankPopup({
+    enabled: expFlags.blankPopup,
+    openExternal: openInSystemBrowser,
+    isOpenableExternalScheme,
+    diag,
+  });
+
   // --- UI-05 (FR-18): smart copy. docs/architecture/smart-copy.md. Right-click on a link copies its address (main
   // window and every Google app window); releasing the left button after selecting text copies the selection (main
   // window only, via its preload's one-way signal). The hint is one app-owned, click-through window.
@@ -780,7 +791,9 @@ function bootstrap() {
     // every popup by default, hand target=_blank/window.open to the system browser instead.
     // UI-01: through the link router - Meet links open the call window, http/https/mailto go to
     // the system browser, every other scheme is dropped (meet-call-window.md section 3).
-    mainWindow.webContents.setWindowOpenHandler((details) => linkRouter.onWindowOpen(details));
+    // BUG-09 exp B: the one approved about:blank popup (blankPopup.js) is allowed; everything else is routed as before.
+    mainWindow.webContents.setWindowOpenHandler((details) => blankPopup.decide(details) || linkRouter.onWindowOpen(details));
+    mainWindow.webContents.on('did-create-window', (child, details) => blankPopup.onCreated(child, details));
     // BUG-09: the Chat page's own warnings/errors (a failed call is reported by the page). Text only, truncated, URLs
     // inside it reduced to scheme+host+path; the source is the script URL without query/fragment. Info/debug skipped.
     mainWindow.webContents.on('console-message', (event) => {
@@ -1020,7 +1033,9 @@ function bootstrap() {
     configurePersistentSession(persistentSession, {
       notificationOrigins: NOTIFICATION_ORIGINS,
       displayMediaHandler: displayGate.handler,
+      experiment: { wakeLock: expFlags.wakeLock, isPopupContents: blankPopup.isPopupContents },
     });
+    diag('exp-flags', { wakeLock: expFlags.wakeLock, blankPopup: expFlags.blankPopup });
     // UI-09: spellcheck in every OS-preferred language (no setting); count and codes only in the log.
     // BUG-09 (log only): network errors / non-2xx counts for Google hosts on the Chat session.
     attachNetworkDiagnostics(persistentSession, { diag });
