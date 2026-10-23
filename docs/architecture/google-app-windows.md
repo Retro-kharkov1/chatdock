@@ -256,8 +256,9 @@ Tests assert the options the window is **created with**, not only the live conte
   window (registry lookup) and the main window.** Any other contents is left to Electron's default as today.
   Common rules: (a) a **save dialog is always shown**: do not call `setSavePath`; call
   `setSaveDialogOptions({ defaultPath })` with the OS Downloads folder joined to `path.basename` of the suggested
-  file name (so a hostile name cannot carry a path); (b) when the download finishes, **nothing is opened or
-  launched**, no `shell.openPath`, no `showItemInFolder`, no notification; (c) cancel in the dialog cancels the
+  file name (so a hostile name cannot carry a path); (b) **nothing is ever opened or launched** (no `shell.openPath`). Amended by
+  [ADR-0006](../adr/0006-download-progress-and-show-in-folder.md) (UI-12): the taskbar shows progress while a download
+  runs, and a completed item raises one native notification whose click reveals exactly the Save-dialog path; (c) cancel in the dialog cancels the
   item; (d) file names and URLs are never logged, only `started`/`completed`/`cancelled`/`blocked` and the scheme.
   **Origin check differs by source:**
   - **App window: strict, on the whole chain.** The final URL (`item.getURL()`) **and every entry of
