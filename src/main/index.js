@@ -108,6 +108,7 @@ function bootstrap() {
   } = require('./signInWiring');
   const { createGoogleAppWindowManager } = require('./googleAppWindow');
   const { bindEditShortcuts } = require('./editShortcuts');
+  const { createZoom } = require('./zoom');
   const { createSmartCopy } = require('./smartCopy');
   const { createContextMenu } = require('./contextMenu');
   const { createCopyHint } = require('./copyHint');
@@ -187,6 +188,8 @@ function bootstrap() {
 
   const windowStatePath = getWindowStatePath();
   const settingsPath = getSettingsPath();
+  // UI-10: one persisted zoom factor for the Chat window and the Google app windows (never the call window).
+  const zoom = createZoom({ filePath: path.join(path.dirname(settingsPath), 'zoom.json') });
   // Single-writer settings authority (docs/architecture/tray-lifecycle.md "Single source of
   // truth") — owns all four persisted booleans plus the OS-level start-at-login read/write. The
   // getter callbacks below are resolved lazily (trayController/settingsWindow don't exist yet at
@@ -431,6 +434,7 @@ function bootstrap() {
     iconPath: APP_ICON,
     bindSmartCopy: smartCopy.bindSmartCopyApp,
     bindContextMenu: contextMenu.bindContextMenu,
+    bindZoom: zoom.bind,
     log: logLine,
   });
 
@@ -721,6 +725,7 @@ function bootstrap() {
     // reintroducing any Menu (and therefore no second quit-capable surface).
     // The same helper binds the Google app windows (googleAppWindow.js).
     bindEditShortcuts(mainWindow.webContents);
+    zoom.bind(mainWindow.webContents); // UI-10: Ctrl+= / Ctrl+- / Ctrl+0 / Ctrl+wheel, persisted
     // UI-05: right-click link copy + the validated copy-on-select signal from the main window's preload.
     smartCopy.bindSmartCopyMain(mainWindow);
     // UI-08: native right-click menu (edit actions, spelling, image, link); no quit entry.
