@@ -494,7 +494,8 @@ function bootstrap() {
       }
     },
     isNoticeMuted: () => settingsStore.get('notificationsMuted') === true,
-    fileExists: (p) => require('fs').existsSync(p),
+    // F1: async (thread pool), never existsSync on the main process: a disconnected share must not freeze it.
+    fileExists: (p) => require('fs').promises.access(p).then(() => true, () => false),
     revealItem: (p) => shell.showItemInFolder(p),
     showCompletionNotice: ({ title, body, actionText, onReveal }) => {
       const toast = new Notification({

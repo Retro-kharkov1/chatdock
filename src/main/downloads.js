@@ -41,6 +41,8 @@ const COMPLETE = Object.freeze({
 });
 const MAX_NAME_IN_NOTICE = 80;
 const MAX_REVEALABLE = 50;
+const EXISTS_TIMEOUT_MS = 1500; // F1: a dead network share must not hold the reveal for long
+const NAME_TAIL = 12; // F4: the end of a long name (the extension) always stays visible
 
 const BLOCKED = Object.freeze({
   title: 'Download blocked',
@@ -70,13 +72,18 @@ function safeBaseName(name) {
   return /^[. ]*$/.test(last) ? FALLBACK_FILE_NAME : last;
 }
 
-/** Log form of a path: the root and the folder depth only. No folder or file name (they can hold the user's name). */
+/** Log form of a root: a class only. A UNC root names a server and a share, so it is reduced to `\\...`. */
+function redactRoot(root) {
+  return root.startsWith('\\\\') || root.startsWith('//') ? '\\\\...' : root;
+}
+
+/** Log form of a path: the root class and the folder depth only. No folder, file, server or share name. */
 function redactPath(p, pathModule = path) {
   if (typeof p !== 'string' || p === '') return '<none>';
   try {
     const parsed = pathModule.parse(p);
     const folders = pathModule.dirname(p).slice(parsed.root.length).split(/[\\/]/).filter(Boolean);
-    return `${parsed.root}...[depth ${folders.length}]`;
+    return `${redactRoot(parsed.root)}...[depth ${folders.length}]`;
   } catch {
     return '<unparseable>';
   }
@@ -84,8 +91,14 @@ function redactPath(p, pathModule = path) {
 
 /** The notice body: the base name cut to a fixed length plus the click hint. */
 function completionBody(savePath, pathModule = path) {
-  let name = pathModule.basename(savePath).replace(/[\u0000-\u001f]/g, ' ');
-  if (name.length > MAX_NAME_IN_NOTICE) name = `${name.slice(0, MAX_NAME_IN_NOTICE - 3)}...`;
+  // F4: controls (C0, DEL, C1) become a space; format characters (bidi overrides, zero-width, ...) are removed.
+  let name = pathModule
+    .basename(savePath)
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .replace(/\p{Cf}/gu, '');
+  if (name.length > MAX_NAME_IN_NOTICE) {
+    name = `${name.slice(0, MAX_NAME_IN_NOTICE - 3 - NAME_TAIL)}...${name.slice(-NAME_TAIL)}`;
+  }
   return `${name}\n${COMPLETE.bodySuffix}`;
 }
 
@@ -103,7 +116,8 @@ function createDownloadHandler({
   showCompletionNotice = null, // ({ title, body, actionText, onReveal }) one native notice; null = none
   isNoticeMuted = () => false, // the Mute setting
   revealItem = null, // (absolutePath) reveal in the file manager; called only for a registered path
-  fileExists = () => true,
+  fileExists = () => true, // may be async; bounded by existsTimeoutMs
+  existsTimeoutMs = EXISTS_TIMEOUT_MS,
   pathModule = path,
   log = () => {},
 }) {
@@ -131,20 +145,27 @@ function createDownloadHandler({
     }
   }
 
-  function reveal(savePath) {
+  /** True only when fileExists answers true within the timeout; a hang or an error counts as not present. */
+  function checkPresent(savePath) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), existsTimeoutMs);
+      if (typeof timer.unref === 'function') timer.unref();
+      Promise.resolve()
+        .then(() => fileExists(savePath))
+        .then((v) => resolve(v === true), () => resolve(false))
+        .finally(() => clearTimeout(timer));
+    });
+  }
+
+  async function reveal(savePath) {
     // Exact match against what this handler registered; nothing else reaches the file manager.
     if (typeof revealItem !== 'function' || !revealable.has(savePath) || !pathModule.isAbsolute(savePath)) {
       log('[gcd] download reveal refused');
       return;
     }
-    let present = false;
-    try {
-      present = fileExists(savePath) === true;
-    } catch {
-      present = false;
-    }
+    const present = await checkPresent(savePath);
     if (!present) {
-      log('[gcd] download reveal: file gone', redactPath(savePath, pathModule));
+      log('[gcd] download reveal: file gone or unreachable', redactPath(savePath, pathModule));
       return;
     }
     try {
@@ -166,6 +187,7 @@ function createDownloadHandler({
     if (typeof savePath !== 'string' || savePath === '' || savePath.includes('\0') || !pathModule.isAbsolute(savePath)) {
       return;
     }
+    revealable.delete(savePath); // F3: a re-download moves to the newest position
     revealable.add(savePath);
     while (revealable.size > MAX_REVEALABLE) revealable.delete(revealable.values().next().value);
     if (isNoticeMuted() === true) {
@@ -177,7 +199,7 @@ function createDownloadHandler({
         title: COMPLETE.title,
         body: completionBody(savePath, pathModule),
         actionText: COMPLETE.action,
-        onReveal: () => reveal(savePath),
+        onReveal: () => reveal(savePath).catch(() => {}),
       });
     } catch (err) {
       log('[gcd] download: notice failed', err && err.name);

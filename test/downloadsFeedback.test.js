@@ -135,18 +135,18 @@ test('progress: a throwing setProgress never breaks the download or the notice',
 
 // --- 2. notice ---------------------------------------------------------------------------------------------------------------
 
-test('notice: exactly one per completed download; click reveals exactly the Save-dialog path', () => {
+test('notice: exactly one per completed download; click reveals exactly the Save-dialog path', async () => {
   const t = setup();
   const it = new FakeItem();
   t.run(it);
   it.finish('completed');
   assert.equal(t.rec.notices.length, 1);
   assert.equal(t.rec.revealed.length, 0, 'nothing is revealed until the user clicks');
-  t.rec.notices[0].onReveal();
+  await t.rec.notices[0].onReveal();
   assert.deepEqual(t.rec.revealed, [it.savePath]);
 });
 
-test('notice: two downloads give two notices, each revealing its own path', () => {
+test('notice: two downloads give two notices, each revealing its own path', async () => {
   const t = setup();
   const a = new FakeItem({ savePath: path.join(DIR, 'a.pdf') });
   const b = new FakeItem({ savePath: path.join(DIR, 'b.pdf') });
@@ -155,8 +155,8 @@ test('notice: two downloads give two notices, each revealing its own path', () =
   b.finish('completed');
   a.finish('completed');
   assert.equal(t.rec.notices.length, 2);
-  t.rec.notices[0].onReveal();
-  t.rec.notices[1].onReveal();
+  await t.rec.notices[0].onReveal();
+  await t.rec.notices[1].onReveal();
   assert.deepEqual(t.rec.revealed, [b.savePath, a.savePath]);
 });
 
@@ -191,12 +191,21 @@ test('wording: title, action and body are the specified texts', () => {
   assert.equal(n.body, 'report.pdf\nClick to show it in its folder.');
 });
 
-test('wording: a very long name is cut and control characters are removed', () => {
-  const body = completionBody(path.join(DIR, `${'x'.repeat(300)}\n.pdf`));
+test('wording: a very long name is cut in the middle, the extension stays, control characters are removed', () => {
+  const body = completionBody(path.join(DIR, `${'x'.repeat(300)}invoice.pdf.exe`));
   const [name] = body.split('\n');
   assert.equal(name.length, 80);
-  assert.ok(name.endsWith('...'));
+  assert.ok(name.includes('...'));
+  assert.ok(name.endsWith('.pdf.exe'));
   assert.equal(completionBody(path.join(DIR, 'a\u0007b.txt')).split('\n')[0], 'a b.txt');
+});
+
+test('F4 wording: bidi overrides, other format characters and C1 controls cannot disguise the name', () => {
+  const nameOf = (n) => completionBody(path.join(DIR, n)).split('\n')[0];
+  assert.equal(nameOf('invoice‮txt.exe'), 'invoicetxt.exe');
+  assert.equal(nameOf('a⁦b⁩c​d‏e﻿f.pdf'), 'abcdef.pdf');
+  assert.equal(nameOf('a\u0085b\u009Fc\u007Fd.txt'), 'a b c d.txt');
+  assert.equal(completionBody(path.join(DIR, 'a‮b.pdf')).split('\n')[1], COMPLETE.bodySuffix);
 });
 
 // --- 3. cancel / failure -----------------------------------------------------------------------------------------------------
@@ -235,26 +244,64 @@ test('reveal: a completed item with an empty or relative save path raises no not
   }
 });
 
-test('reveal: the file no longer exists -> nothing is revealed', () => {
+test('reveal: the file no longer exists -> nothing is revealed', async () => {
   const t = setup({ fileExists: () => false });
   const it = new FakeItem();
   t.run(it);
   it.finish('completed');
-  t.rec.notices[0].onReveal();
+  await t.rec.notices[0].onReveal();
   assert.deepEqual(t.rec.revealed, []);
   assert.ok(t.rec.logs.some((l) => /file gone/.test(l[0])));
 });
 
-test('reveal: a throwing reveal is contained and logged by error name only', () => {
+test('F1 reveal: an async existence check that answers true reveals the file', async () => {
+  const t = setup({ fileExists: async () => true });
+  const it = new FakeItem();
+  t.run(it);
+  it.finish('completed');
+  await t.rec.notices[0].onReveal();
+  assert.deepEqual(t.rec.revealed, [it.savePath]);
+});
+
+test('F1 reveal: an existence check that never answers is cut by the timeout, nothing is revealed, no path is logged', async () => {
+  const t = setup({ fileExists: () => new Promise(() => {}), existsTimeoutMs: 20 });
+  const it = new FakeItem();
+  t.run(it);
+  it.finish('completed');
+  const started = Date.now();
+  await t.rec.notices[0].onReveal();
+  assert.ok(Date.now() - started < 1000, 'returned promptly');
+  assert.deepEqual(t.rec.revealed, []);
+  assert.ok(t.rec.logs.some((l) => /unreachable/.test(l[0])));
+  assert.equal(JSON.stringify(t.rec.logs).includes('Downloads'), false);
+});
+
+test('F1 reveal: a rejecting or throwing existence check is treated as not present', async () => {
+  for (const fileExists of [() => Promise.reject(new Error('EIO')), () => { throw new Error('EIO'); }]) {
+    const t = setup({ fileExists });
+    const it = new FakeItem();
+    t.run(it);
+    it.finish('completed');
+    await t.rec.notices[0].onReveal();
+    assert.deepEqual(t.rec.revealed, []);
+  }
+});
+
+test('F1 index.js: the existence check is asynchronous, existsSync is not used', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'index.js'), 'utf8');
+  assert.equal(/existsSync/.test(src.replace(/\/\/.*$/gm, '')), false);
+});
+
+test('reveal: a throwing reveal is contained and logged by error name only', async () => {
   const t = setup({ revealItem: () => { throw new TypeError('C:\\secret\\name.txt'); } });
   const it = new FakeItem();
   t.run(it);
   it.finish('completed');
-  assert.doesNotThrow(() => t.rec.notices[0].onReveal());
+  await assert.doesNotReject(async () => t.rec.notices[0].onReveal());
   assert.equal(JSON.stringify(t.rec.logs).includes('secret'), false);
 });
 
-test('reveal: the handler exposes no way to reveal a path it did not produce (only the onReveal closure)', () => {
+test('reveal: the handler exposes no way to reveal a path it did not produce (only the onReveal closure)', async () => {
   const t = setup();
   const it = new FakeItem();
   t.run(it);
@@ -262,11 +309,28 @@ test('reveal: the handler exposes no way to reveal a path it did not produce (on
   const keys = Object.keys(t.rec.notices[0]).sort();
   assert.deepEqual(keys, ['actionText', 'body', 'onReveal', 'title']);
   assert.equal(t.rec.notices[0].onReveal.length, 0, 'onReveal takes no path argument');
-  t.rec.notices[0].onReveal('/etc/passwd');
+  await t.rec.notices[0].onReveal('/etc/passwd');
   assert.deepEqual(t.rec.revealed, [it.savePath]);
 });
 
-test('reveal: the registry is bounded and an evicted path is refused', () => {
+test('F3 reveal: a re-downloaded path moves to the newest position and is not the next one evicted', async () => {
+  const t = setup();
+  const again = path.join(DIR, 'again.pdf');
+  const finish = (p) => {
+    const it = new FakeItem({ savePath: p });
+    t.run(it);
+    it.finish('completed');
+  };
+  finish(again);
+  for (let i = 1; i <= 40; i++) finish(path.join(DIR, `g${i}.pdf`));
+  finish(again); // refreshed: now newest
+  for (let i = 41; i <= 55; i++) finish(path.join(DIR, `g${i}.pdf`)); // 56 adds in total, 'again' stays within the 50 newest
+  const last = t.rec.notices.filter((n) => n.body.startsWith('again.pdf')).pop();
+  await last.onReveal();
+  assert.deepEqual(t.rec.revealed, [again]);
+});
+
+test('reveal: the registry is bounded and an evicted path is refused', async () => {
   const t = setup();
   const first = new FakeItem({ savePath: path.join(DIR, 'f0.pdf') });
   t.run(first);
@@ -276,9 +340,9 @@ test('reveal: the registry is bounded and an evicted path is refused', () => {
     t.run(it);
     it.finish('completed');
   }
-  t.rec.notices[0].onReveal();
+  await t.rec.notices[0].onReveal();
   assert.deepEqual(t.rec.revealed, [], 'the oldest of 51 was evicted');
-  t.rec.notices[50].onReveal();
+  await t.rec.notices[50].onReveal();
   assert.equal(t.rec.revealed.length, 1);
 });
 
@@ -303,14 +367,25 @@ test('blocked: a download from a disallowed scheme in the main window is cancell
 
 // --- 5. logging --------------------------------------------------------------------------------------------------------------
 
+test('F2 logging: a UNC path logs neither server nor share', () => {
+  for (const p of ['\\\\fileserver01\\finance-share\\Q3\\bob\\x.pdf', '\\\\?\\UNC\\fileserver01\\finance-share\\x.pdf']) {
+    const out = redactPath(p, path.win32);
+    assert.ok(out.startsWith('\\\\...'), out);
+    assert.equal(/fileserver|finance|bob|x\.pdf/.test(out), false, out);
+  }
+  assert.equal(redactPath('\\\\fileserver01\\finance-share\\Q3\\bob\\x.pdf', path.win32), '\\\\......[depth 2]');
+});
+
 test('logging: redactPath keeps only the root and the folder depth', () => {
   assert.equal(redactPath(path.join(DIR, 'secret-name.pdf')), `${path.parse(DIR).root}...[depth 3]`);
   assert.equal(redactPath(path.resolve(path.sep, 'a.txt')), `${path.parse(DIR).root}...[depth 0]`);
   assert.equal(redactPath(''), '<none>');
+  assert.equal(redactPath('C:\\Users\\bob\\Downloads\\x.pdf', path.win32), 'C:\\...[depth 3]');
+  assert.equal(redactPath('/home/bob/x.pdf', path.posix), '/...[depth 2]');
   assert.equal(redactPath(null), '<none>');
 });
 
-test('logging: a full run (progress, notice, reveal, gone, refused) logs no name, path, url or query', () => {
+test('logging: a full run (progress, notice, reveal, gone, refused) logs no name, path, url or query', async () => {
   const t = setup();
   const it = new FakeItem({
     url: 'https://drive.google.com/file/d/SECRETID/view?token=SECRETQ',
@@ -320,7 +395,7 @@ test('logging: a full run (progress, notice, reveal, gone, refused) logs no name
   t.run(it);
   it.progress(1, 2);
   it.finish('completed');
-  t.rec.notices[0].onReveal();
+  await t.rec.notices[0].onReveal();
   const logged = JSON.stringify(t.rec.logs);
   for (const secret of ['secret-name', 'SECRETID', 'SECRETQ', 'token', 'drive.google.com', 'users', 'Downloads', 'report']) {
     assert.equal(logged.includes(secret), false, secret);
