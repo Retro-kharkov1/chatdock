@@ -145,6 +145,7 @@ message appears. The default button is **Close**; **Open in browser** is offered
 - **F5** or **Ctrl+R** reloads the Chat window; **Ctrl+Shift+R** reloads without the cache. If Chat fails to load (for example you start the app offline), the app retries by itself every few seconds and loads Chat as soon as the connection is back.
 - **Ctrl+=** (or **Ctrl++**) zooms in, **Ctrl+-** zooms out and **Ctrl+0** returns to 100 percent; **Ctrl+mouse wheel** zooms too. This works in the Chat window and in Google app windows (not in the call window), all share one zoom level between 50 and 300 percent, and the app remembers it after you quit and start it again.
 - In Google app windows (Docs, Drive and the like) **Alt+Left** goes back and **Alt+Right** goes forward, and so do the mouse back and forward buttons. The app only goes back to pages it would let you open in that window anyway; the Chat window and the call window are not affected.
+- In Google app windows **Ctrl+P** opens the system print dialog, so you choose the printer and settings yourself; the app never prints without asking. Print from the Docs or Sheets File menu works the same way. The Chat window and the call window have no print key.
 - There is no application menu bar; everything else is handled by the Chat page itself.
 - **Right-click** in the message box, the search box or a Google page text field shows Cut, Copy, Paste and
   Select all (greyed out when not possible). On a misspelled word it also offers spelling suggestions and
