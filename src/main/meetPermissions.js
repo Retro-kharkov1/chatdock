@@ -45,6 +45,18 @@ function meetMediaGate({ requestingOrigin, topLevelOrigin } = {}) {
   return top !== null && MEET_MEDIA_TOP_LEVELS.includes(top);
 }
 
+/**
+ * BUG-09 experiment A: meetWakeLockGate({ requestingOrigin, topLevelOrigin }) - same shape as meetMediaGate: requester
+ * exactly https://meet.google.com, top level exactly https://meet.google.com or https://chat.google.com.
+ */
+function meetWakeLockGate({ requestingOrigin, topLevelOrigin } = {}) {
+  if (originOf(requestingOrigin) !== MEET_ORIGIN) return false;
+  const top = originOf(topLevelOrigin);
+  return top !== null && MEET_MEDIA_TOP_LEVELS.includes(top);
+}
+
+const WAKE_LOCK = 'screen-wake-lock';
+
 /** Permissions this module decides; every other permission is left to the caller (returns undefined). */
 const MEET_PERMISSIONS = Object.freeze(['media', 'speaker-selection', 'display-capture']);
 
@@ -62,7 +74,15 @@ function topLevelOfWebContents(webContents) {
  * `mediaTypes` (plural) is the REQUEST shape: ['audio'], ['video'], both, or EMPTY (the screen-share
  * precursor, which must be granted for Meet or the display-media handler is never reached).
  */
-function decideMeetRequest(webContents, permission, details) {
+function decideMeetRequest(webContents, permission, details, options) {
+  if (permission === WAKE_LOCK) {
+    // BUG-09 experiment A: only when the launch flag is on; otherwise left to the caller (which denies).
+    if (!options || options.wakeLock !== true) return undefined;
+    return meetWakeLockGate({
+      requestingOrigin: details && details.requestingUrl,
+      topLevelOrigin: topLevelOfWebContents(webContents),
+    });
+  }
   if (!MEET_PERMISSIONS.includes(permission)) return undefined;
   const gateFn = permission === 'display-capture' ? meetOriginGate : meetMediaGate;
   const gate = gateFn({
@@ -83,7 +103,18 @@ function decideMeetRequest(webContents, permission, details) {
  * decideMeetCheck(webContents, permission, requestingOrigin, details) -> boolean | undefined
  * `mediaType` (singular) is the CHECK shape: 'video' | 'audio' | 'unknown', or absent.
  */
-function decideMeetCheck(webContents, permission, requestingOrigin, details) {
+function decideMeetCheck(webContents, permission, requestingOrigin, details, options) {
+  if (permission === WAKE_LOCK) {
+    if (!options || options.wakeLock !== true) return undefined;
+    const wakeSignals = [];
+    const embeddingOrigin = details && details.embeddingOrigin;
+    if (embeddingOrigin !== undefined && embeddingOrigin !== null) wakeSignals.push(embeddingOrigin);
+    const url = topLevelOfWebContents(webContents);
+    if (url !== undefined) wakeSignals.push(url);
+    if (wakeSignals.length === 0) return false;
+    const asker = requestingOrigin ?? (details && details.requestingUrl);
+    return wakeSignals.every((topLevelOrigin) => meetWakeLockGate({ requestingOrigin: asker, topLevelOrigin }));
+  }
   if (!MEET_PERMISSIONS.includes(permission)) return undefined;
   const embedding = details && details.embeddingOrigin;
   const gateFn = permission === 'display-capture' ? meetOriginGate : meetMediaGate;
@@ -185,6 +216,7 @@ function createDisplayMediaGate({ getCallWindow, picker, log = () => {} }) {
 module.exports = {
   meetOriginGate,
   meetMediaGate,
+  meetWakeLockGate,
   decideMeetRequest,
   decideMeetCheck,
   createDisplayMediaGate,

@@ -120,7 +120,12 @@ function googleAppGrant(requesting, topLevelSignals) {
  */
 function configurePersistentSession(
   ses,
-  { notificationOrigins, clipboardOrigins = CLIPBOARD_WRITE_ORIGINS, displayMediaHandler }
+  {
+    notificationOrigins,
+    clipboardOrigins = CLIPBOARD_WRITE_ORIGINS,
+    displayMediaHandler,
+    experiment = {}, // BUG-09 exp: { wakeLock: boolean, isPopupContents: (webContents) => boolean }
+  }
 ) {
   ses.setUserAgent(buildDesktopUserAgent());
 
@@ -158,8 +163,23 @@ function configurePersistentSession(
       decision: decision === true ? 'grant' : 'deny',
     });
 
+  const meetOptions = { wakeLock: experiment.wakeLock === true };
+  const isPopup = (webContents) =>
+    typeof experiment.isPopupContents === 'function' && experiment.isPopupContents(webContents);
+  // BUG-09 exp A: every wake-lock grant is logged on its own line, on top of the permission-* line.
+  const logWakeLockGrant = (kind, webContents, permission, requesting, decision) => {
+    if (permission === 'screen-wake-lock' && decision === true) {
+      diag('exp-wake-lock-grant', {
+        kind,
+        requesting: redactOrigin(requesting),
+        topLevel: redactOrigin(topLevelUrlOf(webContents)),
+      });
+    }
+  };
+
   ses.setPermissionRequestHandler((webContents, permission, rawCallback, details) => {
     const callback = (decision) => {
+      logWakeLockGrant('request', webContents, permission, details && details.requestingUrl, decision);
       logDecision(
         'request',
         webContents,
@@ -173,6 +193,10 @@ function configurePersistentSession(
       );
       rawCallback(decision);
     };
+    if (isPopup(webContents)) {
+      callback(false); // BUG-09 exp B: the about:blank popup has no permissions of its own
+      return;
+    }
     if (permission === 'fileSystem') {
       // BUG-07/BUG-08: read access to a file the user dropped or picked (fileAccess.js); never writable.
       callback(decideFileSystemRequest(webContents, details));
@@ -187,7 +211,7 @@ function configurePersistentSession(
       }
       // Not a docs/drive page: fall through to the existing decisions (Chat keeps its clipboard grant).
     }
-    const meet = decideMeetRequest(webContents, permission, details);
+    const meet = decideMeetRequest(webContents, permission, details, meetOptions);
     if (meet !== undefined) {
       callback(meet);
       return;
@@ -200,7 +224,8 @@ function configurePersistentSession(
   });
 
   ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
-    const decision = decideCheck(webContents, permission, requestingOrigin, details);
+    const decision = isPopup(webContents) ? false : decideCheck(webContents, permission, requestingOrigin, details);
+    logWakeLockGrant('check', webContents, permission, requestingOrigin || (details && details.requestingUrl), decision);
     logDecision(
       'check',
       webContents,
@@ -231,7 +256,7 @@ function configurePersistentSession(
       if (googleAppGrant(requesting, signals)) return true;
       // Not a docs/drive page: fall through to the existing decisions (Chat keeps its clipboard grant).
     }
-    const meet = decideMeetCheck(webContents, permission, requestingOrigin, details);
+    const meet = decideMeetCheck(webContents, permission, requestingOrigin, details, meetOptions);
     if (meet !== undefined) return meet;
     return allowed(
       permission,
