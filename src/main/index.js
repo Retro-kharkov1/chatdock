@@ -70,7 +70,8 @@ function bootstrap() {
     readTrustedUnreadCount,
     createNotificationBridgeInjector,
   } = require('./notifications');
-  const { isChatMainFrame, createMainFrameGuard, registerBridgeProbe } = require('./mainFrameGate');
+  const { isChatMainFrame, createMainFrameGuard, registerBridgeProbe, urlOrigin } = require('./mainFrameGate');
+  const { createMainReload } = require('./mainReload');
   const { createAppTray, setUnreadOverlay } = require('./tray');
   const { createAttentionController, bindWindowFocus } = require('./attention');
   const { createUnreadTracker } = require('./unreadTracker');
@@ -799,7 +800,21 @@ function bootstrap() {
       unread.onRawCount(unreadCount);
     }, () => isChatMainFrame(contents, NOTIFICATION_ORIGINS));
 
-    mainWindow.loadURL(startUrl);
+    // BUG-10 (docs/architecture/main-window-reload.md): F5 / Ctrl+R / Ctrl+Shift+R, and a back-off retry of a failed
+    // main-frame load. Main-process timer + loadURL only: the window is never shown, throttled or destroyed, so a hidden
+    // window recovers while hidden. No automatic retry while the FR-19 sign-in mode is on.
+    const mainReload = createMainReload({
+      webContents: mainWindow.webContents,
+      startUrl,
+      isChatUrl: (url) => NOTIFICATION_ORIGINS.includes(urlOrigin(url)),
+      isSignInActive: () => signInFlow.isActive(),
+      log: logLine,
+    });
+    mainReload.bind();
+    mainWindow.on('closed', () => mainReload.dispose());
+
+    // An offline launch rejects this promise; the failure itself is handled by mainReload (did-fail-load).
+    mainWindow.loadURL(startUrl).catch((err) => logLine('[gcd] start page load failed', err && err.name));
   }
 
   function createTray() {
