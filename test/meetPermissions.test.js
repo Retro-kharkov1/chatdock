@@ -127,12 +127,23 @@ const MATRIX = [
   ['http://meet.google.com', 'http://meet.google.com', false],
   [CHAT, CHAT, false],
   ['https://evil.example', 'https://evil.example', false],
-  [MEET, CHAT, false],
+  [MEET, CHAT, true, false], // BUG-09: Chat embeds the call as a Meet iframe; display-capture stays Meet-only
   [MEET, 'https://evil.example', false],
   ['https://evil.example', MEET, false],
+  [MEET, 'https://meet.google.com.evil.com', false],
+  ['https://meet.google.com.evil.com', CHAT, false],
+  ['https://meet.google.com.evil.com', MEET, false],
+  ['http://meet.google.com', CHAT, false],
+  [MEET, 'http://chat.google.com', false],
+  ['https://meet.google.com:8443', CHAT, false],
+  [MEET, 'https://chat.google.com:8443', false],
+  ['https://user@meet.google.com', CHAT, false],
+  [MEET, 'https://user@chat.google.com', false],
+  ['https://sub.meet.google.com', CHAT, false],
+  [MEET, 'https://sub.chat.google.com', false],
 ];
 
-for (const [requesting, top, expected] of MATRIX) {
+for (const [requesting, top, expected, displayCaptureExpected = expected] of MATRIX) {
   const verdict = expected ? 'granted' : 'denied';
   const row = `${requesting} in ${top}`;
 
@@ -150,10 +161,10 @@ for (const [requesting, top, expected] of MATRIX) {
     }
   });
 
-  test(`display-capture (defence in depth) is ${verdict} for ${row}, in both handlers`, () => {
+  test(`display-capture (defence in depth) is ${displayCaptureExpected ? 'granted' : 'denied'} for ${row}, in both handlers`, () => {
     const { request, check } = setup();
-    assert.equal(request('display-capture', { requesting: `${requesting}/`, top: `${top}/`, mediaTypes: [] }), expected);
-    assert.equal(check('display-capture', { requesting: `${requesting}/`, top: `${top}/`, embedding: `${top}/` }), expected);
+    assert.equal(request('display-capture', { requesting: `${requesting}/`, top: `${top}/`, mediaTypes: [] }), displayCaptureExpected);
+    assert.equal(check('display-capture', { requesting: `${requesting}/`, top: `${top}/`, embedding: `${top}/` }), displayCaptureExpected);
   });
 
   test(`speaker-selection check is ${verdict} for ${row}`, () => {
@@ -185,6 +196,117 @@ test('media check: absent mediaType (Spike B: sometimes absent) is granted for M
 test('speaker-selection check from the Meet origin is granted (output-device choice)', () => {
   const { check } = setup();
   assert.equal(check('speaker-selection', { requesting: `${MEET}/`, top: `${MEET}/`, embedding: `${MEET}/` }), true);
+});
+
+// --- BUG-09: Meet iframe embedded in Chat --------------------------------------------------------------
+
+test('BUG-09 media check: embedding "<none>" falls back to webContents.getURL() on Chat (log shape)', () => {
+  const { check } = setup();
+  for (const mediaType of ['audio', 'video']) {
+    assert.equal(check('media', { requesting: `${MEET}/`, top: `${CHAT}/`, mediaType }), true, mediaType);
+  }
+  assert.equal(check('media', { requesting: `${MEET}/`, top: 'https://evil.example/', mediaType: 'audio' }), false);
+});
+
+test('BUG-09 media request: Meet iframe in Chat is granted for audio, video and both', () => {
+  const { request } = setup();
+  for (const mediaTypes of [['audio'], ['video'], ['audio', 'video']]) {
+    assert.equal(request('media', { requesting: `${MEET}/`, top: `${CHAT}/`, mediaTypes }), true);
+  }
+});
+
+test('BUG-09 speaker-selection: Meet iframe in Chat is granted', () => {
+  const { check } = setup();
+  assert.equal(check('speaker-selection', { requesting: `${MEET}/`, top: `${CHAT}/`, embedding: `${CHAT}/` }), true);
+});
+
+test('BUG-09 media: Chat as requester stays denied, also under a Meet top level', () => {
+  const { request, check } = setup();
+  assert.equal(request('media', { requesting: `${CHAT}/`, top: `${CHAT}/`, mediaTypes: ['audio'] }), false);
+  assert.equal(request('media', { requesting: `${CHAT}/`, top: `${MEET}/`, mediaTypes: ['audio'] }), false);
+  assert.equal(check('media', { requesting: `${CHAT}/`, top: `${MEET}/`, mediaType: 'audio', embedding: `${MEET}/` }), false);
+});
+
+test('BUG-09 display-capture and screen-wake-lock stay denied for the Meet iframe in Chat', () => {
+  const { request, check } = setup();
+  assert.equal(request('display-capture', { requesting: `${MEET}/`, top: `${CHAT}/`, mediaTypes: [] }), false);
+  assert.equal(check('display-capture', { requesting: `${MEET}/`, top: `${CHAT}/`, embedding: `${CHAT}/` }), false);
+  assert.equal(request('screen-wake-lock', { requesting: `${MEET}/`, top: `${CHAT}/` }), false);
+  assert.equal(check('screen-wake-lock', { requesting: `${MEET}/`, top: `${CHAT}/`, embedding: `${CHAT}/` }), false);
+});
+
+const DOCS = 'https://docs.google.com';
+const CYRILLIC_A_CHAT = 'https://ch\u0430t.google.com';
+const BAD_TOPS = [
+  'https://chat.google.com.',
+  'https://chat.google.com.evil.com',
+  CYRILLIC_A_CHAT,
+  'https://xn--cht-8cd.google.com',
+  'null',
+  'about:blank',
+  'about:srcdoc',
+  'data:text/html,<p>x</p>',
+  'file:///c:/x.html',
+  '',
+  DOCS,
+];
+
+test('meetMediaGate: direct table', () => {
+  const { meetMediaGate } = load('meetPermissions.js');
+  const g = (requestingOrigin, topLevelOrigin) => meetMediaGate({ requestingOrigin, topLevelOrigin });
+  assert.equal(g(MEET, MEET), true);
+  assert.equal(g(MEET, CHAT), true);
+  assert.equal(g(`${MEET}/`, `${CHAT}/x/y`), true);
+  assert.equal(g('https://MEET.GOOGLE.COM', 'https://CHAT.GOOGLE.COM'), true, 'host case is normalised by URL');
+  assert.equal(g(CHAT, CHAT), false);
+  assert.equal(g(CHAT, MEET), false);
+  assert.equal(g(DOCS, CHAT), false);
+  assert.equal(g(MEET, DOCS), false);
+  assert.equal(g(MEET, undefined), false);
+  assert.equal(g(undefined, CHAT), false);
+  assert.equal(g(MEET, null), false);
+  assert.equal(g(MEET, 42), false);
+  assert.equal(meetMediaGate(), false);
+  assert.equal(meetMediaGate({}), false);
+  for (const top of BAD_TOPS) assert.equal(g(MEET, top), false, `top ${top}`);
+  for (const req of ['https://meet.google.com.', CYRILLIC_A_CHAT, 'null', 'about:blank', 'data:text/html,x', '']) {
+    assert.equal(g(req, CHAT), false, `requester ${req}`);
+  }
+});
+
+test('BUG-09 look-alike and opaque top levels are denied in request and check handlers', () => {
+  const { request, check } = setup();
+  for (const top of BAD_TOPS) {
+    assert.equal(request('media', { requesting: `${MEET}/`, top, mediaTypes: ['audio'] }), false, `request top ${top}`);
+    assert.equal(check('media', { requesting: `${MEET}/`, top, mediaType: 'audio' }), false, `check wc ${top}`);
+    assert.equal(check('media', { requesting: `${MEET}/`, top: CHAT, mediaType: 'audio', embedding: top }), false, `check embedding ${top}`);
+  }
+});
+
+test('BUG-09 check: Docs window (top docs.google.com) embedding Chat embedding Meet is denied, request too', () => {
+  const { request, check } = setup();
+  assert.equal(check('media', { requesting: `${MEET}/`, top: `${DOCS}/document/d/1`, mediaType: 'audio', embedding: `${CHAT}/` }), false);
+  assert.equal(check('speaker-selection', { requesting: `${MEET}/`, top: `${DOCS}/`, embedding: `${CHAT}/` }), false);
+  assert.equal(request('media', { requesting: `${MEET}/`, top: `${DOCS}/`, mediaTypes: ['audio'] }), false);
+});
+
+test('BUG-09 check: a third-party frame between Chat and Meet is denied (embedding is the third party)', () => {
+  const { check } = setup();
+  assert.equal(check('media', { requesting: `${MEET}/`, top: `${CHAT}/`, mediaType: 'video', embedding: 'https://evil.example/' }), false);
+  assert.equal(check('speaker-selection', { requesting: `${MEET}/`, top: `${CHAT}/`, embedding: 'https://evil.example/' }), false);
+});
+
+test('BUG-09 check: every signal must pass; a Meet embedding under a non-Chat webContents is denied', () => {
+  const { check } = setup();
+  assert.equal(check('media', { requesting: `${MEET}/`, top: `${CHAT}/`, mediaType: 'audio', embedding: `${CHAT}/` }), true);
+  assert.equal(check('media', { requesting: `${MEET}/`, top: `${MEET}/`, mediaType: 'audio', embedding: `${CHAT}/` }), true);
+  assert.equal(check('media', { requesting: `${MEET}/`, top: 'https://evil.example/', mediaType: 'audio', embedding: `${CHAT}/` }), false);
+  assert.equal(check('media', { requesting: `${MEET}/`, top: 'https://evil.example/', mediaType: 'audio', embedding: `${MEET}/` }), false);
+});
+
+test('BUG-09 media: Meet iframe under an embedding that is not Chat or Meet is denied even if webContents is Chat', () => {
+  const { check } = setup();
+  assert.equal(check('media', { requesting: `${MEET}/`, top: `${CHAT}/`, mediaType: 'audio', embedding: 'https://evil.example/' }), false);
 });
 
 // --- fail closed ---------------------------------------------------------------------------------------
