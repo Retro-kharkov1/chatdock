@@ -86,6 +86,11 @@ function bootstrap() {
   const { createLinkRouter } = require('./linkRouter');
   const { initDiagLog, diag, truncateText, redactUrl } = require('./diagLog');
   const {
+    attachContentsDiagnostics,
+    attachProcessDiagnostics,
+    logWebRtcSwitches,
+  } = require('./callDiagnostics');
+  const {
     classifyGoogleLink,
     classifyChatTarget,
     LINK_LIST_HOSTS,
@@ -750,6 +755,8 @@ function bootstrap() {
         // diagnostics must never affect the window
       }
     });
+    // BUG-09 (log only): frame load failures and media state of the Chat page (the Meet call is a sub-frame of it).
+    attachContentsDiagnostics(mainWindow.webContents, { diag, owner: 'main' });
     // The main window's contents always gets a will-prevent-unload listener (quit path).
     quitGuard.guardContents(mainWindow.webContents);
 
@@ -946,6 +953,9 @@ function bootstrap() {
       platform: process.platform,
     });
     console.error('[gcd] diagnostics log:', diagFile);
+    // BUG-09 (log only): crashed renderers / GPU / network / utility processes and the WebRTC-relevant Chromium switches.
+    attachProcessDiagnostics(app, { diag });
+    logWebRtcSwitches(app, { diag });
 
     // Session configuration (UA + permission handler) MUST happen before the window's page
     // loads, using the same partition the BrowserWindow is constructed with — otherwise the
