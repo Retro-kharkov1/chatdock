@@ -64,6 +64,7 @@ function bootstrap() {
     getOrderedDisplays,
   } = require('./window-state');
   const { PARTITION, configurePersistentSession } = require('./session');
+  const { applySpellLanguages } = require('./spellLanguages');
   const {
     buildNotificationBridgeScript,
     attachUnreadTitleListener,
@@ -986,6 +987,8 @@ function bootstrap() {
       notificationOrigins: NOTIFICATION_ORIGINS,
       displayMediaHandler: displayGate.handler,
     });
+    // UI-09: spellcheck in every OS-preferred language (no setting); count and codes only in the log.
+    applySpellLanguages(persistentSession, app, (msg) => diag('spellcheck', { info: msg }));
     // BUG-01-B: intercept Chat's own service-worker showNotification (see
     // serviceWorkerNotifications.js). Must be registered before the page loads its worker.
     swNotifications = attachServiceWorkerNotifications(persistentSession, {
