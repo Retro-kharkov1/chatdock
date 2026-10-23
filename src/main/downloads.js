@@ -9,7 +9,10 @@
 //   (a) the save dialog is ALWAYS shown: setSavePath is never called; setSaveDialogOptions({ defaultPath }) gives
 //       the OS Downloads folder joined to the BASENAME of the suggested name, so a hostile name cannot carry a path
 //       (and '', '.', '..' fall back to a fixed name, they never resolve to the folder itself or its parent);
-//   (b) nothing is opened, revealed or launched when a download ends;
+//   (b) nothing is ever opened or launched. UI-12 (ADR-0006): while a download runs the taskbar shows its progress, and a
+//       COMPLETED item raises one native notice whose click (or action) reveals exactly the path this Save dialog
+//       produced (item.getSavePath()) in its folder, through the injected `revealItem`. Only paths registered here at
+//       completion can be revealed (exact string match); failure and cancel clear the progress and show nothing;
 //   (c) cancelling the dialog cancels the item (Electron);
 //   (d) file names and URLs are never logged: only started / completed / cancelled / interrupted / blocked and
 //       the scheme.
@@ -29,6 +32,15 @@ const path = require('path');
 const { DOWNLOAD_CHAIN_HOSTS, isDownloadChainUrl } = require('./googleLink');
 
 const FALLBACK_FILE_NAME = 'download';
+
+/** UI-12 / ADR-0006: wording of the one completion notice. The body carries the (truncated) file name, shown only. */
+const COMPLETE = Object.freeze({
+  title: 'Download complete',
+  bodySuffix: 'Click to show it in its folder.',
+  action: 'Show in folder',
+});
+const MAX_NAME_IN_NOTICE = 80;
+const MAX_REVEALABLE = 50;
 
 const BLOCKED = Object.freeze({
   title: 'Download blocked',
@@ -58,6 +70,25 @@ function safeBaseName(name) {
   return /^[. ]*$/.test(last) ? FALLBACK_FILE_NAME : last;
 }
 
+/** Log form of a path: the root and the folder depth only. No folder or file name (they can hold the user's name). */
+function redactPath(p, pathModule = path) {
+  if (typeof p !== 'string' || p === '') return '<none>';
+  try {
+    const parsed = pathModule.parse(p);
+    const folders = pathModule.dirname(p).slice(parsed.root.length).split(/[\\/]/).filter(Boolean);
+    return `${parsed.root}...[depth ${folders.length}]`;
+  } catch {
+    return '<unparseable>';
+  }
+}
+
+/** The notice body: the base name cut to a fixed length plus the click hint. */
+function completionBody(savePath, pathModule = path) {
+  let name = pathModule.basename(savePath).replace(/[\u0000-\u001f]/g, ' ');
+  if (name.length > MAX_NAME_IN_NOTICE) name = `${name.slice(0, MAX_NAME_IN_NOTICE - 3)}...`;
+  return `${name}\n${COMPLETE.bodySuffix}`;
+}
+
 function createDownloadHandler({
   getAppWindowForContents,
   getMainWindow,
@@ -67,8 +98,92 @@ function createDownloadHandler({
   openExternal,
   downloadChainHosts = DOWNLOAD_CHAIN_HOSTS,
   isMainDownloadBlocked = () => false,
+  // UI-12 (all optional; absent = that feedback is simply off, so older callers and tests are unchanged):
+  setProgress = () => {}, // (value) taskbar progress: 0..1, 2 = indeterminate, -1 = clear
+  showCompletionNotice = null, // ({ title, body, actionText, onReveal }) one native notice; null = none
+  isNoticeMuted = () => false, // the Mute setting
+  revealItem = null, // (absolutePath) reveal in the file manager; called only for a registered path
+  fileExists = () => true,
+  pathModule = path,
   log = () => {},
 }) {
+  /** Paths produced by this handler's own completed downloads: the only ones revealItem may ever receive. */
+  const revealable = new Set();
+  /** running items -> { received, total }; an item joins the aggregate at its first 'updated' (after the dialog). */
+  const progress = new Map();
+
+  function pushProgress() {
+    try {
+      const live = [...progress.values()];
+      if (live.length === 0) {
+        setProgress(-1);
+        return;
+      }
+      if (live.some((p) => !(p.total > 0))) {
+        setProgress(2);
+        return;
+      }
+      const received = live.reduce((a, p) => a + p.received, 0);
+      const total = live.reduce((a, p) => a + p.total, 0);
+      setProgress(Math.min(1, Math.max(0, received / total)));
+    } catch (err) {
+      log('[gcd] download: progress failed', err && err.name);
+    }
+  }
+
+  function reveal(savePath) {
+    // Exact match against what this handler registered; nothing else reaches the file manager.
+    if (typeof revealItem !== 'function' || !revealable.has(savePath) || !pathModule.isAbsolute(savePath)) {
+      log('[gcd] download reveal refused');
+      return;
+    }
+    let present = false;
+    try {
+      present = fileExists(savePath) === true;
+    } catch {
+      present = false;
+    }
+    if (!present) {
+      log('[gcd] download reveal: file gone', redactPath(savePath, pathModule));
+      return;
+    }
+    try {
+      revealItem(savePath);
+      log('[gcd] download reveal', redactPath(savePath, pathModule));
+    } catch (err) {
+      log('[gcd] download reveal failed', err && err.name);
+    }
+  }
+
+  function noticeCompleted(item) {
+    if (typeof showCompletionNotice !== 'function') return;
+    let savePath = '';
+    try {
+      savePath = typeof item.getSavePath === 'function' ? item.getSavePath() : '';
+    } catch {
+      savePath = '';
+    }
+    if (typeof savePath !== 'string' || savePath === '' || savePath.includes('\0') || !pathModule.isAbsolute(savePath)) {
+      return;
+    }
+    revealable.add(savePath);
+    while (revealable.size > MAX_REVEALABLE) revealable.delete(revealable.values().next().value);
+    if (isNoticeMuted() === true) {
+      log('[gcd] download notice suppressed (muted)');
+      return;
+    }
+    try {
+      showCompletionNotice({
+        title: COMPLETE.title,
+        body: completionBody(savePath, pathModule),
+        actionText: COMPLETE.action,
+        onReveal: () => reveal(savePath),
+      });
+    } catch (err) {
+      log('[gcd] download: notice failed', err && err.name);
+    }
+  }
+
   /** originating window -> the open "Download blocked" box for it (coalescing: one per window) */
   const notices = new Map();
 
@@ -216,8 +331,20 @@ function createDownloadHandler({
         defaultPath: path.join(getDownloadsDir(), safeBaseName(item.getFilename())),
       });
       log('[gcd] download started', schemeOf(item.getURL()));
+      item.on('updated', (_event, state) => {
+        if (state !== 'progressing' && state !== 'interrupted') return;
+        try {
+          progress.set(item, { received: item.getReceivedBytes(), total: item.getTotalBytes() });
+        } catch {
+          progress.set(item, { received: 0, total: 0 });
+        }
+        pushProgress();
+      });
       item.once('done', (_event, state) => {
         log('[gcd] download', state);
+        progress.delete(item); // completion, cancel and failure all clear this item's share of the bar
+        pushProgress();
+        if (state === 'completed') noticeCompleted(item);
         if (isApp) {
           try {
             closeEmptyWindow(webContents); // an empty window left behind by a download hop closes now
@@ -240,4 +367,4 @@ function createDownloadHandler({
   return handler;
 }
 
-module.exports = { createDownloadHandler, BLOCKED, SIGN_IN_BLOCKED, safeBaseName };
+module.exports = { createDownloadHandler, BLOCKED, SIGN_IN_BLOCKED, COMPLETE, safeBaseName, redactPath, completionBody };

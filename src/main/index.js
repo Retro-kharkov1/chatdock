@@ -486,6 +486,30 @@ function bootstrap() {
     openExternal: openInSystemBrowser,
     // FR-19: while the sign-in mode is on every main-window download is cancelled (sign-in wording, no browser hand-off).
     isMainDownloadBlocked: () => signInFlow.isActive(),
+    // UI-12 / ADR-0006: taskbar progress, one completion notice (Mute respected) and a reveal of the file the Save
+    // dialog produced. shell.showItemInFolder is reached only through downloads.js's registered-path check.
+    setProgress: (value) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setProgressBar(value, value > 1 ? { mode: 'indeterminate' } : undefined);
+      }
+    },
+    isNoticeMuted: () => settingsStore.get('notificationsMuted') === true,
+    fileExists: (p) => require('fs').existsSync(p),
+    revealItem: (p) => shell.showItemInFolder(p),
+    showCompletionNotice: ({ title, body, actionText, onReveal }) => {
+      const toast = new Notification({
+        title,
+        body,
+        silent: !settingsStore.get('soundEnabled'),
+        actions: [{ type: 'button', text: actionText }], // honoured where the OS supports it; the click always works
+      });
+      liveToasts.add(toast);
+      toast.on('click', onReveal);
+      toast.on('action', onReveal);
+      toast.on('failed', () => liveToasts.delete(toast));
+      toast.show();
+      while (liveToasts.size > 100) liveToasts.delete(liveToasts.values().next().value);
+    },
     log: logLine,
   });
 
