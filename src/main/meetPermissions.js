@@ -5,6 +5,7 @@
 //   meetOriginGate          pure origin gate (requesting AND top-level origin must be Meet)
 //   decideMeetRequest       permission REQUEST handler decision for Meet permissions
 //   decideMeetCheck         permission CHECK handler decision for Meet permissions
+//   meetMediaGate           camera/mic gate: requester Meet; top level Meet OR Chat (BUG-09)
 //   createDisplayMediaGate  the session-wide display-media handler (screen share)
 //
 // session.js installs these; they EXTEND its handlers and never touch the notifications /
@@ -29,6 +30,21 @@ function meetOriginGate({ requestingOrigin, topLevelOrigin } = {}) {
   return originOf(requestingOrigin) === MEET_ORIGIN && originOf(topLevelOrigin) === MEET_ORIGIN;
 }
 
+/** Top-level origins under which the Meet iframe may use camera/mic: the call window and Chat's embedded call. */
+const MEET_MEDIA_TOP_LEVELS = Object.freeze([MEET_ORIGIN, 'https://chat.google.com']);
+
+/**
+ * meetMediaGate({ requestingOrigin, topLevelOrigin }) -> true only when the requester is exactly
+ * https://meet.google.com AND the top level is exactly https://meet.google.com or https://chat.google.com
+ * (Chat runs the call as a cross-origin Meet iframe, BUG-09). Used for media / speaker-selection only;
+ * display-capture and the display-media handler keep the strict meetOriginGate.
+ */
+function meetMediaGate({ requestingOrigin, topLevelOrigin } = {}) {
+  if (originOf(requestingOrigin) !== MEET_ORIGIN) return false;
+  const top = originOf(topLevelOrigin);
+  return top !== null && MEET_MEDIA_TOP_LEVELS.includes(top);
+}
+
 /** Permissions this module decides; every other permission is left to the caller (returns undefined). */
 const MEET_PERMISSIONS = Object.freeze(['media', 'speaker-selection', 'display-capture']);
 
@@ -48,7 +64,8 @@ function topLevelOfWebContents(webContents) {
  */
 function decideMeetRequest(webContents, permission, details) {
   if (!MEET_PERMISSIONS.includes(permission)) return undefined;
-  const gate = meetOriginGate({
+  const gateFn = permission === 'display-capture' ? meetOriginGate : meetMediaGate;
+  const gate = gateFn({
     requestingOrigin: details && details.requestingUrl,
     topLevelOrigin: topLevelOfWebContents(webContents),
   });
@@ -69,11 +86,16 @@ function decideMeetRequest(webContents, permission, details) {
 function decideMeetCheck(webContents, permission, requestingOrigin, details) {
   if (!MEET_PERMISSIONS.includes(permission)) return undefined;
   const embedding = details && details.embeddingOrigin;
-  const gate = meetOriginGate({
-    requestingOrigin: requestingOrigin ?? (details && details.requestingUrl),
-    topLevelOrigin: embedding !== undefined && embedding !== null ? embedding : topLevelOfWebContents(webContents),
-  });
-  if (!gate) return false;
+  const gateFn = permission === 'display-capture' ? meetOriginGate : meetMediaGate;
+  // Every available signal must pass (deny if either fails): `embeddingOrigin` names only the frame that
+  // embeds the asker, `webContents.getURL()` is the real top level (same pattern as the UI-04 check).
+  const signals = [];
+  if (embedding !== undefined && embedding !== null) signals.push(embedding);
+  const topUrl = topLevelOfWebContents(webContents);
+  if (topUrl !== undefined) signals.push(topUrl);
+  if (signals.length === 0) return false;
+  const requesting = requestingOrigin ?? (details && details.requestingUrl);
+  if (!signals.every((topLevelOrigin) => gateFn({ requestingOrigin: requesting, topLevelOrigin }))) return false;
   if (permission === 'media') {
     const type = details && details.mediaType;
     if (type !== undefined && type !== 'video' && type !== 'audio') return false;
@@ -162,6 +184,7 @@ function createDisplayMediaGate({ getCallWindow, picker, log = () => {} }) {
 
 module.exports = {
   meetOriginGate,
+  meetMediaGate,
   decideMeetRequest,
   decideMeetCheck,
   createDisplayMediaGate,
