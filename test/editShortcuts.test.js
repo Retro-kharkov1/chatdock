@@ -31,7 +31,6 @@ function press(wc, input) {
 const CASES = [
   [{ control: true, key: 'c' }, 'copy'],
   [{ control: true, key: 'x' }, 'cut'],
-  [{ control: true, key: 'v' }, 'paste'],
   [{ control: true, key: 'a' }, 'selectAll'],
   [{ control: true, key: 'z' }, 'undo'],
   [{ control: true, shift: true, key: 'z' }, 'redo'],
@@ -47,6 +46,18 @@ test('bindEditShortcuts: each accelerator calls the matching edit command and is
     assert.deepEqual(wc.done, [expected], JSON.stringify(input));
     assert.equal(event.defaultPrevented, true);
   }
+});
+
+test('BUG-11: Ctrl+V and Ctrl+Shift+V are not intercepted (native paste carries images and files); Cmd+V still routes', () => {
+  const wc = spy(new EventEmitter());
+  bindEditShortcuts(wc);
+  const events = [
+    press(wc, { control: true, key: 'v' }),
+    press(wc, { control: true, key: 'V' }),
+    press(wc, { control: true, shift: true, key: 'V' }),
+  ];
+  assert.deepEqual(wc.done, []);
+  assert.deepEqual(events.map((e) => e.defaultPrevented), [false, false, false]);
 });
 
 test('bindEditShortcuts: key-up, no modifier, other keys (Ctrl+W, Ctrl+Q, Ctrl+Y) do nothing and are not consumed', () => {
@@ -82,7 +93,8 @@ test('app window: a pending forms.gle hop window gets them too, and Ctrl+W / Ctr
   const h = createGoogleHarness();
   const win = h.open('https://forms.gle/abc', { hop: true });
   spy(win.webContents);
-  assert.equal(press(win.webContents, { control: true, key: 'v' }).defaultPrevented, true);
+  assert.equal(press(win.webContents, { control: true, key: 'c' }).defaultPrevented, true);
+  assert.equal(press(win.webContents, { control: true, key: 'v' }).defaultPrevented, false);
   assert.equal(press(win.webContents, { control: true, key: 'w' }).defaultPrevented, false);
   assert.equal(press(win.webContents, { control: true, key: 'q' }).defaultPrevented, false);
   assert.equal(win.destroyed, false);
