@@ -136,6 +136,7 @@ message appears. The default button is **Close**; **Open in browser** is offered
 - **Copy link** in Chat works.
 - In the Chat window and in Google app windows these shortcuts work: **Ctrl+C** copy, **Ctrl+X** cut,
   **Ctrl+V** paste, **Ctrl+A** select all, **Ctrl+Z** undo, **Ctrl+Shift+Z** redo.
+- **F5** or **Ctrl+R** reloads the Chat window; **Ctrl+Shift+R** reloads without the cache. If Chat fails to load (for example you start the app offline), the app retries by itself every few seconds and loads Chat as soon as the connection is back.
 - There is no application menu bar; everything else is handled by the Chat page itself.
 - **Right-click** in the message box, the search box or a Google page text field shows Cut, Copy, Paste and
   Select all (greyed out when not possible). On a misspelled word it also offers spelling suggestions and
