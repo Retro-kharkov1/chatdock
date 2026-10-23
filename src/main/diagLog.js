@@ -31,7 +31,7 @@ function redactUrl(value) {
     return '<unparseable>';
   }
   const scheme = u.protocol; // includes the colon
-  if (scheme === 'about:') return u.href === 'about:blank' || u.href === 'about:srcdoc' ? u.href : 'about:';
+  if (scheme === 'about:') return u.pathname === 'blank' || u.pathname === 'srcdoc' ? `about:${u.pathname}` : 'about:';
   if (scheme === 'blob:') {
     try {
       return `blob:${new URL(u.pathname).origin}/`;
