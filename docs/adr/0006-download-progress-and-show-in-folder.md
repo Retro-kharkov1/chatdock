@@ -56,7 +56,7 @@ Downloads always show the Save dialog. Nothing is ever opened or launched. The s
 taskbar and raises one native completion notice (Mute respected) for a completed item; clicking it (or its action)
 may reveal in the file manager, through `shell.showItemInFolder`, exactly the path that this app's own
 `will-download` Save dialog produced for that completed item, matched exactly, logged with the path redacted to
-root and depth. Never reveal an arbitrary path. Never log a file name, full path, URL query, cookie or credential.
+a root class (a UNC server or share name is never logged) and folder depth. Never reveal an arbitrary path. Never log a file name, full path, URL query, cookie or credential.
 
 ## Consequences
 
@@ -73,3 +73,22 @@ root and depth. Never reveal an arbitrary path. Never log a file name, full path
   and gets none of this.
 - Tests: `test/downloadsFeedback.test.js` (progress, notice, mute, cancel and failure, exact matching, eviction,
   logging, source guards).
+
+## Security review
+
+A security review of the first implementation approved it with concerns. Fixed in the same branch:
+
+- F1: the file-exists check before a reveal is asynchronous (`fs.promises.access`) and bounded by a 1.5 s timeout. A
+  hung or failing check (for example a disconnected network share) counts as "not present": nothing is revealed and the
+  main process is never blocked. The exact-match registry check is unchanged.
+- F2: a UNC root is logged as `\\...` only, so neither server nor share name reaches the log. Drive and POSIX roots are
+  logged as before. The log still carries the root class and folder depth only.
+- F3: a path that is downloaded again is removed and re-added, so it takes the newest position in the 50-entry
+  registry and is not the next one evicted.
+- F4: the notice name has control characters (C0, DEL, C1) replaced by a space and Unicode format characters (`\p{Cf}`,
+  including bidi overrides) removed. A name longer than 80 characters is cut in the middle, so its last 12 characters
+  (the extension) stay visible.
+- Line endings of `src/main/downloads.js` were kept as they were.
+
+Accepted, no code: F5 (the name is visible on the lock screen and in the notification history, as chat previews are).
+Open, by hand: F6 (the notification click and the progress bar on a hidden window must be checked on Windows and Linux).
