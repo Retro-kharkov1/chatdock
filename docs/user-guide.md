@@ -137,6 +137,11 @@ message appears. The default button is **Close**; **Open in browser** is offered
 - In the Chat window and in Google app windows these shortcuts work: **Ctrl+C** copy, **Ctrl+X** cut,
   **Ctrl+V** paste, **Ctrl+A** select all, **Ctrl+Z** undo, **Ctrl+Shift+Z** redo.
 - There is no application menu bar; everything else is handled by the Chat page itself.
+- **Right-click** in the message box, the search box or a Google page text field shows Cut, Copy, Paste and
+  Select all (greyed out when not possible). On a misspelled word it also offers spelling suggestions and
+  **Add to dictionary**. Right-click on an image offers **Copy image** and **Save image as...** (a Save dialog
+  asks where to put it); on a link, **Copy link**. Where the page shows its own right-click menu (for example on
+  a chat message), only the page's menu appears, and where there is nothing to offer, no menu appears.
 
 <!-- UI-05: publish when shipped -->
 ## Quick copy with the mouse
@@ -144,7 +149,7 @@ message appears. The default button is **Close**; **Open in browser** is offered
 - **Right-click a link** to copy its address. A small **"Link copied"** hint appears next to the pointer
   for about a second and a half. Only normal web and email links are copied. This works only where
   Google Chat or the Google page lets the right-click through; where the page shows its own right-click
-  menu, nothing is copied.
+  menu, nothing is copied. The right-click menu on a link also has a **Copy link** item that does the same.
 - **Select text with the mouse** (drag, double-click or triple-click) and it is copied when you release
   the button, with a **"Copied"** hint.
 - **It does not copy** from the message box or search box, from a single click or keyboard selection, or
