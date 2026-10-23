@@ -20,3 +20,6 @@ build-info.json
 # Spike scratch output
 spike/**/.profile/
 spike/**/out/
+
+# Acceptance-run output (screenshots, logs)
+artifacts/
