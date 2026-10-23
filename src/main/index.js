@@ -89,6 +89,7 @@ function bootstrap() {
   const { initDiagLog, diag, truncateText, redactUrl } = require('./diagLog');
   const {
     attachContentsDiagnostics,
+    attachNetworkDiagnostics,
     attachProcessDiagnostics,
     logWebRtcSwitches,
   } = require('./callDiagnostics');
@@ -1021,6 +1022,8 @@ function bootstrap() {
       displayMediaHandler: displayGate.handler,
     });
     // UI-09: spellcheck in every OS-preferred language (no setting); count and codes only in the log.
+    // BUG-09 (log only): network errors / non-2xx counts for Google hosts on the Chat session.
+    attachNetworkDiagnostics(persistentSession, { diag });
     applySpellLanguages(persistentSession, app, (msg) => diag('spellcheck', { info: msg }));
     // BUG-01-B: intercept Chat's own service-worker showNotification (see
     // serviceWorkerNotifications.js). Must be registered before the page loads its worker.

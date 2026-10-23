@@ -142,7 +142,126 @@ function logWebRtcSwitches(app, { diag }) {
   }
 }
 
+// ---- BUG-09 network evidence (log only) --------------------------------------------------------------------------
+// Chat session webRequest.onErrorOccurred / onCompleted. Electron keeps ONE listener per webRequest event per session
+// and a later registration replaces an earlier one; nothing else in src registers one (checked), and this is the only
+// place that does. There is no main-process WebRTC (ICE / peer connection) signal without injecting into the page, so
+// none is added: the evidence is the network layer only.
+//
+// Privacy: only the host (exact-suffix allow-listed), the resource type, the error string and numeric status counts
+// are written. No path, query, headers, cookies or bodies; the URL is parsed here and discarded.
+
+const NET_HOST_SUFFIXES = ['google.com', 'googleapis.com', 'gstatic.com', 'googlevideo.com', 'googleusercontent.com'];
+const NET_MAX_LINES_PER_MINUTE = 60;
+const NET_FLUSH_MS = 30000;
+const NET_MAX_HOSTS = 50;
+
+/** hostOfInterest(url) -> lower-case host when it equals an allow-listed domain or is a subdomain of it, else null. */
+function hostOfInterest(url) {
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (host.endsWith('.')) host = host.slice(0, -1);
+  for (const d of NET_HOST_SUFFIXES) {
+    if (host === d || host.endsWith(`.${d}`)) return host;
+  }
+  return null;
+}
+
+/**
+ * attachNetworkDiagnostics(session, { diag, now, maxLinesPerMinute, flushMs, setIntervalFn, clearIntervalFn })
+ * Returns { flush, dispose }. Lines per minute are capped; excess lines are counted and reported once per minute as
+ * `net-diag-suppressed`.
+ */
+function attachNetworkDiagnostics(session, opts) {
+  const {
+    diag,
+    now = Date.now,
+    maxLinesPerMinute = NET_MAX_LINES_PER_MINUTE,
+    flushMs = NET_FLUSH_MS,
+    setIntervalFn = setInterval,
+    clearIntervalFn = clearInterval,
+  } = opts;
+  let windowStart = now();
+  let used = 0;
+  let suppressed = 0;
+  const counts = new Map(); // "host status" -> n
+
+  const roll = () => {
+    const t = now();
+    if (t - windowStart >= 60000) {
+      windowStart = t;
+      used = 0;
+      if (suppressed > 0) {
+        const n = suppressed;
+        suppressed = 0;
+        diag('net-diag-suppressed', { lines: n });
+        used = 1;
+      }
+    }
+  };
+  const emit = (event, fields) => {
+    roll();
+    if (used >= maxLinesPerMinute) {
+      suppressed += 1;
+      return;
+    }
+    used += 1;
+    diag(event, fields);
+  };
+  const flush = guarded(() => {
+    if (counts.size === 0) return;
+    const parts = [...counts.entries()].map(([k, n]) => `${k}=${n}`);
+    counts.clear();
+    emit('net-status', { non2xx: parts.join(' ') });
+  });
+
+  try {
+    session.webRequest.onErrorOccurred(
+      guarded((details) => {
+        const host = hostOfInterest(details && details.url);
+        if (!host) return;
+        emit('net-error', {
+          host,
+          resourceType: str(details.resourceType, 30),
+          error: str(details.error, 60),
+        });
+      })
+    );
+    session.webRequest.onCompleted(
+      guarded((details) => {
+        const code = details && details.statusCode;
+        if (typeof code !== 'number' || (code >= 200 && code < 300)) return;
+        const host = hostOfInterest(details.url);
+        if (!host) return;
+        const key = `${host} ${code}`;
+        if (counts.has(key) || counts.size < NET_MAX_HOSTS) counts.set(key, (counts.get(key) || 0) + 1);
+      })
+    );
+  } catch {
+    // diagnostics must never affect the app
+  }
+  const timer = setIntervalFn(flush, flushMs);
+  if (timer && typeof timer.unref === 'function') timer.unref();
+  return {
+    flush,
+    dispose: () => {
+      try {
+        clearIntervalFn(timer);
+      } catch {
+        // ignore
+      }
+    },
+  };
+}
+
 module.exports = {
+  NET_HOST_SUFFIXES,
+  attachNetworkDiagnostics,
+  hostOfInterest,
   WEBRTC_SWITCHES,
   attachContentsDiagnostics,
   attachProcessDiagnostics,
