@@ -72,7 +72,8 @@ function setup(opts = {}) {
 }
 
 const fail = (wc, url = START, code = -106, isMain = true) => wc.emit('did-fail-load', {}, code, 'ERR', url, isMain);
-const press = (wc, input) => {
+const navStart = (wc) => wc.emit('did-start-navigation', { url: START, isMainFrame: true, isSameDocument: false });
+const press =(wc, input) => {
   let prevented = false;
   wc.emit('before-input-event', { preventDefault: () => (prevented = true) }, { type: 'keyDown', key: '', ...input });
   return prevented;
@@ -153,6 +154,7 @@ test('AC2: a successful http(s) load clears the recovery state and the back-off'
   fail(wc);
   assert.equal(ctl.isRecovering(), true);
   wc.url = START;
+  navStart(wc); // a real load starts a navigation; the error page's finish does not
   wc.emit('did-finish-load');
   assert.equal(ctl.isRecovering(), false);
   assert.deepEqual(clock.pending(), []);
@@ -167,6 +169,33 @@ test('AC2: the engine error page finishing its own load is not a recovery', () =
   wc.emit('did-finish-load');
   assert.equal(ctl.isRecovering(), true);
   assert.equal(clock.pending().length, 1);
+});
+
+test('AC2: real event order - fail, then the error page finishes with getURL() still the failed URL, then the retry fires', () => {
+  const { wc, clock, ctl } = setup();
+  fail(wc, START);
+  wc.url = START; // virtual URL stays the failed one while the error page is shown
+  wc.mainFrame = { url: 'chrome-error://chromewebdata/' };
+  wc.emit('did-finish-load');
+  assert.equal(ctl.isRecovering(), true);
+  assert.deepEqual(clock.pending(), [DEFAULT_BACKOFF_MS[0]]);
+  clock.fireNext();
+  assert.deepEqual(wc.calls, [['loadURL', START]]);
+  navStart(wc);
+  wc.mainFrame = { url: START };
+  wc.emit('did-finish-load');
+  assert.equal(ctl.isRecovering(), false);
+});
+
+test('AC2: error page finish with an http-looking URL and no new navigation is not a recovery (no frame url)', () => {
+  const { wc, clock, ctl } = setup();
+  fail(wc, START);
+  wc.url = START;
+  wc.emit('did-finish-load');
+  assert.equal(ctl.isRecovering(), true);
+  assert.equal(clock.pending().length, 1);
+  clock.fireNext();
+  assert.deepEqual(wc.calls, [['loadURL', START]]);
 });
 
 test('AC2: a second failure replaces the pending timer (one timer at a time)', () => {

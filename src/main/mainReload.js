@@ -89,8 +89,10 @@ function createMainReload({
     cancelTimer();
     const delay = retryDelay();
     attempt += 1;
+    diag('schedule', 'delay=' + delay);
     timer = setTimer(() => {
       timer = null;
+      diag('timer', 'failedTarget=' + (failedTarget !== null));
       if (!alive() || failedTarget === null) return;
       if (isSignInActive()) {
         log('[gcd] main reload: retry dropped, sign-in in progress');
@@ -100,8 +102,45 @@ function createMainReload({
     }, delay);
   }
 
+  // DIAG (BUG-10): outcome words, URL scheme and host only. Remove once the acceptance rows are stable.
+  const scheme = (u) => {
+    try {
+      return new URL(u).protocol;
+    } catch {
+      return 'none';
+    }
+  };
+  const host = (u) => {
+    try {
+      return new URL(u).host;
+    } catch {
+      return '-';
+    }
+  };
+  const safeFrameUrl = () => {
+    try {
+      return (webContents.mainFrame && webContents.mainFrame.url) || '';
+    } catch {
+      return '';
+    }
+  };
+  const diag = (what, detail) => log('[gcd] main reload diag: ' + what + ' ' + (detail || ''));
+
+  let navSinceFail = false; // a main-frame, cross-document navigation started after the last failure
+
+  function onStartNavigation(event, ...legacy) {
+    const d = event && typeof event === 'object' && 'isMainFrame' in event ? event : null;
+    const isMain = d ? d.isMainFrame : legacy[1];
+    const sameDoc = d ? d.isSameDocument : legacy[0];
+    const url = d ? d.url : legacy[0];
+    diag('start-nav', 'main=' + isMain + ' same=' + sameDoc + ' ' + scheme(url) + '@' + host(url));
+    if (isMain === true && sameDoc !== true) navSinceFail = true;
+  }
+
   function onFailLoad(_event, errorCode, _description, failedUrl, isMainFrame) {
+    diag('fail-event', 'main=' + isMainFrame + ' code=' + errorCode + ' ' + scheme(failedUrl) + '@' + host(failedUrl));
     if (!alive() || isMainFrame !== true || errorCode === ERR_ABORTED) return;
+    navSinceFail = false;
     failedTarget = typeof failedUrl === 'string' && isHttpUrl(failedUrl) && isChatUrl(failedUrl) ? failedUrl : startUrl;
     log('[gcd] main load failed, code ' + errorCode);
     if (isSignInActive()) {
@@ -115,11 +154,18 @@ function createMainReload({
     if (!alive()) return;
     let url = '';
     try {
-      url = webContents.getURL();
+      // getURL() is the virtual URL: after a failed load it still returns the FAILED http(s) URL while the engine's
+      // error page is shown. The committed document URL (mainFrame.url) is chrome-error://..., which is what tells the
+      // error page apart from a real page. Fall back to getURL() when the frame URL is unavailable.
+      const frame = webContents.mainFrame;
+      url = frame && typeof frame.url === 'string' && frame.url !== '' ? frame.url : webContents.getURL();
     } catch {
       return;
     }
+    diag('finish', 'frame=' + scheme(safeFrameUrl()) + ' get=' + scheme(url) + '@' + host(url) + ' navSinceFail=' + navSinceFail);
     if (!isHttpUrl(url)) return; // the engine's own error page also finishes a load: not a recovery
+    // The error page's finish arrives with no new navigation since the failure, whatever URL the engine reports.
+    if (failedTarget !== null && !navSinceFail) return;
     failedTarget = null;
     attempt = 0;
     cancelTimer();
@@ -152,6 +198,7 @@ function createMainReload({
 
   function bind() {
     webContents.on('did-fail-load', onFailLoad);
+    webContents.on('did-start-navigation', onStartNavigation);
     webContents.on('did-finish-load', onLoaded);
     webContents.on('before-input-event', onInput);
   }
