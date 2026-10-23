@@ -95,6 +95,7 @@ function bootstrap() {
   const {
     classifyGoogleLink,
     classifyChatTarget,
+    isGoogleNavigationUrl,
     LINK_LIST_HOSTS,
     ENTRY_HOP_HOST,
     USERCONTENT_HOST,
@@ -109,6 +110,7 @@ function bootstrap() {
   const { createGoogleAppWindowManager } = require('./googleAppWindow');
   const { bindEditShortcuts } = require('./editShortcuts');
   const { createZoom } = require('./zoom');
+  const { createHistoryNav } = require('./historyNav');
   const { createSmartCopy } = require('./smartCopy');
   const { createContextMenu } = require('./contextMenu');
   const { createCopyHint } = require('./copyHint');
@@ -435,6 +437,7 @@ function bootstrap() {
     bindSmartCopy: smartCopy.bindSmartCopyApp,
     bindContextMenu: contextMenu.bindContextMenu,
     bindZoom: zoom.bind,
+    bindHistoryNav: createHistoryNav({ isAllowed: isGoogleNavigationUrl }).bind,
     log: logLine,
   });
 
