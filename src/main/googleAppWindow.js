@@ -12,6 +12,7 @@
 
 const { PARTITION } = require('./session');
 const { createCloseProbe } = require('./closeProbe');
+const { diag, redactUrl } = require('./diagLog');
 const { bindEditShortcuts } = require('./editShortcuts');
 const { isOpenableExternalScheme } = require('./meetLink');
 const { classifyGoogleLink, isGoogleNavigationUrl, isDownloadHop } = require('./googleLink');
@@ -188,13 +189,25 @@ function createGoogleAppWindowManager({
   /** Always deny. A nav-list target is recreated through the factory (hardened options, never inherited). */
   function onPopup(details) {
     const url = details && details.url;
+    let routed = 'error';
     safe(() => {
       if (isGoogleNavigationUrl(url)) {
+        routed = 'app-window';
         openGoogleAppWindow(new URL(url).href);
       } else {
+        routed = 'router';
         routeAway(url);
       }
     }, 'popup');
+    // BUG-09: scheme + host + path only; the popup is always denied (window.open() returns null in the page).
+    diag('window-open', {
+      owner: 'app',
+      url: redactUrl(url),
+      disposition: details && details.disposition,
+      frameName: details && typeof details.frameName === 'string' ? details.frameName.slice(0, 60) : undefined,
+      routed,
+      result: 'deny',
+    });
     return { action: 'deny' };
   }
 

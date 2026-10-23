@@ -84,6 +84,7 @@ function bootstrap() {
   const { readBuildInfo, buildVersionLabel } = require('./version');
   const { classifyLink, isOpenableExternalScheme, MEET_ORIGIN } = require('./meetLink');
   const { createLinkRouter } = require('./linkRouter');
+  const { initDiagLog, diag, truncateText, redactUrl } = require('./diagLog');
   const {
     classifyGoogleLink,
     classifyChatTarget,
@@ -343,6 +344,7 @@ function bootstrap() {
   // The CALL window keeps a router WITHOUT the Google collaborators (google-app-windows.md section 5: the call
   // window is unchanged; a Chat or Drive link clicked inside a call goes to the system browser as before).
   const callLinkRouter = createLinkRouter({
+    name: 'call',
     classifyLink,
     isOpenableExternalScheme,
     openCallWindow: (target) => callWindows.openCallWindow(target),
@@ -373,6 +375,7 @@ function bootstrap() {
 
   // The router of the MAIN window (popups and navigations away from Chat) and of the Google app windows.
   const linkRouter = createLinkRouter({
+    name: 'main',
     classifyLink,
     isOpenableExternalScheme,
     classifyGoogleLink,
@@ -731,6 +734,22 @@ function bootstrap() {
     // UI-01: through the link router - Meet links open the call window, http/https/mailto go to
     // the system browser, every other scheme is dropped (meet-call-window.md section 3).
     mainWindow.webContents.setWindowOpenHandler((details) => linkRouter.onWindowOpen(details));
+    // BUG-09: the Chat page's own warnings/errors (a failed call is reported by the page). Text only, truncated, URLs
+    // inside it reduced to scheme+host+path; the source is the script URL without query/fragment. Info/debug skipped.
+    mainWindow.webContents.on('console-message', (event) => {
+      try {
+        const level = event && event.level;
+        if (level !== 'warning' && level !== 'error') return;
+        diag('console', {
+          level,
+          text: truncateText(event.message),
+          source: redactUrl(event.sourceId),
+          line: event.lineNumber,
+        });
+      } catch {
+        // diagnostics must never affect the window
+      }
+    });
     // The main window's contents always gets a will-prevent-unload listener (quit path).
     quitGuard.guardContents(mainWindow.webContents);
 
@@ -919,6 +938,15 @@ function bootstrap() {
   });
 
   app.whenReady().then(() => {
+    // BUG-09: privacy-safe diagnostics log (permission decisions, window-open / navigation routing, main-window
+    // console warnings/errors). Lives next to settings.json and the Partitions folder, under userData.
+    const diagFile = initDiagLog(path.join(app.getPath('userData'), 'logs'), {
+      app: app.getVersion(),
+      electron: process.versions.electron,
+      platform: process.platform,
+    });
+    console.error('[gcd] diagnostics log:', diagFile);
+
     // Session configuration (UA + permission handler) MUST happen before the window's page
     // loads, using the same partition the BrowserWindow is constructed with — otherwise the
     // first load happens with the default (non-desktop) UA and no notification-permission grant.

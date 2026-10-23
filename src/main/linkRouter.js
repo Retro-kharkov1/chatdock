@@ -19,7 +19,10 @@ function originOf(url) {
   }
 }
 
+const { diag, redactUrl } = require('./diagLog');
+
 function createLinkRouter({
+  name = 'router', // BUG-09: which window owns this router (main / call), for the diagnostics log only
   classifyLink,
   isOpenableExternalScheme,
   openCallWindow,
@@ -92,11 +95,21 @@ function createLinkRouter({
 
   /** Always deny; the target is routed as a side effect. Never throws. */
   function onWindowOpen(details) {
+    let decision = 'error';
     try {
-      route(details && details.url);
+      decision = route(details && details.url);
     } catch (err) {
       log('[gcd] link routing failed', err && err.name);
     }
+    // BUG-09: the handler always denies, so no window is ever created here (window.open() returns null in the page).
+    diag('window-open', {
+      owner: name,
+      url: redactUrl(details && details.url),
+      disposition: details && details.disposition,
+      frameName: details && typeof details.frameName === 'string' ? details.frameName.slice(0, 60) : undefined,
+      routed: decision,
+      result: 'deny',
+    });
     return { action: 'deny' };
   }
 
@@ -119,11 +132,13 @@ function createLinkRouter({
       }
     }
     event.preventDefault();
+    let decision = 'error';
     try {
-      route(url, { source: opts && opts.source });
+      decision = route(url, { source: opts && opts.source });
     } catch (err) {
       log('[gcd] link routing failed', err && err.name);
     }
+    diag('navigate-routed', { owner: name, url: redactUrl(url), routed: decision });
   }
 
   return { route, onWindowOpen, onWillNavigate };

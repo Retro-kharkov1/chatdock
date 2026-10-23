@@ -15,6 +15,7 @@ const path = require('path');
 const { CHAT_ORIGIN } = require('./origins');
 const { decideMeetRequest, decideMeetCheck } = require('./meetPermissions');
 const { decideFileSystemRequest, decideFileSystemCheck } = require('./fileAccess');
+const { diag, redactOrigin } = require('./diagLog');
 
 const PARTITION = 'persist:google-chat';
 
@@ -144,7 +145,34 @@ function configurePersistentSession(
     return false;
   };
 
-  ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+  // BUG-09: every decision is logged (permission, requesting origin, top-level origin, frame type, decision); origins
+  // only, never a full URL, header or credential.
+  const frameOf = (details) =>
+    details && details.isMainFrame === true ? 'main' : details && details.isMainFrame === false ? 'sub' : '?';
+  const logDecision = (kind, webContents, permission, requesting, extra, decision) =>
+    diag(`permission-${kind}`, {
+      permission,
+      requesting: redactOrigin(requesting),
+      topLevel: redactOrigin(topLevelUrlOf(webContents)),
+      ...extra,
+      decision: decision === true ? 'grant' : 'deny',
+    });
+
+  ses.setPermissionRequestHandler((webContents, permission, rawCallback, details) => {
+    const callback = (decision) => {
+      logDecision(
+        'request',
+        webContents,
+        permission,
+        details && details.requestingUrl,
+        {
+          frame: frameOf(details),
+          mediaTypes: Array.isArray(details && details.mediaTypes) ? details.mediaTypes.join(',') : undefined,
+        },
+        decision
+      );
+      rawCallback(decision);
+    };
     if (permission === 'fileSystem') {
       // BUG-07/BUG-08: read access to a file the user dropped or picked (fileAccess.js); never writable.
       callback(decideFileSystemRequest(webContents, details));
@@ -172,6 +200,23 @@ function configurePersistentSession(
   });
 
   ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    const decision = decideCheck(webContents, permission, requestingOrigin, details);
+    logDecision(
+      'check',
+      webContents,
+      permission,
+      requestingOrigin || (details && details.requestingUrl),
+      {
+        embedding: redactOrigin(details && details.embeddingOrigin),
+        frame: frameOf(details),
+        mediaType: details && typeof details.mediaType === 'string' ? details.mediaType : undefined,
+      },
+      decision
+    );
+    return decision;
+  });
+
+  function decideCheck(webContents, permission, requestingOrigin, details) {
     if (permission === 'fileSystem') return decideFileSystemCheck(webContents, requestingOrigin, details);
     if (GOOGLE_APP_PERMISSIONS.includes(permission)) {
       // `details.embeddingOrigin` is documented as "only set for cross-origin sub frames" and names the frame
@@ -192,7 +237,7 @@ function configurePersistentSession(
       permission,
       originOf(requestingOrigin) ?? originOf(details && details.requestingUrl)
     );
-  });
+  }
 
   if (typeof displayMediaHandler === 'function') {
     ses.setDisplayMediaRequestHandler(displayMediaHandler);
