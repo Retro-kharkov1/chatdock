@@ -102,6 +102,7 @@ function bootstrap() {
   const { createGoogleAppWindowManager } = require('./googleAppWindow');
   const { bindEditShortcuts } = require('./editShortcuts');
   const { createSmartCopy } = require('./smartCopy');
+  const { createContextMenu } = require('./contextMenu');
   const { createCopyHint } = require('./copyHint');
   const { createDownloadHandler } = require('./downloads');
   const { createMainWindowActions } = require('./mainWindowActions');
@@ -412,6 +413,8 @@ function bootstrap() {
     log: logLine,
   });
 
+  const contextMenu = createContextMenu({ Menu, BrowserWindow, clipboard, log: logLine });
+
   const googleAppWindows = createGoogleAppWindowManager({
     BrowserWindow,
     getRouter: () => linkRouter,
@@ -420,6 +423,7 @@ function bootstrap() {
     openExternal: openInSystemBrowser,
     iconPath: APP_ICON,
     bindSmartCopy: smartCopy.bindSmartCopyApp,
+    bindContextMenu: contextMenu.bindContextMenu,
     log: logLine,
   });
 
@@ -712,6 +716,8 @@ function bootstrap() {
     bindEditShortcuts(mainWindow.webContents);
     // UI-05: right-click link copy + the validated copy-on-select signal from the main window's preload.
     smartCopy.bindSmartCopyMain(mainWindow);
+    // UI-08: native right-click menu (edit actions, spelling, image, link); no quit entry.
+    contextMenu.bindContextMenu(mainWindow.webContents);
 
     // FR-06 / project rule "Quit only from the tray" (docs/architecture/project-rules.md): the close (X) button hides, it never quits.
     mainWindow.on('close', (event) => {
