@@ -111,6 +111,7 @@ function bootstrap() {
   const { bindEditShortcuts } = require('./editShortcuts');
   const { createZoom } = require('./zoom');
   const { createHistoryNav } = require('./historyNav');
+  const { createPrintShortcut } = require('./printShortcut');
   const { createSmartCopy } = require('./smartCopy');
   const { createContextMenu } = require('./contextMenu');
   const { createCopyHint } = require('./copyHint');
@@ -437,6 +438,7 @@ function bootstrap() {
     bindSmartCopy: smartCopy.bindSmartCopyApp,
     bindContextMenu: contextMenu.bindContextMenu,
     bindZoom: zoom.bind,
+    bindPrint: createPrintShortcut().bind,
     bindHistoryNav: createHistoryNav({ isAllowed: isGoogleNavigationUrl }).bind,
     log: logLine,
   });

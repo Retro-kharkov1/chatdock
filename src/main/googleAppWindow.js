@@ -59,6 +59,7 @@ function createGoogleAppWindowManager({
   bindSmartCopy, // optional (UI-05): context-menu link copy for every window; absent = no smart copy
   bindContextMenu, // optional (UI-08): native right-click menu; absent = no menu
   bindZoom, // optional (UI-10): shared persisted zoom; absent = no zoom keys
+  bindPrint, // optional (UI-14): Ctrl+P -> system print dialog; absent = no print key
   bindHistoryNav, // optional (UI-13): takes the BrowserWindow (app-command is a window event); absent = no back/forward
   log = () => {},
 }) {
@@ -324,6 +325,7 @@ function createGoogleAppWindowManager({
     if (typeof bindSmartCopy === 'function') bindSmartCopy(contents); // UI-05: right-click link copy only
     if (typeof bindContextMenu === 'function') bindContextMenu(contents); // UI-08: native right-click menu
     if (typeof bindZoom === 'function') bindZoom(contents); // UI-10: Ctrl+= / Ctrl+- / Ctrl+0 / Ctrl+wheel
+    if (typeof bindPrint === 'function') bindPrint(contents); // UI-14: Ctrl+P opens the system print dialog
     if (typeof bindHistoryNav === 'function') bindHistoryNav(created); // UI-13: Alt+Left/Right, mouse back/forward
     contents.on('will-navigate', (event, navUrl, inPlace, isMainFrame) =>
       safe(() => onNavigate(entry, 'will-navigate', event, navUrl, inPlace, isMainFrame), 'will-navigate')
