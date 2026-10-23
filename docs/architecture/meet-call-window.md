@@ -170,6 +170,13 @@ unparseable origin, an `embeddingOrigin` that is present and not Meet, a Meet fr
 or a non-Meet frame inside a Meet page is a denial. Deriving the top-level origin (`webContents.getURL()`
 versus `details.embeddingOrigin`) is the implementer's call, pinned by the NFR-07 matrix in tests.
 
+**Embedded call in Chat (ADR-0005):** Chat runs the call as a cross-origin Meet iframe, so for `media` and
+`speaker-selection` only (request and check) the gate is `meetMediaGate`: requester exactly
+`https://meet.google.com`, top level exactly `https://meet.google.com` **or** `https://chat.google.com`.
+`display-capture` and the display-media handler keep the strict Meet-only gate described above, and Chat as a
+requester gets no media. Where the text below says "Meet frame inside a non-Meet page is a denial", that
+applies to `display-capture` and screen share, and to every top level other than Chat for media.
+
 **What Electron delivers [Spike B, Windows and WSLg alike]:**
 
 | Call | Request handler | Check handler |

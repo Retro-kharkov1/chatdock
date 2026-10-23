@@ -6,3 +6,4 @@
 | [0002](0002-notification-delivery-mechanism.md) | Notification delivery mechanism | accepted (piece 2 and fallback under review, see 0004) | 2026-09-22 |
 | [0003](0003-packaging-and-code-signing-approach.md) | Packaging and code-signing approach | accepted | 2026-09-22 |
 | [0004](0004-desktop-shell-technology-and-electron-retention.md) | Desktop shell — no migration now; retain Electron and reopen on defined triggers | proposed, pending spikes | 2026-09-30 |
+| [0005](0005-meet-media-permissions-in-chat-embedded-calls.md) | Camera and microphone for the Meet call embedded in Chat | accepted | 2026-10-23 |
