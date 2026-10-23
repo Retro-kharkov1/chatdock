@@ -181,5 +181,5 @@ function install() {
 // Plain node (node --test scanning test/) has no Electron: do nothing.
 if (process.versions.electron) {
   if (process.env.GCD_E2E_HOOK === '1') install();
-  require('../../src/main/index.js');
+  require('../../../src/main/index.js');
 }

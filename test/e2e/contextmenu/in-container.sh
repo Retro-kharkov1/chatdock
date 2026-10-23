@@ -9,7 +9,7 @@ RT=/work/rt
 TLS=/work/tls
 mkdir -p "$WORK" "$RT" "$TLS"
 tar -C /src --exclude=node_modules --exclude=./release --exclude=./artifacts --exclude=./.git -cf - . | tar -C "$WORK" --no-same-owner -xf -
-node -e "const f='$WORK/package.json';const p=require(f);p.main='test/e2e/hookMain.js';require('fs').writeFileSync(f,JSON.stringify(p,null,2));"
+node -e "const f='$WORK/package.json';const p=require(f);p.main='test/e2e/contextmenu/hookMain.js';require('fs').writeFileSync(f,JSON.stringify(p,null,2));"
 EV=$(node -p "require('$WORK/package.json').devDependencies.electron")
 echo "[e2e] electron $EV"
 cd "$RT"
@@ -55,7 +55,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -keyout "$TLS/key.pem" -out "$TLS/cert
   -addext "subjectAltName=DNS:chat.google.com" 2>/dev/null
 export GCD_E2E_RUN=1 GCD_ELECTRON="$ELECTRON_BIN" GCD_ELECTRON_VERSION="$EV" GCD_APP_DIR="$WORK" GCD_OUT_DIR=/out GCD_CERT_DIR="$TLS" GCD_DICT_FILE="$DICT"
 set +e
-xvfb-run -a -s "-screen 0 1280x800x24" node "$WORK/test/e2e/contextMenuAcceptance.js"
+xvfb-run -a -s "-screen 0 1280x800x24" node "$WORK/test/e2e/contextmenu/contextMenuAcceptance.js"
 rc=$?
 chmod -R a+rwX /out 2>/dev/null || true
 exit $rc
