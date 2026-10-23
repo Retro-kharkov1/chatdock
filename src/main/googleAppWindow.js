@@ -58,6 +58,7 @@ function createGoogleAppWindowManager({
   iconPath,
   bindSmartCopy, // optional (UI-05): context-menu link copy for every window; absent = no smart copy
   bindContextMenu, // optional (UI-08): native right-click menu; absent = no menu
+  bindZoom, // optional (UI-10): shared persisted zoom; absent = no zoom keys
   log = () => {},
 }) {
   /** @type {Map<string, Entry>} href-without-fragment -> window entry (hop windows are pending until decided) */
@@ -321,6 +322,7 @@ function createGoogleAppWindowManager({
     bindEditShortcuts(contents); // the application menu is null: Ctrl+C/V/X/A/Z are restored per window
     if (typeof bindSmartCopy === 'function') bindSmartCopy(contents); // UI-05: right-click link copy only
     if (typeof bindContextMenu === 'function') bindContextMenu(contents); // UI-08: native right-click menu
+    if (typeof bindZoom === 'function') bindZoom(contents); // UI-10: Ctrl+= / Ctrl+- / Ctrl+0 / Ctrl+wheel
     contents.on('will-navigate', (event, navUrl, inPlace, isMainFrame) =>
       safe(() => onNavigate(entry, 'will-navigate', event, navUrl, inPlace, isMainFrame), 'will-navigate')
     );
