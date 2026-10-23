@@ -20,6 +20,7 @@ function originOf(url) {
 }
 
 const { diag, redactUrl } = require('./diagLog');
+const { describeDeniedBlankOpen } = require('./callDiagnostics');
 
 function createLinkRouter({
   name = 'router', // BUG-09: which window owns this router (main / call), for the diagnostics log only
@@ -110,6 +111,9 @@ function createLinkRouter({
       routed: decision,
       result: 'deny',
     });
+    // BUG-09: a denied about:blank (the page's call popup) - origin of the opener, disposition and features only.
+    const blank = describeDeniedBlankOpen(details);
+    if (blank) diag('window-open-blank', { owner: name, ...blank });
     return { action: 'deny' };
   }
 
