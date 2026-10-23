@@ -128,6 +128,12 @@ read when you drop it; nothing else on your disk is reachable, and a dropped fil
 
 **Downloads always ask where to save.** Attachments from Chat and downloads from Drive or Docs windows
 show a Save dialog (starting in your Downloads folder), and the file is never opened automatically.
+While a file downloads, its progress shows on the app's taskbar button (a moving bar when the size is not known);
+the bar disappears when the download finishes, is cancelled or fails.
+When a download **completes**, one notification appears: **"Download complete"**, with the file name and
+**"Click to show it in its folder."** Click the notification (or its **Show in folder** button, where your system
+shows one) and the folder opens with the file selected. The app only shows the file; it never opens or runs it.
+Nothing is shown for a cancelled or failed download, and **Mute notifications** also silences this notification.
 If a download comes from an address the app does not allow, it is cancelled and a **"Download blocked"**
 message appears. The default button is **Close**; **Open in browser** is offered where possible.
 
